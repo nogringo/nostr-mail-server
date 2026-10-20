@@ -91,7 +91,7 @@ npm run dev
 ```sh
 npm run check       # Biome: format, lint and import order (check:write fixes)
 npm run typecheck
-npm test
+npm test            # Vitest, once (test:watch reruns on change)
 ```
 
 The Biome configuration is [`biome.json`](../biome.json) at the repository root,

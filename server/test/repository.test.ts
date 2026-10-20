@@ -1,7 +1,6 @@
-import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import test from 'node:test'
 import pg from 'pg'
+import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { migrate } from '../src/migrations.js'
 import { PgDomainRepository } from '../src/repository.js'
 import type { DomainChecks, NewDomain } from '../src/types.js'
@@ -32,45 +31,53 @@ function claim(domain: string, pubkey: string): NewDomain {
   }
 }
 
-test('PgDomainRepository', { skip: !databaseUrl && 'TEST_DATABASE_URL is not set' }, async (t) => {
+describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
   const schema = `test_${randomBytes(6).toString('hex')}`
-  const admin = new pg.Client({ connectionString: databaseUrl })
-  await admin.connect()
-  await admin.query(`create schema ${schema}`)
+  let admin: pg.Client
+  let url: string
+  let applied: string[]
+  let repo: PgDomainRepository
 
-  const url = new URL(databaseUrl)
-  url.searchParams.set('options', `-c search_path=${schema}`)
-  const repo = new PgDomainRepository(url.toString())
+  beforeAll(async () => {
+    admin = new pg.Client({ connectionString: databaseUrl })
+    await admin.connect()
+    await admin.query(`create schema ${schema}`)
 
-  t.after(async () => {
-    await repo.close()
-    await admin.query(`drop schema ${schema} cascade`)
-    await admin.end()
+    const schemaUrl = new URL(databaseUrl)
+    schemaUrl.searchParams.set('options', `-c search_path=${schema}`)
+    url = schemaUrl.toString()
+    applied = await migrate(url)
+    repo = new PgDomainRepository(url)
   })
 
-  assert.deepEqual(await migrate(url.toString()), ['001_create_domains.sql'])
-  assert.deepEqual(await migrate(url.toString()), [])
+  afterAll(async () => {
+    await repo?.close()
+    await admin?.query(`drop schema ${schema} cascade`)
+    await admin?.end()
+  })
 
-  await t.test('creates a claim once per key', async () => {
+  test('applies the pending migrations once', async () => {
+    expect(applied).toEqual(['001_create_domains.sql'])
+    expect(await migrate(url)).toEqual([])
+  })
+
+  test('creates a claim once per key', async () => {
     const created = await repo.createDomain(claim('example.com', ALICE))
     const again = await repo.createDomain(claim('example.com', ALICE))
 
-    assert.equal(again.verificationToken, created.verificationToken)
-    assert.equal(created.verifiedAt, null)
-    assert.deepEqual(await repo.findDomain('example.com', ALICE), created)
+    expect(again.verificationToken).toBe(created.verificationToken)
+    expect(created.verifiedAt).toBeNull()
+    expect(await repo.findDomain('example.com', ALICE)).toEqual(created)
   })
 
-  await t.test('lists the claims of a key', async () => {
+  test('lists the claims of a key', async () => {
     await repo.createDomain(claim('a.example', ALICE))
     await repo.createDomain(claim('example.com', BOB))
 
-    assert.deepEqual(
-      (await repo.listDomains(ALICE)).map((domain) => domain.domain),
-      ['a.example', 'example.com'],
-    )
+    expect((await repo.listDomains(ALICE)).map((domain) => domain.domain)).toEqual(['a.example', 'example.com'])
   })
 
-  await t.test('records checks without verifying', async () => {
+  test('records checks without verifying', async () => {
     const updated = await repo.recordChecks(
       'example.com',
       BOB,
@@ -78,35 +85,34 @@ test('PgDomainRepository', { skip: !databaseUrl && 'TEST_DATABASE_URL is not set
       false,
     )
 
-    assert.equal(updated?.verifiedAt, null)
-    assert.ok(updated?.checkedAt)
-    assert.equal(updated?.checks?.ownership.status, 'missing')
-    assert.ok(await repo.findDomain('example.com', ALICE))
+    expect(updated?.verifiedAt).toBeNull()
+    expect(updated?.checkedAt).toBeTypeOf('string')
+    expect(updated?.checks?.ownership.status).toBe('missing')
+    expect(await repo.findDomain('example.com', ALICE)).not.toBeNull()
   })
 
-  await t.test('verifying drops the other claims and keeps the first verification time', async () => {
+  test('verifying drops the other claims and keeps the first verification time', async () => {
     const verified = await repo.recordChecks('example.com', ALICE, checks, true)
-    assert.ok(verified?.verifiedAt)
-    assert.deepEqual(verified?.checks, checks)
-    assert.equal(await repo.findDomain('example.com', BOB), null)
+    expect(verified?.verifiedAt).toBeTypeOf('string')
+    expect(verified?.checks).toEqual(checks)
+    expect(await repo.findDomain('example.com', BOB)).toBeNull()
 
     const rechecked = await repo.recordChecks('example.com', ALICE, checks, true)
-    assert.equal(rechecked?.verifiedAt, verified?.verifiedAt)
+    expect(rechecked?.verifiedAt).toBe(verified?.verifiedAt)
   })
 
-  await t.test('a domain has at most one verified owner', async () => {
+  test('a domain has at most one verified owner', async () => {
     await repo.createDomain(claim('example.com', BOB))
-    await assert.rejects(
+    await expect(
       admin.query(`update ${schema}.domains set verified_at = now() where domain = 'example.com' and pubkey = $1`, [
         BOB,
       ]),
-      /domains_one_verified_owner/,
-    )
+    ).rejects.toThrow(/domains_one_verified_owner/)
   })
 
-  await t.test('deletes a claim', async () => {
-    assert.equal(await repo.deleteDomain('a.example', ALICE), true)
-    assert.equal(await repo.deleteDomain('a.example', ALICE), false)
-    assert.equal(await repo.recordChecks('a.example', ALICE, checks, false), null)
+  test('deletes a claim', async () => {
+    expect(await repo.deleteDomain('a.example', ALICE)).toBe(true)
+    expect(await repo.deleteDomain('a.example', ALICE)).toBe(false)
+    expect(await repo.recordChecks('a.example', ALICE, checks, false)).toBeNull()
   })
 })

@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict'
-import test from 'node:test'
+import { expect, test } from 'vitest'
 import { loadConfig } from '../src/config.js'
 
 const required = {
@@ -9,7 +8,7 @@ const required = {
 }
 
 test('loadConfig applies the defaults', () => {
-  assert.deepEqual(loadConfig(required), {
+  expect(loadConfig(required)).toEqual({
     port: 3000,
     databaseUrl: 'postgres://localhost/nostrmail',
     mxHost: 'mx.example.org',
@@ -27,21 +26,19 @@ test('loadConfig reads the optional settings', () => {
     DNS_SERVERS: '1.1.1.1, 2606:4700::1111',
   })
 
-  assert.equal(config.port, 8080)
-  assert.equal(config.dkimSelector, 'mail2026')
-  assert.deepEqual(config.dnsServers, ['1.1.1.1', '2606:4700::1111'])
+  expect(config.port).toBe(8080)
+  expect(config.dkimSelector).toBe('mail2026')
+  expect(config.dnsServers).toEqual(['1.1.1.1', '2606:4700::1111'])
 })
 
-test('loadConfig requires the database, MX host and SPF include', () => {
-  for (const name of Object.keys(required)) {
-    assert.throws(() => loadConfig({ ...required, [name]: '' }), new RegExp(`${name} is required`))
-  }
+test.each(Object.keys(required))('loadConfig requires %s', (name) => {
+  expect(() => loadConfig({ ...required, [name]: '' })).toThrow(`${name} is required`)
 })
 
 test('loadConfig rejects invalid values', () => {
-  assert.throws(() => loadConfig({ ...required, PORT: '70000' }), /PORT/)
-  assert.throws(() => loadConfig({ ...required, MX_HOST: 'localhost' }), /MX_HOST/)
-  assert.throws(() => loadConfig({ ...required, SPF_INCLUDE: 'include:_spf.example.org' }), /SPF_INCLUDE/)
-  assert.throws(() => loadConfig({ ...required, DKIM_SELECTOR: 'a.b' }), /DKIM_SELECTOR/)
-  assert.throws(() => loadConfig({ ...required, DNS_SERVERS: 'dns.google' }), /DNS_SERVERS/)
+  expect(() => loadConfig({ ...required, PORT: '70000' })).toThrow(/PORT/)
+  expect(() => loadConfig({ ...required, MX_HOST: 'localhost' })).toThrow(/MX_HOST/)
+  expect(() => loadConfig({ ...required, SPF_INCLUDE: 'include:_spf.example.org' })).toThrow(/SPF_INCLUDE/)
+  expect(() => loadConfig({ ...required, DKIM_SELECTOR: 'a.b' })).toThrow(/DKIM_SELECTOR/)
+  expect(() => loadConfig({ ...required, DNS_SERVERS: 'dns.google' })).toThrow(/DNS_SERVERS/)
 })

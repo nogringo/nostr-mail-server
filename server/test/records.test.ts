@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict'
-import test from 'node:test'
+import { expect, test } from 'vitest'
 import { checkRecords, expectedRecords } from '../src/records.js'
 import type { Domain } from '../src/types.js'
 import { domainConfig, FakeDns } from './helpers.js'
@@ -32,42 +31,39 @@ function configuredDns(): FakeDns {
 test('expectedRecords lists the five records with their names and values', () => {
   const records = expectedRecords(domain, domainConfig)
 
-  assert.deepEqual(
-    records.map(({ id, type, name, value, required }) => ({ id, type, name, value, required })),
-    [
-      {
-        id: 'ownership',
-        type: 'TXT',
-        name: '_nostr-mail.example.com',
-        value: 'nostr-mail-verification=token123',
-        required: true,
-      },
-      { id: 'mx', type: 'MX', name: 'example.com', value: 'mx.example.org', required: true },
-      { id: 'spf', type: 'TXT', name: 'example.com', value: 'v=spf1 include:_spf.example.org ~all', required: true },
-      {
-        id: 'dkim',
-        type: 'TXT',
-        name: 'nostrmail._domainkey.example.com',
-        value: `v=DKIM1; k=rsa; p=${domain.dkimPublicKey}`,
-        required: true,
-      },
-      { id: 'dmarc', type: 'TXT', name: '_dmarc.example.com', value: 'v=DMARC1; p=none', required: false },
-    ],
-  )
+  expect(records.map(({ id, type, name, value, required }) => ({ id, type, name, value, required }))).toEqual([
+    {
+      id: 'ownership',
+      type: 'TXT',
+      name: '_nostr-mail.example.com',
+      value: 'nostr-mail-verification=token123',
+      required: true,
+    },
+    { id: 'mx', type: 'MX', name: 'example.com', value: 'mx.example.org', required: true },
+    { id: 'spf', type: 'TXT', name: 'example.com', value: 'v=spf1 include:_spf.example.org ~all', required: true },
+    {
+      id: 'dkim',
+      type: 'TXT',
+      name: 'nostrmail._domainkey.example.com',
+      value: `v=DKIM1; k=rsa; p=${domain.dkimPublicKey}`,
+      required: true,
+    },
+    { id: 'dmarc', type: 'TXT', name: '_dmarc.example.com', value: 'v=DMARC1; p=none', required: false },
+  ])
 })
 
 test('checkRecords passes every record published as instructed', async () => {
   const checks = await checkRecords(domain, domainConfig, configuredDns())
 
-  for (const [id, check] of Object.entries(checks)) assert.equal(check.status, 'ok', id)
-  assert.deepEqual(checks.mx.found, ['10 mx.example.org'])
-  assert.deepEqual(checks.spf.found, ['v=spf1 include:_spf.example.org ~all'])
+  for (const [id, check] of Object.entries(checks)) expect(check.status, id).toBe('ok')
+  expect(checks.mx.found).toEqual(['10 mx.example.org'])
+  expect(checks.spf.found).toEqual(['v=spf1 include:_spf.example.org ~all'])
 })
 
 test('checkRecords reports missing records when nothing is published', async () => {
   const checks = await checkRecords(domain, domainConfig, new FakeDns())
 
-  for (const [id, check] of Object.entries(checks)) assert.deepEqual(check, { status: 'missing', found: [] }, id)
+  for (const [id, check] of Object.entries(checks)) expect(check, id).toEqual({ status: 'missing', found: [] })
 })
 
 test('ownership is a mismatch when only another token is published', async () => {
@@ -75,7 +71,7 @@ test('ownership is a mismatch when only another token is published', async () =>
   dns.txtRecords.set('_nostr-mail.example.com', ['nostr-mail-verification=someone-else'])
 
   const checks = await checkRecords(domain, domainConfig, dns)
-  assert.deepEqual(checks.ownership, { status: 'mismatch', found: ['nostr-mail-verification=someone-else'] })
+  expect(checks.ownership).toEqual({ status: 'mismatch', found: ['nostr-mail-verification=someone-else'] })
 })
 
 test('ownership passes when other keys also published their token', async () => {
@@ -86,7 +82,7 @@ test('ownership passes when other keys also published their token', async () => 
   ])
 
   const checks = await checkRecords(domain, domainConfig, dns)
-  assert.equal(checks.ownership.status, 'ok')
+  expect(checks.ownership.status).toBe('ok')
 })
 
 test('MX is a mismatch while another mail server is still listed', async () => {
@@ -97,7 +93,7 @@ test('MX is a mismatch while another mail server is still listed', async () => {
   ])
 
   const checks = await checkRecords(domain, domainConfig, dns)
-  assert.deepEqual(checks.mx, { status: 'mismatch', found: ['10 mx.example.org', '1 aspmx.l.google.com'] })
+  expect(checks.mx).toEqual({ status: 'mismatch', found: ['10 mx.example.org', '1 aspmx.l.google.com'] })
 })
 
 test('MX matches regardless of case and trailing dot', async () => {
@@ -105,7 +101,7 @@ test('MX matches regardless of case and trailing dot', async () => {
   dns.mxRecords.set('example.com', [{ exchange: 'MX.Example.org.', priority: 5 }])
 
   const checks = await checkRecords(domain, domainConfig, dns)
-  assert.equal(checks.mx.status, 'ok')
+  expect(checks.mx.status).toBe('ok')
 })
 
 test('SPF ignores unrelated TXT records and accepts other mechanisms', async () => {
@@ -116,20 +112,20 @@ test('SPF ignores unrelated TXT records and accepts other mechanisms', async () 
   ])
 
   const checks = await checkRecords(domain, domainConfig, dns)
-  assert.deepEqual(checks.spf, { status: 'ok', found: ['v=spf1 ip4:203.0.113.4 +include:_SPF.example.org -all'] })
+  expect(checks.spf).toEqual({ status: 'ok', found: ['v=spf1 ip4:203.0.113.4 +include:_SPF.example.org -all'] })
 })
 
 test('SPF is a mismatch without our include or with two SPF records', async () => {
   const withoutInclude = new FakeDns()
   withoutInclude.txtRecords.set('example.com', ['v=spf1 include:_spf.google.com ~all'])
-  assert.equal((await checkRecords(domain, domainConfig, withoutInclude)).spf.status, 'mismatch')
+  expect((await checkRecords(domain, domainConfig, withoutInclude)).spf.status).toBe('mismatch')
 
   const twoRecords = new FakeDns()
   twoRecords.txtRecords.set('example.com', [
     'v=spf1 include:_spf.example.org ~all',
     'v=spf1 include:_spf.google.com ~all',
   ])
-  assert.equal((await checkRecords(domain, domainConfig, twoRecords)).spf.status, 'mismatch')
+  expect((await checkRecords(domain, domainConfig, twoRecords)).spf.status).toBe('mismatch')
 })
 
 test('DKIM compares the public key, whatever the spacing', async () => {
@@ -138,7 +134,7 @@ test('DKIM compares the public key, whatever the spacing', async () => {
   dns.txtRecords.set('nostrmail._domainkey.example.com', [`k=rsa;v=DKIM1;  p= ${spaced}`])
 
   const checks = await checkRecords(domain, domainConfig, dns)
-  assert.equal(checks.dkim.status, 'ok')
+  expect(checks.dkim.status).toBe('ok')
 })
 
 test('DKIM is a mismatch with another key', async () => {
@@ -146,7 +142,7 @@ test('DKIM is a mismatch with another key', async () => {
   dns.txtRecords.set('nostrmail._domainkey.example.com', ['v=DKIM1; k=rsa; p=MIIBOTHERKEY'])
 
   const checks = await checkRecords(domain, domainConfig, dns)
-  assert.equal(checks.dkim.status, 'mismatch')
+  expect(checks.dkim.status).toBe('mismatch')
 })
 
 test('DMARC is a mismatch when two policies are published', async () => {
@@ -154,7 +150,7 @@ test('DMARC is a mismatch when two policies are published', async () => {
   dns.txtRecords.set('_dmarc.example.com', ['v=DMARC1; p=none', 'v=DMARC1; p=reject'])
 
   const checks = await checkRecords(domain, domainConfig, dns)
-  assert.equal(checks.dmarc.status, 'mismatch')
+  expect(checks.dmarc.status).toBe('mismatch')
 })
 
 test('a failing lookup is reported as an error without affecting the others', async () => {
@@ -162,6 +158,6 @@ test('a failing lookup is reported as an error without affecting the others', as
   dns.failing.add('_dmarc.example.com')
 
   const checks = await checkRecords(domain, domainConfig, dns)
-  assert.deepEqual(checks.dmarc, { status: 'error', found: [] })
-  assert.equal(checks.ownership.status, 'ok')
+  expect(checks.dmarc).toEqual({ status: 'error', found: [] })
+  expect(checks.ownership.status).toBe('ok')
 })
