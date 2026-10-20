@@ -19,15 +19,16 @@ export interface InboundEmail {
 }
 
 // Nostr Mail core: mail received over SMTP is written on the sender's behalf by
-// the domain's _smtp key, with the envelope sender in `mail-from`.
-export function wrapInboundEmail(email: InboundEmail, bridgePrivateKey: string, recipientPubkey: string): NostrEvent {
+// the domain's _smtp key, with the envelope sender in `mail-from`. A complaint
+// no domain key is left for is written by the server's own key.
+export function wrapInboundEmail(email: InboundEmail, writerPrivateKey: string, recipientPubkey: string): NostrEvent {
   return wrapEvent(
     {
       kind: EMAIL_KIND,
       tags: [['email-id', email.emailId], ['mail-from', email.mailFrom], ...blobTags(email.body)],
       content: 'mime' in email.body ? email.body.mime : '',
     },
-    hexToBytes(bridgePrivateKey),
+    hexToBytes(writerPrivateKey),
     recipientPubkey,
   )
 }

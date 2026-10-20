@@ -1,11 +1,14 @@
 import type { NostrEvent } from 'nostr-tools/pure'
 import pg from 'pg'
 import type {
+  AbuseReport,
   Address,
   Domain,
   DomainChecks,
   DomainRepository,
   DomainSummary,
+  KeyPair,
+  NewAbuseReport,
   NewAddress,
   NewDomain,
   NewOutboundMessage,
@@ -20,6 +23,8 @@ const DOMAIN_COLUMNS = `
 `
 
 const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, created_at'
+
+const ABUSE_REPORT_COLUMNS = 'id, domain, mail_from, header_from, subject, octet_length(message) as size, received_at'
 
 const IN_SERVICE = 'verified_at is not null and domain not in (select domain from suspended_domains)'
 
@@ -50,6 +55,16 @@ interface AddressRow {
 interface SuspensionRow {
   domain: string
   suspended_at: Date
+}
+
+interface AbuseReportRow {
+  id: number
+  domain: string
+  mail_from: string
+  header_from: string
+  subject: string
+  size: number
+  received_at: Date
 }
 
 interface OutboundMessageRow {
@@ -89,6 +104,19 @@ export class PgDomainRepository implements DomainRepository {
       [bridgePubkey],
     )
     return result.rows[0] ? toDomain(result.rows[0]) : null
+  }
+
+  async findOwnedDomain(domain: string): Promise<Domain | null> {
+    const result = await this.pool.query<DomainRow>(
+      `select ${DOMAIN_COLUMNS} from domains where domain = $1 and verified_at is not null`,
+      [domain],
+    )
+    return result.rows[0] ? toDomain(result.rows[0]) : null
+  }
+
+  async hasServedDomain(domain: string): Promise<boolean> {
+    const result = await this.pool.query('select 1 from served_domains where domain = $1', [domain])
+    return (result.rowCount ?? 0) > 0
   }
 
   async listVerifiedDomains(): Promise<Domain[]> {
@@ -165,6 +193,9 @@ export class PgDomainRepository implements DomainRepository {
         `,
         [domain, pubkey, JSON.stringify(checks), verified],
       )
+      if (verified && result.rows[0]) {
+        await client.query('insert into served_domains (domain) values ($1) on conflict (domain) do nothing', [domain])
+      }
       return result.rows[0] ? toDomain(result.rows[0]) : null
     })
   }
@@ -331,6 +362,53 @@ export class PgDomainRepository implements DomainRepository {
     return result.rowCount ?? 0
   }
 
+  async addAbuseReport(input: NewAbuseReport): Promise<void> {
+    await this.pool.query(
+      `
+        insert into abuse_reports (domain, email_id, mail_from, header_from, subject, message)
+        values ($1, $2, $3, $4, $5, $6)
+        on conflict (domain, email_id) do nothing
+      `,
+      [input.domain, input.emailId, input.mailFrom, input.from, input.subject, input.message],
+    )
+  }
+
+  async listAbuseReports(filter?: { domain: string; since: string }): Promise<AbuseReport[]> {
+    const result = filter
+      ? await this.pool.query<AbuseReportRow>(
+          `
+            select ${ABUSE_REPORT_COLUMNS} from abuse_reports
+            where domain = $1 and received_at >= $2
+            order by received_at desc, id desc
+          `,
+          [filter.domain, filter.since],
+        )
+      : await this.pool.query<AbuseReportRow>(
+          `select ${ABUSE_REPORT_COLUMNS} from abuse_reports order by received_at desc, id desc`,
+        )
+    return result.rows.map(toAbuseReport)
+  }
+
+  async findAbuseReport(id: number): Promise<{ report: AbuseReport; message: Buffer } | null> {
+    const result = await this.pool.query<AbuseReportRow & { message: Buffer }>(
+      `select ${ABUSE_REPORT_COLUMNS}, message from abuse_reports where id = $1`,
+      [id],
+    )
+    const row = result.rows[0]
+    return row ? { report: toAbuseReport(row), message: row.message } : null
+  }
+
+  async findOrCreateServerKey(generated: KeyPair): Promise<KeyPair> {
+    await this.pool.query('insert into server_key (pubkey, private_key) values ($1, $2) on conflict (id) do nothing', [
+      generated.pubkey,
+      generated.privateKey,
+    ])
+    const result = await this.pool.query<{ pubkey: string; private_key: string }>(
+      'select pubkey, private_key from server_key',
+    )
+    return { pubkey: result.rows[0].pubkey, privateKey: result.rows[0].private_key }
+  }
+
   async close(): Promise<void> {
     await this.pool.end()
   }
@@ -372,6 +450,18 @@ function toDomain(row: DomainRow): Domain {
 
 function toSuspension(row: SuspensionRow): Suspension {
   return { domain: row.domain, suspendedAt: row.suspended_at.toISOString() }
+}
+
+function toAbuseReport(row: AbuseReportRow): AbuseReport {
+  return {
+    id: row.id,
+    domain: row.domain,
+    mailFrom: row.mail_from,
+    from: row.header_from,
+    subject: row.subject,
+    size: row.size,
+    receivedAt: row.received_at.toISOString(),
+  }
 }
 
 function toAddress(row: AddressRow): Address {

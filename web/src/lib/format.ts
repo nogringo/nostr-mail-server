@@ -27,3 +27,11 @@ export function timeAgo(iso: string, now = Date.now()): string {
 
   return 'just now'
 }
+
+const kilobytes = new Intl.NumberFormat('en', { style: 'unit', unit: 'kilobyte', maximumFractionDigits: 0 })
+const megabytes = new Intl.NumberFormat('en', { style: 'unit', unit: 'megabyte', maximumFractionDigits: 1 })
+
+export function byteSize(bytes: number): string {
+  const mebibyte = 1024 * 1024
+  return bytes < mebibyte ? kilobytes.format(Math.max(1, Math.round(bytes / 1024))) : megabytes.format(bytes / mebibyte)
+}

@@ -39,7 +39,7 @@ async function setup() {
     new FakeRelayNetwork(),
     new FakeBlobStore(),
     new FakeAuthDns().resolve,
-    { mxHost: 'mx.example.org', maxMessageBytes: 1024 },
+    { mxHost: 'mx.example.org', maxMessageBytes: 1024, adminPubkeys: [], blossomServers: [], serverPrivateKey: '' },
     { tls: loaded },
   )
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))

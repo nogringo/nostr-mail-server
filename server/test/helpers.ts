@@ -14,6 +14,7 @@ import { generateKeyPair } from '../src/nostr.js'
 import type { Inbox, RelayNetwork, Subscription } from '../src/relays.js'
 import { readTls, type TlsCredentials } from '../src/tls.js'
 import type {
+  AbuseReport,
   Address,
   ApiConfig,
   DnsLookup,
@@ -22,7 +23,9 @@ import type {
   DomainConfig,
   DomainRepository,
   DomainSummary,
+  KeyPair,
   MxRecord,
+  NewAbuseReport,
   NewAddress,
   NewDomain,
   NewOutboundMessage,
@@ -66,6 +69,9 @@ export class MemoryDomainRepository implements DomainRepository {
   readonly addresses = new Map<string, Address>()
   readonly outbound = new Map<string, StoredOutboundMessage>()
   readonly suspensions = new Map<string, Suspension>()
+  readonly servedDomains = new Set<string>()
+  serverKey: KeyPair | null = null
+  readonly abuseReports: { report: AbuseReport; emailId: string; message: Buffer }[] = []
   fail = false
 
   async findDomain(domain: string, pubkey: string): Promise<Domain | null> {
@@ -83,6 +89,16 @@ export class MemoryDomainRepository implements DomainRepository {
     return (
       [...this.domains.values()].find((claim) => claim.bridgePubkey === bridgePubkey && this.inService(claim)) ?? null
     )
+  }
+
+  async findOwnedDomain(domain: string): Promise<Domain | null> {
+    this.assertAvailable()
+    return [...this.domains.values()].find((claim) => claim.domain === domain && claim.verifiedAt !== null) ?? null
+  }
+
+  async hasServedDomain(domain: string): Promise<boolean> {
+    this.assertAvailable()
+    return this.servedDomains.has(domain)
   }
 
   async listVerifiedDomains(): Promise<Domain[]> {
@@ -144,6 +160,7 @@ export class MemoryDomainRepository implements DomainRepository {
       verifiedAt: verified ? (current.verifiedAt ?? now) : current.verifiedAt,
     }
     this.domains.set(key(domain, pubkey), next)
+    if (verified) this.servedDomains.add(domain)
     return next
   }
 
@@ -272,6 +289,39 @@ export class MemoryDomainRepository implements DomainRepository {
       }
     }
     return pruned
+  }
+
+  async addAbuseReport({ emailId, message, ...input }: NewAbuseReport): Promise<void> {
+    this.assertAvailable()
+    if (this.abuseReports.some((kept) => kept.report.domain === input.domain && kept.emailId === emailId)) return
+
+    const report = {
+      ...input,
+      id: this.abuseReports.length + 1,
+      size: message.length,
+      receivedAt: new Date().toISOString(),
+    }
+    this.abuseReports.push({ report, emailId, message })
+  }
+
+  async listAbuseReports(filter?: { domain: string; since: string }): Promise<AbuseReport[]> {
+    this.assertAvailable()
+    return this.abuseReports
+      .map(({ report }) => report)
+      .filter((report) => !filter || (report.domain === filter.domain && report.receivedAt >= filter.since))
+      .reverse()
+  }
+
+  async findAbuseReport(id: number): Promise<{ report: AbuseReport; message: Buffer } | null> {
+    this.assertAvailable()
+    const kept = this.abuseReports.find(({ report }) => report.id === id)
+    return kept ? { report: kept.report, message: kept.message } : null
+  }
+
+  async findOrCreateServerKey(generated: KeyPair): Promise<KeyPair> {
+    this.assertAvailable()
+    this.serverKey ??= generated
+    return this.serverKey
   }
 
   // Mirrors the foreign keys: the addresses and the outbound mail of a claim go away with it.

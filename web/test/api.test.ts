@@ -73,7 +73,7 @@ test('sends a body as JSON and signs its hash', async () => {
 })
 
 test('loads the overview of the server for an admin', async () => {
-  const overview = { domains: [], suspensions: [] }
+  const overview = { domains: [], suspensions: [], abuseReports: [] }
   const { api, requests } = recordingApi(() => Response.json(overview))
 
   expect(await api.adminOverview()).toEqual(overview)
@@ -95,4 +95,22 @@ test('suspends a domain and lifts its suspension', async () => {
     ['PUT', `${ORIGIN}/admin/domains/example.com/suspension`],
     ['DELETE', `${ORIGIN}/admin/domains/example.com/suspension`],
   ])
+})
+
+test('reads the message of an abuse report as it was received', async () => {
+  const message = 'Subject: Spam\r\n\r\nHello\r\n'
+  const { api, requests } = recordingApi(() => new Response(message, { headers: { 'content-type': 'message/rfc822' } }))
+
+  expect(await (await api.abuseMessage('example.com', 3)).text()).toBe(message)
+  expect(await (await api.adminAbuseMessage(4)).text()).toBe(message)
+  expect(requests.map((request) => request.url)).toEqual([
+    `${ORIGIN}/domains/example.com/abuse-reports/3`,
+    `${ORIGIN}/admin/abuse-reports/4`,
+  ])
+})
+
+test('turns an error answer to a message read into an ApiError', async () => {
+  const { api } = recordingApi(() => Response.json({ error: 'abuse_report_not_found' }, { status: 404 }))
+
+  await expect(api.adminAbuseMessage(9)).rejects.toMatchObject({ code: 'abuse_report_not_found', status: 404 })
 })

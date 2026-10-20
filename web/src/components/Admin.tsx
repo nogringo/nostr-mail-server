@@ -11,6 +11,7 @@ import {
 import { describeError } from '../lib/errors'
 import { npubOf, plural, shortNpub, timeAgo } from '../lib/format'
 import type { Signer } from '../lib/signer'
+import AbuseReportRow from './AbuseReportRow'
 import { Button, CopyButton, ErrorText } from './ui'
 
 const RECORDS: [RecordId, string][] = [
@@ -58,7 +59,7 @@ export default function Admin({ signer }: { signer: Signer }) {
     )
   }
 
-  const { domains, suspensions } = overview
+  const { domains, suspensions, abuseReports } = overview
   const suspended = new Set(suspensions.map((suspension) => suspension.domain))
   const served = domains.filter((domain) => !suspended.has(domain.domain))
   const verified = served.filter((domain) => domain.verifiedAt)
@@ -96,7 +97,7 @@ export default function Admin({ signer }: { signer: Signer }) {
         <Section
           title="Suspended"
           count={suspensions.length}
-          note="The server neither receives, sends nor serves NIP-05 for these domains, and no key can claim them."
+          note="The server neither receives, sends nor serves NIP-05 for these domains, and no key can claim them. Their abuse@ still reaches you and is kept below."
         >
           {suspensions.map((suspension) => (
             <SuspendedRow
@@ -105,6 +106,17 @@ export default function Admin({ signer }: { signer: Signer }) {
               claims={domains.filter((domain) => domain.domain === suspension.domain)}
               onLift={lift}
             />
+          ))}
+        </Section>
+      )}
+      {abuseReports.length > 0 && (
+        <Section
+          title="Abuse reports"
+          count={abuseReports.length}
+          note="Mail sent to abuse@ of the domains, newest first. Their owners get it too."
+        >
+          {abuseReports.map((report) => (
+            <AbuseReportRow key={report.id} report={report} load={() => api.adminAbuseMessage(report.id)} showDomain />
           ))}
         </Section>
       )}

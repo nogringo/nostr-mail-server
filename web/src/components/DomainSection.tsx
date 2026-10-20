@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Api, CheckStatus, DnsRecord, Domain, RecordId } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { timeAgo } from '../lib/format'
+import AbuseReportRow from './AbuseReportRow'
 import Addresses from './Addresses'
 import { Button, CopyButton, ErrorText } from './ui'
 
@@ -83,12 +84,27 @@ export default function DomainSection({ domain, ownPubkey, api, onChange, onRemo
 
       {suspended && (
         <p className="mt-6 max-w-xl text-sm">
-          The domain no longer receives nor sends mail, and its addresses no longer resolve. Ask the admin of this
-          server why.
+          The domain no longer receives nor sends mail, and its addresses no longer resolve. Mail sent to abuse@
+          {domain.domain} still reaches you and the admins of this server. Ask them why the domain is suspended.
         </p>
       )}
       {needsDns && dns}
       {domain.verifiedAt && !suspended && <Addresses domain={domain.domain} api={api} ownPubkey={ownPubkey} />}
+      {domain.abuseReports.length > 0 && (
+        <div className="mt-8">
+          <h3 className="font-medium">
+            Abuse reports <span className="font-normal text-muted">{domain.abuseReports.length}</span>
+          </h3>
+          <p className="mt-1 text-muted text-sm">
+            Mail sent to abuse@{domain.domain}, newest first. The admins of this server get it too.
+          </p>
+          <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
+            {domain.abuseReports.map((report) => (
+              <AbuseReportRow key={report.id} report={report} load={() => api.abuseMessage(domain.domain, report.id)} />
+            ))}
+          </ul>
+        </div>
+      )}
       {!needsDns && !suspended && dnsShown && dns}
 
       <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
@@ -104,7 +120,10 @@ export default function DomainSection({ domain, ownPubkey, api, onChange, onRemo
         )}
         {confirming ? (
           <span className="flex flex-wrap items-center gap-4">
-            <span>Remove {domain.domain}? It will stop receiving and sending mail.</span>
+            <span>
+              Remove {domain.domain}? It will stop receiving and sending mail
+              {domain.verifiedAt ? ', but mail to abuse@ still reaches the admins of this server.' : '.'}
+            </span>
             <Button variant="quiet" className="text-bad" onClick={remove} disabled={busy !== null}>
               {busy === 'remove' ? 'Removing' : 'Remove'}
             </Button>

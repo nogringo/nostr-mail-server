@@ -9,6 +9,8 @@ const DOT_ATOM = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*
 
 // Where clients find the key to wrap the mail they send from a domain to.
 export const SMTP_LOCAL_PART = '_smtp'
+// RFC 2142: where complaints about a domain go.
+export const ABUSE_LOCAL_PART = 'abuse'
 
 export function normalizeLocalPart(value: string): string | null {
   const localPart = value.trim().toLowerCase()

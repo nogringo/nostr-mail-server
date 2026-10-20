@@ -7,6 +7,7 @@ import type { NostrEvent } from 'nostr-tools/pure'
 import { afterEach, expect, test } from 'vitest'
 import { generateDkimKeyPair } from '../src/dkim.js'
 import { MAX_INLINE_MIME_BYTES } from '../src/inbound.js'
+import { generateKeyPair } from '../src/nostr.js'
 import { createSmtpServer } from '../src/smtp.js'
 import type { TlsCredentials } from '../src/tls.js'
 import {
@@ -24,6 +25,7 @@ import {
 
 const MAX_MESSAGE_BYTES = 256 * 1024
 const DOMAIN_SERVER = 'https://blossom.example.org'
+const SERVER_BLOSSOM = 'https://blossom.server.example'
 
 const MESSAGE = [
   'From: Alice <alice@sender.example>',
@@ -41,17 +43,24 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
 })
 
-async function setup({ tls }: { tls?: TlsCredentials } = {}) {
+async function setup({ tls, adminPubkeys = [] }: { tls?: TlsCredentials; adminPubkeys?: string[] } = {}) {
   const repo = new MemoryDomainRepository()
   const network = new FakeRelayNetwork()
   const blobs = new FakeBlobStore()
   const authDns = new FakeAuthDns()
+  const serverKey = generateKeyPair()
   const server = createSmtpServer(
     repo,
     network,
     blobs,
     authDns.resolve,
-    { mxHost: 'mx.example.org', maxMessageBytes: MAX_MESSAGE_BYTES },
+    {
+      mxHost: 'mx.example.org',
+      maxMessageBytes: MAX_MESSAGE_BYTES,
+      adminPubkeys,
+      blossomServers: [SERVER_BLOSSOM],
+      serverPrivateKey: serverKey.privateKey,
+    },
     { tls },
   )
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -71,7 +80,7 @@ async function setup({ tls }: { tls?: TlsCredentials } = {}) {
   const send = (to: string[], raw = MESSAGE) =>
     transport.sendMail({ envelope: { from: 'alice@sender.example', to }, raw })
 
-  return { repo, network, blobs, authDns, port, domain, bob, send }
+  return { repo, network, blobs, authDns, port, serverKey, owner, domain, bob, send }
 }
 
 test('a message to a declared address is gift wrapped to its pubkey and published', async () => {
@@ -111,15 +120,19 @@ test('an npub address is delivered without being declared', async () => {
   expect(openWrap(network.published[0].event, carol.sk).rumor.kind).toBe(1301)
 })
 
-test.each(['nobody@example.com', '_smtp@example.com', 'bob@unknown.example', 'bob@pending.example'])(
-  '%s is refused with 550',
-  async (address) => {
-    const { repo, send } = await setup()
-    await repo.createDomain(claim('pending.example', signer().pubkey))
+test.each([
+  'nobody@example.com',
+  '_smtp@example.com',
+  'bob@unknown.example',
+  'bob@pending.example',
+  'abuse@unknown.example',
+  'abuse@pending.example',
+])('%s is refused with 550', async (address) => {
+  const { repo, send } = await setup()
+  await repo.createDomain(claim('pending.example', signer().pubkey))
 
-    await expect(send([address])).rejects.toMatchObject({ code: 'EENVELOPE', responseCode: 550 })
-  },
-)
+  await expect(send([address])).rejects.toMatchObject({ code: 'EENVELOPE', responseCode: 550 })
+})
 
 test('the known recipients still get the message when others are refused', async () => {
   const { network, send } = await setup()
@@ -137,6 +150,73 @@ test('a suspended domain refuses its recipients with 550', async () => {
 
   await expect(send(['bob@example.com'])).rejects.toMatchObject({ code: 'EENVELOPE', responseCode: 550 })
   expect(network.published).toEqual([])
+})
+
+test('abuse@ of a suspended domain still reaches its owner and the admins, and is kept', async () => {
+  const admin = signer()
+  const { repo, network, owner, domain, send } = await setup({ adminPubkeys: [admin.pubkey] })
+  network.dmRelays.set(owner.pubkey, ['wss://inbox.owner.example/'])
+  network.dmRelays.set(admin.pubkey, ['wss://inbox.admin.example/'])
+  await repo.suspendDomain('example.com')
+
+  await send(['abuse@example.com'])
+
+  expect(network.published.map((entry) => entry.event.tags[0][1])).toEqual([owner.pubkey, admin.pubkey])
+  expect(openWrap(network.published[0].event, owner.sk).seal.pubkey).toBe(domain.bridgePubkey)
+  expect(repo.abuseReports.map(({ report }) => report.domain)).toEqual(['example.com'])
+})
+
+test('abuse@ of a suspended domain nobody owns reaches the admins under the server key', async () => {
+  const admin = signer()
+  const { repo, network, blobs, serverKey, send } = await setup({ adminPubkeys: [admin.pubkey] })
+  network.dmRelays.set(admin.pubkey, ['wss://inbox.admin.example/'])
+  await repo.suspendDomain('spam.example')
+
+  await send(['abuse@spam.example'], largeMessage(MAX_INLINE_MIME_BYTES))
+
+  expect(network.published).toHaveLength(1)
+  expect(openWrap(network.published[0].event, admin.sk).seal.pubkey).toBe(serverKey.pubkey)
+  expect(Buffer.from(network.published[0].authKey).toString('hex')).toBe(serverKey.privateKey)
+  expect(blobs.uploads[0].servers).toContain(SERVER_BLOSSOM)
+  expect(Buffer.from(blobs.uploads[0].authKey).toString('hex')).toBe(serverKey.privateKey)
+  expect(repo.abuseReports.map(({ report }) => report.domain)).toEqual(['spam.example'])
+})
+
+test('abuse@ of a domain released after the server served it reaches the admins under the server key', async () => {
+  const admin = signer()
+  const { repo, network, owner, serverKey, send } = await setup({ adminPubkeys: [admin.pubkey] })
+  network.dmRelays.set(admin.pubkey, ['wss://inbox.admin.example/'])
+  await repo.deleteDomain('example.com', owner.pubkey)
+
+  await send(['abuse@example.com'])
+
+  expect(network.published.map((entry) => entry.event.tags[0][1])).toEqual([admin.pubkey])
+  expect(openWrap(network.published[0].event, admin.sk).seal.pubkey).toBe(serverKey.pubkey)
+  expect(repo.abuseReports.map(({ report }) => report.domain)).toEqual(['example.com'])
+  await expect(send(['bob@example.com'])).rejects.toMatchObject({ code: 'EENVELOPE', responseCode: 550 })
+})
+
+test('abuse@ of the server itself reaches the admins under the server key', async () => {
+  const admin = signer()
+  const { repo, network, serverKey, send } = await setup({ adminPubkeys: [admin.pubkey] })
+  network.dmRelays.set(admin.pubkey, ['wss://inbox.admin.example/'])
+
+  await send(['abuse@MX.example.org'])
+
+  expect(openWrap(network.published[0].event, admin.sk).seal.pubkey).toBe(serverKey.pubkey)
+  expect(repo.abuseReports.map(({ report }) => report.domain)).toEqual(['mx.example.org'])
+  await expect(send(['bob@mx.example.org'])).rejects.toMatchObject({ code: 'EENVELOPE', responseCode: 550 })
+})
+
+test('a complaint nobody can get over Nostr is still kept on the server', async () => {
+  const { repo, network, send } = await setup()
+  await repo.suspendDomain('spam.example')
+
+  const info = await send(['abuse@spam.example'])
+
+  expect(info.response).toMatch(/Kept on this server/)
+  expect(network.published).toEqual([])
+  expect(repo.abuseReports.map(({ report }) => report.domain)).toEqual(['spam.example'])
 })
 
 test('a recipient without DM relays is deferred with 450', async () => {
@@ -182,6 +262,88 @@ test('two addresses of the same pubkey get a single wrap', async () => {
   await send(['bob@example.com', `${npubEncode(bob.pubkey)}@example.com`])
 
   expect(network.published).toHaveLength(1)
+})
+
+test('abuse@ reaches the domain owner and the server admins', async () => {
+  const admin = signer()
+  const { network, owner, send } = await setup({ adminPubkeys: [admin.pubkey] })
+  network.dmRelays.set(owner.pubkey, ['wss://inbox.owner.example/'])
+  network.dmRelays.set(admin.pubkey, ['wss://inbox.admin.example/'])
+
+  await send(['abuse@example.com'])
+
+  expect(network.published.map((entry) => entry.relays)).toEqual([
+    ['wss://inbox.owner.example/'],
+    ['wss://inbox.admin.example/'],
+  ])
+  expect(openWrap(network.published[0].event, owner.sk).rumor.kind).toBe(1301)
+  expect(openWrap(network.published[1].event, admin.sk).rumor.kind).toBe(1301)
+})
+
+test('a declared abuse@ reaches its pubkey too, and each pubkey once', async () => {
+  const { repo, network, owner, bob, send } = await setup()
+  await repo.putAddress({ domain: 'example.com', localPart: 'abuse', pubkey: bob.pubkey, ownerPubkey: owner.pubkey })
+  network.dmRelays.set(owner.pubkey, ['wss://inbox.owner.example/'])
+
+  await send(['abuse@example.com', 'bob@example.com'])
+
+  expect(network.published.map((entry) => entry.event.tags[0][1])).toEqual([bob.pubkey, owner.pubkey])
+})
+
+test('abuse@ goes on to the pubkeys with DM relays and is kept anyway', async () => {
+  const admin = signer()
+  const { repo, network, owner, send } = await setup({ adminPubkeys: [admin.pubkey] })
+  network.dmRelays.set(owner.pubkey, ['wss://inbox.owner.example/'])
+
+  await send(['abuse@example.com'])
+
+  expect(network.published.map((entry) => entry.event.tags[0][1])).toEqual([owner.pubkey])
+  expect(repo.abuseReports).toHaveLength(1)
+})
+
+test('abuse@ is taken even when nobody it reaches has DM relays', async () => {
+  const { repo, network, send } = await setup({ adminPubkeys: [signer().pubkey] })
+
+  const info = await send(['abuse@example.com'])
+
+  expect(info.response).toMatch(/Kept on this server/)
+  expect(network.published).toEqual([])
+  expect(repo.abuseReports).toHaveLength(1)
+})
+
+test('a message to abuse@ is kept on the server with its From and Subject decoded', async () => {
+  const { repo, network, owner, send } = await setup()
+  network.dmRelays.set(owner.pubkey, ['wss://inbox.owner.example/'])
+  const raw = MESSAGE.replace('Subject: Hello', 'Subject: =?UTF-8?Q?Spam_re=C3=A7u?=')
+
+  await send(['abuse@example.com'], raw)
+  await send(['bob@example.com'])
+
+  expect(repo.abuseReports).toHaveLength(1)
+  const [{ report, message }] = repo.abuseReports
+  expect(report).toMatchObject({
+    domain: 'example.com',
+    mailFrom: 'alice@sender.example',
+    from: 'Alice <alice@sender.example>',
+    subject: 'Spam reçu',
+    size: message.length,
+  })
+  expect(message.toString()).toMatch(/^Return-Path: <alice@sender\.example>\r\n/)
+  expect(message.toString().endsWith(raw)).toBe(true)
+})
+
+test('an abuse report is kept while the relays refuse it, and once when the sender retries', async () => {
+  const { repo, network, owner, send } = await setup()
+  network.dmRelays.set(owner.pubkey, ['wss://inbox.owner.example/'])
+  network.down.add('wss://inbox.owner.example/')
+
+  await expect(send(['abuse@example.com'])).rejects.toMatchObject({ responseCode: 451 })
+  expect(repo.abuseReports).toHaveLength(1)
+
+  network.down.clear()
+  await send(['abuse@example.com'])
+
+  expect(repo.abuseReports).toHaveLength(1)
 })
 
 test('a database failure defers the recipient with 451', async () => {

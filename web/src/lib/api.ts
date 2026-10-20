@@ -29,6 +29,20 @@ export interface Domain {
   blossomServers: string[]
   createdAt: string
   records: DnsRecord[]
+  // Sent to abuse@ since this key owns the domain.
+  abuseReports: AbuseReport[]
+}
+
+// Mail sent to abuse@ of a domain, kept on the server.
+export interface AbuseReport {
+  id: number
+  domain: string
+  mailFrom: string
+  // The From and Subject fields, decoded.
+  from: string
+  subject: string
+  size: number
+  receivedAt: string
 }
 
 export interface Address {
@@ -57,6 +71,7 @@ export interface Suspension {
 export interface AdminOverview {
   domains: AdminDomain[]
   suspensions: Suspension[]
+  abuseReports: AbuseReport[]
 }
 
 export class ApiError extends Error {
@@ -79,7 +94,7 @@ export function createApi(
   origin = window.location.origin,
   fetchImpl: Fetch = (url, init) => fetch(url, init),
 ) {
-  async function call(method: string, path: string, payload?: Record<string, unknown>) {
+  async function send(method: string, path: string, payload?: Record<string, unknown>): Promise<Response> {
     const url = origin + path
     // With a payload, NIP-98 signs the hash of the exact JSON sent.
     const authorization = await getToken(url, method, (event) => signer.signEvent(event), true, payload)
@@ -93,10 +108,17 @@ export function createApi(
           }
         : { method, headers: { authorization } },
     )
-    const body = response.status === 204 ? null : await response.json().catch(() => null)
-    if (!response.ok) throw new ApiError(body?.error ?? 'http_error', response.status)
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      throw new ApiError(body?.error ?? 'http_error', response.status)
+    }
 
-    return body
+    return response
+  }
+
+  async function call(method: string, path: string, payload?: Record<string, unknown>) {
+    const response = await send(method, path, payload)
+    return response.status === 204 ? null : response.json()
   }
 
   const domainPath = (name: string) => `/domains/${encodeURIComponent(name)}`
@@ -117,7 +139,10 @@ export function createApi(
     removeAddress: async (name: string, localPart: string): Promise<void> => {
       await call('DELETE', addressPath(name, localPart))
     },
+    abuseMessage: async (name: string, id: number): Promise<Blob> =>
+      (await send('GET', `${domainPath(name)}/abuse-reports/${id}`)).blob(),
     adminOverview: (): Promise<AdminOverview> => call('GET', '/admin/domains'),
+    adminAbuseMessage: async (id: number): Promise<Blob> => (await send('GET', `/admin/abuse-reports/${id}`)).blob(),
     suspendDomain: async (name: string): Promise<Suspension> =>
       (await call('PUT', `/admin${domainPath(name)}/suspension`)).suspension,
     liftSuspension: async (name: string): Promise<void> => {

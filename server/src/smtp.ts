@@ -7,10 +7,11 @@ import {
   type SMTPServerEnvelope,
   type SMTPServerSession,
 } from 'smtp-server'
-import { findAddressPubkey, parseEmailAddress } from './address.js'
+import { ABUSE_LOCAL_PART, findAddressPubkey, parseEmailAddress } from './address.js'
 import { authenticateMessage, dmarcRejection, removeForgedResults, summarize } from './authentication.js'
 import { type BlobStore, type EncryptedBlob, encryptBlob } from './blossom.js'
 import { emailIdOf, type InboundEmail, MAX_INLINE_MIME_BYTES, wrapInboundEmail } from './inbound.js'
+import { decodedField } from './mime.js'
 import type { Inbox, RelayNetwork } from './relays.js'
 import type { TlsCredentials } from './tls.js'
 import type { AppConfig, Domain, DomainRepository } from './types.js'
@@ -19,10 +20,25 @@ const MAX_RECIPIENTS = 50
 // RFC 5321 4.5.3.2.7: a server waits 5 minutes for the next command. The timer
 // also runs while a message is delivered after DATA, uploads included.
 const SOCKET_TIMEOUT_MS = 5 * 60 * 1000
+// The From and Subject an abuse report is listed with on the site.
+const MAX_LISTED_CHARS = 300
 
-interface Recipient extends Inbox {
-  domain: Domain
+// The key that writes the mail to Nostr, and the Blossom servers it lists.
+interface Writer {
+  privateKey: string
+  blossomServers: string[]
+}
+
+interface Target {
+  writer: Writer
   pubkey: string
+}
+
+type Recipient = Target & Inbox
+
+type SmtpConfig = Pick<AppConfig, 'mxHost' | 'maxMessageBytes' | 'adminPubkeys' | 'blossomServers'> & {
+  // The server's own key, which writes the complaints no domain key is left for.
+  serverPrivateKey: string
 }
 
 export interface SmtpLogger {
@@ -41,27 +57,63 @@ export function createSmtpServer(
   relays: RelayNetwork,
   blobs: BlobStore,
   resolver: DNSResolver,
-  { mxHost, maxMessageBytes }: Pick<AppConfig, 'mxHost' | 'maxMessageBytes'>,
+  { mxHost, maxMessageBytes, adminPubkeys, blossomServers, serverPrivateKey }: SmtpConfig,
   { logger = silent, tls }: { logger?: SmtpLogger; tls?: TlsCredentials } = {},
 ): SMTPServer {
   // Keyed by envelope, which the server replaces for every transaction.
   const recipients = new WeakMap<SMTPServerEnvelope, Recipient[]>()
+  const abuseDomains = new WeakMap<SMTPServerEnvelope, Set<string>>()
+  const serverWriter: Writer = { privateKey: serverPrivateKey, blossomServers }
 
   async function acceptRecipient(address: SMTPServerAddress, session: SMTPServerSession): Promise<void> {
     const accepted = recipients.get(session.envelope) ?? []
     if (accepted.length >= MAX_RECIPIENTS) throw smtpError(452, '4.5.3 Too many recipients')
 
     const parsed = parseEmailAddress(address.address)
-    const domain = parsed ? await repo.findVerifiedDomain(parsed.domain) : null
-    const pubkey = parsed && domain ? await findAddressPubkey(repo, domain.domain, parsed.localPart) : null
-    if (!domain || !pubkey) throw smtpError(550, '5.1.1 No such user here')
-    if (accepted.some((recipient) => recipient.pubkey === pubkey)) return
+    const abuse = parsed?.localPart === ABUSE_LOCAL_PART
+    const targets = !parsed
+      ? null
+      : abuse
+        ? await findComplaintTargets(parsed.domain)
+        : await findTargets(parsed.domain, parsed.localPart)
+    if (!parsed || !targets) throw smtpError(550, '5.1.1 No such user here')
 
-    const inbox = await relays.findInbox(pubkey)
-    if (!inbox.dmRelays.length) throw smtpError(450, '4.2.0 The recipient has no Nostr DM relays yet')
+    const added = targets.filter((target) => !accepted.some((recipient) => recipient.pubkey === target.pubkey))
+    const inboxes = await Promise.all(added.map((target) => relays.findInbox(target.pubkey)))
+    // A complaint is kept on the server anyway, and goes on to whoever can get it.
+    if (!abuse && inboxes.some((inbox) => !inbox.dmRelays.length)) {
+      throw smtpError(450, '4.2.0 The recipient has no Nostr DM relays yet')
+    }
 
-    accepted.push({ domain, pubkey, ...inbox })
+    added.forEach((target, index) => {
+      if (inboxes[index].dmRelays.length) accepted.push({ ...target, ...inboxes[index] })
+      else logger.info({ session: session.id, pubkey: target.pubkey }, 'An abuse report recipient has no DM relays')
+    })
     recipients.set(session.envelope, accepted)
+    if (abuse) {
+      abuseDomains.set(session.envelope, (abuseDomains.get(session.envelope) ?? new Set()).add(parsed.domain))
+    }
+  }
+
+  async function findTargets(name: string, localPart: string): Promise<Target[] | null> {
+    const domain = await repo.findVerifiedDomain(name)
+    const pubkey = domain ? await findAddressPubkey(repo, name, localPart) : null
+    return domain && pubkey ? [{ writer: domainWriter(domain), pubkey }] : null
+  }
+
+  // A complaint reaches the admins, and the owner of the domain while it has one,
+  // whoever abuse@ is declared to. The server takes complaints about itself and
+  // about every domain it sent mail for, suspended or released since.
+  async function findComplaintTargets(name: string): Promise<Target[] | null> {
+    const owned = await repo.findOwnedDomain(name)
+    if (owned) {
+      const declared = await findAddressPubkey(repo, name, ABUSE_LOCAL_PART)
+      const pubkeys = [declared, owned.pubkey, ...adminPubkeys].filter((pubkey) => pubkey !== null)
+      return [...new Set(pubkeys)].map((pubkey) => ({ writer: domainWriter(owned), pubkey }))
+    }
+    if (name !== mxHost && !(await repo.hasServedDomain(name)) && !(await repo.findSuspension(name))) return null
+
+    return adminPubkeys.map((pubkey) => ({ writer: serverWriter, pubkey }))
   }
 
   async function deliver(stream: SMTPServerDataStream, session: SMTPServerSession): Promise<string> {
@@ -89,9 +141,25 @@ export function createSmtpServer(
       Buffer.from(traceHeaders(session, mailFrom, mxHost, authentication.headers)),
       removeForgedResults(message, mxHost),
     ])
+    const emailId = emailIdOf(message)
+    // Kept before going to Nostr, so the site has the report even while the relays fail.
+    for (const domain of abuseDomains.get(session.envelope) ?? []) {
+      await repo.addAbuseReport({
+        domain,
+        emailId,
+        mailFrom,
+        from: decodedField(message, 'from').slice(0, MAX_LISTED_CHARS),
+        subject: decodedField(message, 'subject').slice(0, MAX_LISTED_CHARS),
+        message: mime,
+      })
+      logger.info({ session: session.id, domain, emailId }, 'Kept an abuse report')
+    }
+    // Only a complaint can reach nobody over Nostr: the copy above is then all there is.
+    if (!targets.length) return 'Kept on this server'
+
     const email: InboundEmail = {
       mailFrom,
-      emailId: emailIdOf(message),
+      emailId,
       body:
         mime.length < MAX_INLINE_MIME_BYTES
           ? { mime: mime.toString('utf8') }
@@ -99,9 +167,9 @@ export function createSmtpServer(
     }
 
     const delivered = await Promise.all(
-      targets.map(async ({ domain, pubkey, dmRelays }) => {
-        const wrap = wrapInboundEmail(email, domain.bridgePrivateKey, pubkey)
-        const accepted = await relays.publish(dmRelays, wrap, hexToBytes(domain.bridgePrivateKey))
+      targets.map(async ({ writer, pubkey, dmRelays }) => {
+        const wrap = wrapInboundEmail(email, writer.privateKey, pubkey)
+        const accepted = await relays.publish(dmRelays, wrap, hexToBytes(writer.privateKey))
         return accepted.length > 0
       }),
     )
@@ -123,15 +191,15 @@ export function createSmtpServer(
     return 'Delivered over Nostr'
   }
 
-  // One blob for every recipient, on the servers of the domain keys that write
-  // the rumors and on the recipients' own: clients look in both.
+  // One blob for every recipient, on the servers of the keys that write the
+  // rumors and on the recipients' own: clients look in both.
   async function storeBlob(mime: Buffer, targets: Recipient[]): Promise<EncryptedBlob> {
     const blob = encryptBlob(mime)
     const servers = [
-      ...new Set(targets.flatMap((target) => [...target.domain.blossomServers, ...target.blossomServers])),
+      ...new Set(targets.flatMap((target) => [...target.writer.blossomServers, ...target.blossomServers])),
     ]
-    // Any domain key can sign the upload: clients find the blob by its hash.
-    const stored = await blobs.upload(servers, blob, hexToBytes(targets[0].domain.bridgePrivateKey))
+    // Any writing key can sign the upload: clients find the blob by its hash.
+    const stored = await blobs.upload(servers, blob, hexToBytes(targets[0].writer.privateKey))
     if (!stored.length) throw smtpError(451, '4.4.0 No Blossom server took the message, try again later')
 
     return blob
@@ -166,6 +234,10 @@ export function createSmtpServer(
     onRcptTo: (address, session, callback) => respond(session, acceptRecipient(address, session), callback),
     onData: (stream, session, callback) => respond(session, deliver(stream, session), callback),
   })
+}
+
+function domainWriter(domain: Domain): Writer {
+  return { privateKey: domain.bridgePrivateKey, blossomServers: domain.blossomServers }
 }
 
 // The whole message is read even past the limit, as the client sends it anyway.

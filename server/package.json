@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "fastify": "^5.12.7",
+    "libmime": "5.5.2",
     "mailauth": "8.0.1",
     "nodemailer": "10.0.14",
     "nostr-tools": "^2.25.2",

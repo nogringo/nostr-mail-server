@@ -10,8 +10,12 @@ export function registerAdminRoutes(app: FastifyInstance, repo: DomainRepository
   app.get('/admin/domains', async (request, reply) => {
     if (authenticateAdmin(request, reply, admins) === null) return reply
 
-    const [domains, suspensions] = await Promise.all([repo.listAllDomains(), repo.listSuspensions()])
-    return reply.send({ domains: domains.map(present), suspensions })
+    const [domains, suspensions, abuseReports] = await Promise.all([
+      repo.listAllDomains(),
+      repo.listSuspensions(),
+      repo.listAbuseReports(),
+    ])
+    return reply.send({ domains: domains.map(present), suspensions, abuseReports })
   })
 
   app.put('/admin/domains/:domain/suspension', async (request: DomainRequest, reply) => {

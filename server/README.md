@@ -39,13 +39,18 @@ A domain is returned as:
       "required": true,
       "check": { "status": "missing", "found": [] }
     }
-  ]
+  ],
+  "abuseReports": []
 }
 ```
 
 `check` is `null` until the first check. Its `status` is `ok`, `missing`,
 `mismatch` or `error` (the lookup failed), and `found` holds what DNS returned,
 so a client can show what is wrong.
+
+`abuseReports` lists the [abuse reports](#abuse-reports) of the domain received
+since the claim was verified, newest first. A key that takes a domain over does
+not see those of the previous owner.
 
 ### Records
 
@@ -84,6 +89,10 @@ Several keys may claim the same domain. The first one whose ownership record is
 found becomes its owner and the other claims are dropped. Verification is not
 lost when a later check misses the record, but a new key that publishes its own
 token takes the domain over: DNS is the source of truth.
+
+Once a claim on a domain is verified, the server remembers that it served the
+domain, for good: its [`abuse@`](#abuse-reports) still takes mail after the
+claim is released.
 
 ## Addresses
 
@@ -131,7 +140,8 @@ same NIP-98 authentication. Any other key gets `403 not_admin`.
 
 | Method | Path | Action |
 |--------|------|--------|
-| `GET` | `/admin/domains` | `{"domains": [...], "suspensions": [...]}`: every claim of every key, verified or not, sorted by domain then by age, and every suspended domain |
+| `GET` | `/admin/domains` | `{"domains": [...], "suspensions": [...], "abuseReports": [...]}`: every claim of every key, verified or not, sorted by domain then by age, every suspended domain and every [abuse report](#abuse-reports), newest first |
+| `GET` | `/admin/abuse-reports/{id}` | The message of any abuse report, or `404 abuse_report_not_found` |
 | `PUT` | `/admin/domains/{domain}/suspension` | Suspend the domain, claimed or not: `201` when suspended, `200` when it already was, `400 invalid_domain` |
 | `DELETE` | `/admin/domains/{domain}/suspension` | Lift the suspension: `204`, or `404 suspension_not_found` |
 
@@ -160,7 +170,8 @@ returned as `{"domain": "example.com", "suspendedAt": "<date>"}`.
 
 A suspension takes the domain name out of service, whichever key claims it:
 
-- `RCPT TO` on the domain is refused with `550 5.1.1`.
+- `RCPT TO` on the domain is refused with `550 5.1.1`, except
+  [`abuse@`](#abuse-reports).
 - NIP-05 resolves no name on it and Caddy gets it no new certificate.
 - Its key stops listening for wraps within 30 seconds, and the mail it still
   had queued fails at its next attempt.
@@ -210,8 +221,8 @@ answered with a temporary error so the sending server retries.
 
 | Step | Answer |
 |------|--------|
-| `RCPT TO` on a domain that is not verified or is suspended, or a local part that is neither a declared address nor an npub | `550 5.1.1` |
-| `RCPT TO` whose pubkey publishes no DM relay list (kind 10050) | `450 4.2.0` |
+| `RCPT TO` on a domain that is not verified or is suspended, or a local part that is neither a declared address, an npub nor `abuse` (`abuse` is taken on a suspended domain, on one the server served once, and on `MX_HOST`) | `550 5.1.1` |
+| `RCPT TO` with a pubkey that publishes no DM relay list (kind 10050), except to `abuse` | `450 4.2.0` |
 | More than 50 recipients | `452 4.5.3` |
 | Message above `MAX_MESSAGE_BYTES` | `552 5.3.4` |
 | Message failing DMARC from a domain whose policy is `reject` | `550 5.7.1` |
@@ -228,6 +239,53 @@ for mail from a legacy sender:
 - `email-id` is the SHA-256 of the message as received, so a retried delivery
   keeps the same id.
 - `mail-from` is the SMTP envelope sender.
+
+### Abuse reports
+
+`abuse@<domain>` (RFC 2142) always exists on a verified domain. It reaches the
+domain owner and every key of `ADMIN_PUBKEYS`, plus the pubkey it is declared
+to, if any: the server sends the domain's mail, so its admins hear about
+complaints too. Each of them gets one wrap. A pubkey without DM relays is
+skipped rather than deferring the complaint, which the server keeps anyway.
+
+`abuse@` keeps taking mail when the domain is out of service: while it is
+[suspended](#suspension), and after its claim is released if the server
+served it once, as complaints about the mail it sent can come later. A
+suspended domain's verified owner and the admins get it as usual. When nobody
+owns the domain any more, or it was suspended before anyone claimed it, no
+domain key is left to write it, so the admins get it written by the server's
+own key. `abuse@MX_HOST`, where complaints about the server's address go, also
+reaches the admins under that key. A domain the server never served nor
+suspended takes no mail at all.
+
+The server's key is created on its first start and stored in the database; its
+hex pubkey is logged as `serverPubkey` when SMTP starts listening. When nobody
+can get a complaint over Nostr (no admin, or no DM relays), the server answers
+`250` with `Kept on this server`.
+
+The server also keeps every message sent to `abuse@`, once per domain, before
+publishing it to Nostr: a delivery the sender retries is not kept twice, and
+the report is kept even while the relays refuse it. A report is listed as:
+
+```json
+{
+  "id": 3,
+  "domain": "example.com",
+  "mailFrom": "reports@isp.example",
+  "from": "ISP Abuse Desk <reports@isp.example>",
+  "subject": "Spam from your domain",
+  "size": 4812,
+  "receivedAt": "2026-10-20T12:00:00.000Z"
+}
+```
+
+`from` and `subject` are the decoded fields, cut at 300 characters. The
+message itself, as delivered over Nostr with the trace fields on top, is read
+as `message/rfc822` from `GET /admin/abuse-reports/{id}` by an admin, or from
+`GET /domains/{domain}/abuse-reports/{id}` by the owner of the domain, with the
+same NIP-98 authentication. The owner gets `404 domain_not_found` without a
+claim on the domain and `404 abuse_report_not_found` for a report that is not
+in its list. Reports are not deleted yet.
 
 ### Large messages
 
@@ -372,7 +430,7 @@ cp .env.example .env
 | `MX_HOST` | yes | | SMTP host that connected domains point their MX at, and the name the server greets with when it sends |
 | `SPF_INCLUDE` | yes | | Domain whose SPF record lists the address the server sends from |
 | `PUBLIC_IPV4` | yes | | IPv4 address that connected domains point their A record at, so that their HTTPS reaches this server |
-| `ADMIN_PUBKEYS` | no | nobody | Comma-separated npubs or hex public keys allowed to call the [admin routes](#admin) |
+| `ADMIN_PUBKEYS` | no | nobody | Comma-separated npubs or hex public keys allowed to call the [admin routes](#admin), which also receive [abuse reports](#abuse-reports) |
 | `DKIM_SELECTOR` | no | `nostrmail` | Selector given to new claims; existing claims keep theirs |
 | `DNS_SERVERS` | no | system resolver | Comma-separated IP addresses used for the record checks and for SPF, DKIM and DMARC |
 | `PORT` | no | `3000` | HTTP port |

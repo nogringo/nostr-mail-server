@@ -72,6 +72,9 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '004_add_blossom_servers.sql',
       '005_create_outbound.sql',
       '006_create_suspended_domains.sql',
+      '007_create_abuse_reports.sql',
+      '008_create_served_domains.sql',
+      '009_create_server_key.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -214,6 +217,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect(await repo.findVerifiedDomainByBridgePubkey(owner?.bridgePubkey ?? '')).toBeNull()
     expect(await repo.listVerifiedDomains()).toEqual([])
     expect(await repo.findDomain('example.com', BOB)).toEqual(owner)
+    expect(await repo.findOwnedDomain('example.com')).toEqual(owner)
 
     expect(await repo.unsuspendDomain('example.com')).toBe(true)
     expect(await repo.unsuspendDomain('example.com')).toBe(false)
@@ -281,5 +285,51 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
 
     const remaining = await admin.query(`select count(*)::int as count from ${schema}.outbound_messages`)
     expect(remaining.rows).toEqual([{ count: 0 }])
+  })
+
+  test('keeps an abuse report once per domain and message, and lists the newest first', async () => {
+    const message = Buffer.from('Subject: Spam\r\n\r\n\xff raw byte\r\n', 'latin1')
+    const report = { mailFrom: 'spam@sender.example', from: 'Spam <spam@sender.example>', subject: 'Spam', message }
+    await repo.addAbuseReport({ ...report, domain: 'example.com', emailId: 'one' })
+    await repo.addAbuseReport({ ...report, domain: 'example.com', emailId: 'one' })
+    await repo.addAbuseReport({ ...report, domain: 'other.example', emailId: 'one' })
+
+    const listed = await repo.listAbuseReports()
+    expect(listed.map((kept) => kept.domain)).toEqual(['other.example', 'example.com'])
+    expect(listed[1]).toEqual({
+      id: expect.any(Number),
+      domain: 'example.com',
+      mailFrom: 'spam@sender.example',
+      from: 'Spam <spam@sender.example>',
+      subject: 'Spam',
+      size: message.length,
+      receivedAt: expect.any(String),
+    })
+    expect(await repo.listAbuseReports({ domain: 'example.com', since: listed[1].receivedAt })).toEqual([listed[1]])
+    expect(
+      await repo.listAbuseReports({ domain: 'example.com', since: new Date(Date.now() + 60_000).toISOString() }),
+    ).toEqual([])
+    expect(await repo.findAbuseReport(listed[1].id)).toEqual({ report: listed[1], message })
+    expect(await repo.findAbuseReport(0)).toBeNull()
+  })
+
+  test('remembers a domain once a claim on it is verified, also after it is released', async () => {
+    await repo.createDomain(claim('served.example', CAROL))
+    await repo.recordChecks('served.example', CAROL, checks, false)
+    expect(await repo.hasServedDomain('served.example')).toBe(false)
+
+    await repo.recordChecks('served.example', CAROL, checks, true)
+    await repo.recordChecks('served.example', CAROL, checks, true)
+    await repo.deleteDomain('served.example', CAROL)
+
+    expect(await repo.hasServedDomain('served.example')).toBe(true)
+    expect(await repo.findOwnedDomain('served.example')).toBeNull()
+  })
+
+  test('creates the server key once and keeps it', async () => {
+    const first = generateKeyPair()
+
+    expect(await repo.findOrCreateServerKey(first)).toEqual(first)
+    expect(await repo.findOrCreateServerKey(generateKeyPair())).toEqual(first)
   })
 })

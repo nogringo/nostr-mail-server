@@ -1,3 +1,5 @@
+import libmime from 'libmime'
+
 const FIELD_START = /(?<=\n)(?![ \t])/
 
 export interface SplitMessage {
@@ -27,4 +29,10 @@ export function fieldValues(message: Buffer, name: string): string[] {
         .replace(/\r?\n(?=[ \t])/g, '')
         .trim(),
     )
+}
+
+// The first field with this name, raw UTF-8 (RFC 6532) and encoded words (RFC 2047) decoded.
+export function decodedField(message: Buffer, name: string): string {
+  const [value = ''] = fieldValues(message, name)
+  return libmime.decodeWords(Buffer.from(value, 'latin1').toString('utf8'))
 }

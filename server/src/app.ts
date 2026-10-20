@@ -1,4 +1,5 @@
 import Fastify, { type FastifyError } from 'fastify'
+import { registerAbuseRoutes } from './handlers/abuse.js'
 import { registerAddressRoutes } from './handlers/addresses.js'
 import { registerAdminRoutes } from './handlers/admin.js'
 import { registerCertificateRoutes } from './handlers/certificates.js'
@@ -29,6 +30,7 @@ export function buildApp(
   registerNip05Routes(app, repo)
   registerCertificateRoutes(app, repo)
   registerAdminRoutes(app, repo, config.adminPubkeys)
+  registerAbuseRoutes(app, repo, config.adminPubkeys)
 
   return app
 }

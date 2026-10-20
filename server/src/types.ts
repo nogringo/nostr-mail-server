@@ -118,6 +118,28 @@ export interface OutboundMessage {
   recipients: { address: string; attempts: number }[]
 }
 
+// Mail sent to abuse@ of a domain, as listed: the message is read on its own.
+export interface AbuseReport {
+  id: number
+  domain: string
+  mailFrom: string
+  // The From and Subject fields, decoded.
+  from: string
+  subject: string
+  size: number
+  receivedAt: string
+}
+
+export type NewAbuseReport = Pick<AbuseReport, 'domain' | 'mailFrom' | 'from' | 'subject'> & {
+  emailId: string
+  message: Buffer
+}
+
+export interface KeyPair {
+  pubkey: string
+  privateKey: string
+}
+
 export type RecipientOutcome =
   | { status: 'delivered' | 'failed'; response: string }
   | { status: 'pending'; response: string; nextAttemptAt: Date }
@@ -127,6 +149,10 @@ export interface DomainRepository {
   // The verified lookups leave the suspended domains out: nothing is served for them.
   findVerifiedDomain(domain: string): Promise<Domain | null>
   findVerifiedDomainByBridgePubkey(bridgePubkey: string): Promise<Domain | null>
+  // The verified claim, also while the domain is suspended: only its abuse@ is served then.
+  findOwnedDomain(domain: string): Promise<Domain | null>
+  // Whether a claim on the domain was ever verified, released since or not.
+  hasServedDomain(domain: string): Promise<boolean>
   listVerifiedDomains(): Promise<Domain[]>
   listDomains(pubkey: string): Promise<Domain[]>
   // Every claim of every key, verified or not.
@@ -134,6 +160,7 @@ export interface DomainRepository {
   // Returns the existing claim when this pubkey already claimed the domain.
   createDomain(input: NewDomain): Promise<Domain>
   // A verified claim becomes the domain's owner: the other claims on it, and their addresses, are dropped.
+  // The domain is then served for good.
   recordChecks(domain: string, pubkey: string, checks: DomainChecks, verified: boolean): Promise<Domain | null>
   // Also drops the addresses the claim declared.
   deleteDomain(domain: string, pubkey: string): Promise<boolean>
@@ -155,6 +182,13 @@ export interface DomainRepository {
   recordOutcomes(wrapId: string, outcomes: Map<string, RecipientOutcome>): Promise<void>
   // Deletes the messages received before `before` that wait for nothing.
   pruneOutboundMessages(before: Date): Promise<number>
+  // Does nothing when the domain already has this message.
+  addAbuseReport(input: NewAbuseReport): Promise<void>
+  // Newest first, every domain's without a filter.
+  listAbuseReports(filter?: { domain: string; since: string }): Promise<AbuseReport[]>
+  findAbuseReport(id: number): Promise<{ report: AbuseReport; message: Buffer } | null>
+  // Stores `generated` as the server's key unless it already has one, and returns the stored key.
+  findOrCreateServerKey(generated: KeyPair): Promise<KeyPair>
 }
 
 export interface MxRecord {
