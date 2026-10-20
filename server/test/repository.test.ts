@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import pg from 'pg'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { migrate } from '../src/migrations.js'
+import { generateKeyPair } from '../src/nostr.js'
 import { PgDomainRepository } from '../src/repository.js'
 import type { DomainChecks, NewDomain } from '../src/types.js'
 
@@ -11,6 +12,7 @@ const databaseUrl = process.env.TEST_DATABASE_URL ?? ''
 
 const ALICE = 'a'.repeat(64)
 const BOB = 'b'.repeat(64)
+const CAROL = 'c'.repeat(64)
 
 const checks: DomainChecks = {
   ownership: { status: 'ok', found: ['nostr-mail-verification=t'] },
@@ -21,6 +23,7 @@ const checks: DomainChecks = {
 }
 
 function claim(domain: string, pubkey: string): NewDomain {
+  const bridge = generateKeyPair()
   return {
     domain,
     pubkey,
@@ -28,6 +31,8 @@ function claim(domain: string, pubkey: string): NewDomain {
     dkimSelector: 'nostrmail',
     dkimPublicKey: 'public',
     dkimPrivateKey: 'private',
+    bridgePubkey: bridge.pubkey,
+    bridgePrivateKey: bridge.privateKey,
   }
 }
 
@@ -57,7 +62,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
   })
 
   test('applies the pending migrations once', async () => {
-    expect(applied).toEqual(['001_create_domains.sql'])
+    expect(applied).toEqual(['001_create_domains.sql', '002_create_addresses.sql', '003_add_bridge_keys.sql'])
     expect(await migrate(url)).toEqual([])
   })
 
@@ -68,6 +73,15 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect(again.verificationToken).toBe(created.verificationToken)
     expect(created.verifiedAt).toBeNull()
     expect(await repo.findDomain('example.com', ALICE)).toEqual(created)
+  })
+
+  test('two claims never share a bridge key', async () => {
+    const taken = await repo.createDomain(claim('shared.example', ALICE))
+
+    await expect(
+      repo.createDomain({ ...claim('shared.example', BOB), bridgePubkey: taken.bridgePubkey }),
+    ).rejects.toThrow(/domains_bridge_pubkey_unique/)
+    expect(await repo.deleteDomain('shared.example', ALICE)).toBe(true)
   })
 
   test('lists the claims of a key', async () => {
@@ -114,5 +128,48 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect(await repo.deleteDomain('a.example', ALICE)).toBe(true)
     expect(await repo.deleteDomain('a.example', ALICE)).toBe(false)
     expect(await repo.recordChecks('a.example', ALICE, checks, false)).toBeNull()
+  })
+
+  test('finds the verified claim of a domain', async () => {
+    expect((await repo.findVerifiedDomain('example.com'))?.pubkey).toBe(ALICE)
+    expect(await repo.findVerifiedDomain('unknown.example')).toBeNull()
+  })
+
+  test('creates, repoints, lists and deletes addresses', async () => {
+    const created = await repo.putAddress({ domain: 'example.com', localPart: 'bob', pubkey: BOB, ownerPubkey: ALICE })
+    expect(created).toEqual({
+      domain: 'example.com',
+      localPart: 'bob',
+      pubkey: BOB,
+      ownerPubkey: ALICE,
+      createdAt: expect.any(String),
+    })
+
+    const repointed = await repo.putAddress({ ...created, pubkey: CAROL })
+    expect(repointed).toEqual({ ...created, pubkey: CAROL })
+    expect(await repo.findAddress('example.com', 'bob')).toEqual(repointed)
+
+    await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: ALICE, ownerPubkey: ALICE })
+    expect((await repo.listAddresses('example.com')).map((address) => address.localPart)).toEqual(['alice', 'bob'])
+
+    expect(await repo.deleteAddress('example.com', 'alice')).toBe(true)
+    expect(await repo.deleteAddress('example.com', 'alice')).toBe(false)
+    expect(await repo.findAddress('example.com', 'alice')).toBeNull()
+  })
+
+  test('an address needs the claim of its owner and a valid local part', async () => {
+    await expect(
+      repo.putAddress({ domain: 'example.com', localPart: 'eve', pubkey: CAROL, ownerPubkey: CAROL }),
+    ).rejects.toThrow(/foreign key/)
+    await expect(
+      repo.putAddress({ domain: 'example.com', localPart: 'Eve', pubkey: CAROL, ownerPubkey: ALICE }),
+    ).rejects.toThrow(/addresses_local_part/)
+  })
+
+  test('the addresses go away when another key takes the domain over', async () => {
+    await repo.recordChecks('example.com', BOB, checks, true)
+
+    expect(await repo.listAddresses('example.com')).toEqual([])
+    expect((await repo.findVerifiedDomain('example.com'))?.pubkey).toBe(BOB)
   })
 })

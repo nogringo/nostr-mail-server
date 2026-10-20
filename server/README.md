@@ -1,7 +1,7 @@
 # nostr-mail-server API
 
-Lets a Nostr key claim a domain, tells it which DNS records to publish, and
-checks them.
+Lets a Nostr key claim a domain, tells it which DNS records to publish, checks
+them, then lets the owner declare addresses that the domain serves over NIP-05.
 
 ## Domains
 
@@ -53,8 +53,9 @@ so a client can show what is wrong.
 | `dkim` | TXT | `<selector>._domainkey.<domain>` | `v=DKIM1; k=rsa; p=<key>` | Its `p=` is the claim's public key |
 | `dmarc` | TXT | `_dmarc.<domain>` | `v=DMARC1; p=none` | One DMARC record, any policy (recommended, not required) |
 
-Each claim gets its own token and its own 2048-bit DKIM key, generated when it
-is created. The private key stays on the server.
+Each claim gets its own token, its own 2048-bit DKIM key and its own Nostr key
+pair, served as `_smtp@<domain>` (see [NIP-05](#nip-05)), all generated when it
+is created. The private keys stay on the server.
 
 ### Ownership
 
@@ -62,6 +63,67 @@ Several keys may claim the same domain. The first one whose ownership record is
 found becomes its owner and the other claims are dropped. Verification is not
 lost when a later check misses the record, but a new key that publishes its own
 token takes the domain over: DNS is the source of truth.
+
+## Addresses
+
+The verified owner of a domain declares its addresses, each pointing a local
+part at a pubkey. Same NIP-98 authentication as the domain routes.
+
+| Method | Path | Action |
+|--------|------|--------|
+| `GET` | `/domains/{domain}/addresses` | List the addresses of the domain |
+| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkey": "<hex or npub>"}`: `201` when created, `200` when an existing address now points at this pubkey |
+| `DELETE` | `/domains/{domain}/addresses/{localPart}` | `204`, or `404 address_not_found` |
+
+Every route answers `404 domain_not_found` when the caller has no claim on the
+domain and `409 domain_not_verified` while its claim is not verified. `PUT`
+also answers `400` with `invalid_local_part`, `reserved_local_part` or
+`invalid_pubkey`.
+
+An address is returned as:
+
+```json
+{
+  "localPart": "alice",
+  "address": "alice@example.com",
+  "pubkey": "<hex>",
+  "createdAt": "2026-10-20T12:00:00.000Z"
+}
+```
+
+A local part is lowercased and keeps to the NIP-05 characters: dot-separated
+runs of `a-z`, `0-9`, `-` and `_`, 64 characters at most. Reserved names
+cannot be declared:
+
+- `_smtp`, the domain's own key.
+- Anything starting with `npub1`: an npub local part already resolves to its
+  pubkey on every verified domain without being declared.
+
+The addresses belong to the owner's claim: they are deleted with it, when the
+owner releases the domain or when another key takes it over.
+
+## NIP-05
+
+`GET /.well-known/nostr.json?name=<local part>` answers on the connected
+domains themselves: the domain is taken from the `Host` header, so their HTTPS
+has to reach this server. It needs no authentication and sends
+`Access-Control-Allow-Origin: *`.
+
+On a verified domain, `name` resolves to:
+
+| `name` | Pubkey |
+|--------|--------|
+| `_smtp` | The domain's own key, which clients wrap the mail they send from the domain to |
+| `npub1...` | The pubkey it encodes |
+| A declared address | Its pubkey |
+
+```json
+{ "names": { "alice": "<hex>" } }
+```
+
+An unknown name, or any name on a domain that is not verified, returns
+`{"names": {}}`. A missing `name` is `400 name_required`. There is no `relays`
+field: Nostr Mail finds relays through kind 10050.
 
 ## Configuration
 

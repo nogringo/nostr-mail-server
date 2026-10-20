@@ -1,30 +1,13 @@
+import { getPublicKey } from 'nostr-tools/pure'
 import { expect, test } from 'vitest'
 import { buildApp } from '../src/app.js'
-import {
-  API_HOST,
-  authorization,
-  domainConfig,
-  FakeDns,
-  MemoryDomainRepository,
-  type Signer,
-  signer,
-} from './helpers.js'
+import { API_HOST, authorization, domainConfig, FakeDns, MemoryDomainRepository, request, signer } from './helpers.js'
 
 function setup() {
   const repo = new MemoryDomainRepository()
   const dns = new FakeDns()
   const app = buildApp(repo, domainConfig, dns)
   return { repo, dns, app }
-}
-
-type App = ReturnType<typeof buildApp>
-
-function request(app: App, user: Signer, method: 'GET' | 'PUT' | 'POST' | 'DELETE', path: string) {
-  return app.inject({
-    method,
-    url: path,
-    headers: { host: API_HOST, authorization: authorization(user.sk, { method, path }) },
-  })
 }
 
 function publishOwnership(dns: FakeDns, domain: string, value: string) {
@@ -54,22 +37,26 @@ test('PUT claims a domain and returns the records to publish', async () => {
   const stored = await repo.findDomain('example.com', alice.pubkey)
   const dkim = domain.records.find((record: { id: string }) => record.id === 'dkim')
   expect(dkim.value).toBe(`v=DKIM1; k=rsa; p=${stored?.dkimPublicKey}`)
+  expect(stored?.bridgePubkey).toBe(getPublicKey(Buffer.from(stored?.bridgePrivateKey ?? '', 'hex')))
 
   await app.close()
 })
 
-test('the private DKIM key is never returned', async () => {
+test('the private keys are never returned', async () => {
   const { repo, app } = setup()
   const alice = signer()
 
   const created = await request(app, alice, 'PUT', '/domains/example.com')
   const listed = await request(app, alice, 'GET', '/domains')
-  const privateKey = (await repo.findDomain('example.com', alice.pubkey))?.dkimPrivateKey ?? ''
+  const stored = await repo.findDomain('example.com', alice.pubkey)
+  const dkimPrivateKey = stored?.dkimPrivateKey ?? ''
 
-  expect(privateKey).toMatch(/^-----BEGIN PRIVATE KEY-----/)
+  expect(dkimPrivateKey).toMatch(/^-----BEGIN PRIVATE KEY-----/)
+  expect(stored?.bridgePrivateKey).toMatch(/^[0-9a-f]{64}$/)
   for (const response of [created, listed]) {
     expect(response.body).not.toContain('PRIVATE KEY')
-    expect(response.body).not.toContain(privateKey.split('\n')[1])
+    expect(response.body).not.toContain(dkimPrivateKey.split('\n')[1])
+    expect(response.body).not.toContain(stored?.bridgePrivateKey)
   }
 
   await app.close()
@@ -99,14 +86,19 @@ test('PUT rejects an invalid domain', async () => {
   await app.close()
 })
 
-test('two keys can claim the same domain with different tokens', async () => {
-  const { app } = setup()
+test('two keys can claim the same domain with different tokens and keys', async () => {
+  const { repo, app } = setup()
+  const alice = signer()
+  const bob = signer()
 
-  const alice = await request(app, signer(), 'PUT', '/domains/example.com')
-  const bob = await request(app, signer(), 'PUT', '/domains/example.com')
+  const aliceClaim = await request(app, alice, 'PUT', '/domains/example.com')
+  const bobClaim = await request(app, bob, 'PUT', '/domains/example.com')
 
-  expect(bob.statusCode).toBe(201)
-  expect(ownershipValue(bob.json())).not.toBe(ownershipValue(alice.json()))
+  expect(bobClaim.statusCode).toBe(201)
+  expect(ownershipValue(bobClaim.json())).not.toBe(ownershipValue(aliceClaim.json()))
+  expect((await repo.findDomain('example.com', bob.pubkey))?.bridgePubkey).not.toBe(
+    (await repo.findDomain('example.com', alice.pubkey))?.bridgePubkey,
+  )
 
   await app.close()
 })

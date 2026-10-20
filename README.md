@@ -8,8 +8,8 @@ The project is built in small steps. What exists today:
 | Step | Status |
 |------|--------|
 | Claim a domain with a Nostr key, get its DNS records, check them live | done |
-| Addresses on the domain (`local part -> npub`) and NIP-05 on the domain | next |
-| Receive mail (inbound decision for haraka-webhook) | later |
+| Addresses on the domain (`local part -> npub`, plus `npub...@domain`) and NIP-05 on the domain | done |
+| Receive mail (inbound decision for haraka-webhook) | next |
 | Send mail (outbound decision for bridge-nostr-smtp, DKIM signing) | later |
 | Website: sign in with Nostr, connect a domain, manage addresses | later |
 

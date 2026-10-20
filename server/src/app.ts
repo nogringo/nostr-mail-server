@@ -1,5 +1,7 @@
 import Fastify, { type FastifyError } from 'fastify'
+import { registerAddressRoutes } from './handlers/addresses.js'
 import { registerDomainRoutes } from './handlers/domains.js'
+import { registerNip05Routes } from './handlers/nip05.js'
 import type { DnsLookup, DomainConfig, DomainRepository } from './types.js'
 
 export function buildApp(
@@ -19,6 +21,8 @@ export function buildApp(
 
   app.get('/healthz', async () => 'ok')
   registerDomainRoutes(app, repo, { config, dns })
+  registerAddressRoutes(app, repo)
+  registerNip05Routes(app, repo)
 
   return app
 }

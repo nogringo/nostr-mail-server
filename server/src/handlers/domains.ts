@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto'
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { generateDkimKeyPair } from '../dkim.js'
 import { normalizeDomain } from '../domain.js'
-import { verifyNip98 } from '../nip98.js'
+import { generateKeyPair } from '../nostr.js'
 import { checkRecords, expectedRecords } from '../records.js'
 import type { DnsLookup, Domain, DomainConfig, DomainRepository } from '../types.js'
+import { authenticate } from './auth.js'
 
 interface DomainParams {
   domain: string
@@ -39,6 +40,7 @@ export function registerDomainRoutes(
     if (existing) return reply.send({ domain: present(existing, config) })
 
     const dkim = await generateDkimKeyPair()
+    const bridge = generateKeyPair()
     const created = await repo.createDomain({
       domain: name,
       pubkey,
@@ -46,6 +48,8 @@ export function registerDomainRoutes(
       dkimSelector: config.dkimSelector,
       dkimPublicKey: dkim.publicKey,
       dkimPrivateKey: dkim.privateKey,
+      bridgePubkey: bridge.pubkey,
+      bridgePrivateKey: bridge.privateKey,
     })
     return reply.code(201).send({ domain: present(created, config) })
   })
@@ -90,7 +94,7 @@ async function findOwnDomain(repo: DomainRepository, request: DomainRequest, pub
   return name ? repo.findDomain(name, pubkey) : null
 }
 
-// The private DKIM key never leaves the server.
+// The private keys never leave the server.
 function present(domain: Domain, config: DomainConfig) {
   return {
     domain: domain.domain,
@@ -102,22 +106,4 @@ function present(domain: Domain, config: DomainConfig) {
       check: domain.checks?.[record.id] ?? null,
     })),
   }
-}
-
-// Returns the authenticated pubkey, or null after sending a 401 with the reason.
-function authenticate(request: FastifyRequest, reply: FastifyReply): string | null {
-  const result = verifyNip98({
-    authorization: request.headers.authorization,
-    method: request.method,
-    host: request.headers.host ?? '',
-    path: request.url,
-    nowSeconds: Math.floor(Date.now() / 1000),
-  })
-
-  if (!result.ok) {
-    reply.header('www-authenticate', 'Nostr').code(401).send({ error: result.reason })
-    return null
-  }
-
-  return result.pubkey
 }

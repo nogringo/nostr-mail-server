@@ -1,10 +1,12 @@
 import pg from 'pg'
-import type { Domain, DomainChecks, DomainRepository, NewDomain } from './types.js'
+import type { Address, Domain, DomainChecks, DomainRepository, NewAddress, NewDomain } from './types.js'
 
 const DOMAIN_COLUMNS = `
   domain, pubkey, verification_token, dkim_selector, dkim_public_key, dkim_private_key,
-  checks, checked_at, verified_at, created_at
+  bridge_pubkey, bridge_private_key, checks, checked_at, verified_at, created_at
 `
+
+const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, created_at'
 
 interface DomainRow {
   domain: string
@@ -13,9 +15,19 @@ interface DomainRow {
   dkim_selector: string
   dkim_public_key: string
   dkim_private_key: string
+  bridge_pubkey: string
+  bridge_private_key: string
   checks: DomainChecks | null
   checked_at: Date | null
   verified_at: Date | null
+  created_at: Date
+}
+
+interface AddressRow {
+  domain: string
+  local_part: string
+  pubkey: string
+  owner_pubkey: string
   created_at: Date
 }
 
@@ -34,6 +46,14 @@ export class PgDomainRepository implements DomainRepository {
     return result.rows[0] ? toDomain(result.rows[0]) : null
   }
 
+  async findVerifiedDomain(domain: string): Promise<Domain | null> {
+    const result = await this.pool.query<DomainRow>(
+      `select ${DOMAIN_COLUMNS} from domains where domain = $1 and verified_at is not null`,
+      [domain],
+    )
+    return result.rows[0] ? toDomain(result.rows[0]) : null
+  }
+
   async listDomains(pubkey: string): Promise<Domain[]> {
     const result = await this.pool.query<DomainRow>(
       `select ${DOMAIN_COLUMNS} from domains where pubkey = $1 order by domain asc`,
@@ -45,8 +65,11 @@ export class PgDomainRepository implements DomainRepository {
   async createDomain(input: NewDomain): Promise<Domain> {
     const result = await this.pool.query<DomainRow>(
       `
-        insert into domains (domain, pubkey, verification_token, dkim_selector, dkim_public_key, dkim_private_key)
-        values ($1, $2, $3, $4, $5, $6)
+        insert into domains (
+          domain, pubkey, verification_token, dkim_selector, dkim_public_key, dkim_private_key,
+          bridge_pubkey, bridge_private_key
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8)
         on conflict (domain, pubkey) do nothing
         returning ${DOMAIN_COLUMNS}
       `,
@@ -57,6 +80,8 @@ export class PgDomainRepository implements DomainRepository {
         input.dkimSelector,
         input.dkimPublicKey,
         input.dkimPrivateKey,
+        input.bridgePubkey,
+        input.bridgePrivateKey,
       ],
     )
     if (result.rows[0]) return toDomain(result.rows[0])
@@ -100,6 +125,44 @@ export class PgDomainRepository implements DomainRepository {
     return (result.rowCount ?? 0) > 0
   }
 
+  async listAddresses(domain: string): Promise<Address[]> {
+    const result = await this.pool.query<AddressRow>(
+      `select ${ADDRESS_COLUMNS} from addresses where domain = $1 order by local_part asc`,
+      [domain],
+    )
+    return result.rows.map(toAddress)
+  }
+
+  async findAddress(domain: string, localPart: string): Promise<Address | null> {
+    const result = await this.pool.query<AddressRow>(
+      `select ${ADDRESS_COLUMNS} from addresses where domain = $1 and local_part = $2`,
+      [domain, localPart],
+    )
+    return result.rows[0] ? toAddress(result.rows[0]) : null
+  }
+
+  async putAddress(input: NewAddress): Promise<Address> {
+    const result = await this.pool.query<AddressRow>(
+      `
+        insert into addresses (domain, local_part, pubkey, owner_pubkey)
+        values ($1, $2, $3, $4)
+        on conflict (domain, local_part) do update
+        set pubkey = excluded.pubkey, owner_pubkey = excluded.owner_pubkey
+        returning ${ADDRESS_COLUMNS}
+      `,
+      [input.domain, input.localPart, input.pubkey, input.ownerPubkey],
+    )
+    return toAddress(result.rows[0])
+  }
+
+  async deleteAddress(domain: string, localPart: string): Promise<boolean> {
+    const result = await this.pool.query('delete from addresses where domain = $1 and local_part = $2', [
+      domain,
+      localPart,
+    ])
+    return (result.rowCount ?? 0) > 0
+  }
+
   async close(): Promise<void> {
     await this.pool.end()
   }
@@ -113,9 +176,21 @@ function toDomain(row: DomainRow): Domain {
     dkimSelector: row.dkim_selector,
     dkimPublicKey: row.dkim_public_key,
     dkimPrivateKey: row.dkim_private_key,
+    bridgePubkey: row.bridge_pubkey,
+    bridgePrivateKey: row.bridge_private_key,
     checks: row.checks,
     checkedAt: row.checked_at?.toISOString() ?? null,
     verifiedAt: row.verified_at?.toISOString() ?? null,
+    createdAt: row.created_at.toISOString(),
+  }
+}
+
+function toAddress(row: AddressRow): Address {
+  return {
+    domain: row.domain,
+    localPart: row.local_part,
+    pubkey: row.pubkey,
+    ownerPubkey: row.owner_pubkey,
     createdAt: row.created_at.toISOString(),
   }
 }

@@ -1,4 +1,7 @@
-import type { NostrEvent } from 'nostr-tools/pure'
+import { decode } from 'nostr-tools/nip19'
+import { generateSecretKey, getPublicKey, type NostrEvent } from 'nostr-tools/pure'
+
+const HEX_PUBKEY = /^[0-9a-f]{64}$/
 
 export function asNostrEvent(value: unknown): NostrEvent | null {
   if (!value || typeof value !== 'object') return null
@@ -21,6 +24,30 @@ export function findTagValue(tags: string[][], name: string): string | undefined
   }
 
   return undefined
+}
+
+// Reads a pubkey given as 64 hex characters or as an npub, and returns it in hex.
+export function parsePubkey(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+
+  const key = value.trim().toLowerCase()
+  return HEX_PUBKEY.test(key) ? key : decodeNpub(key)
+}
+
+export function decodeNpub(value: string): string | null {
+  if (!value.startsWith('npub1')) return null
+
+  try {
+    const decoded = decode(value)
+    return decoded.type === 'npub' && HEX_PUBKEY.test(decoded.data) ? decoded.data : null
+  } catch {
+    return null
+  }
+}
+
+export function generateKeyPair(): { pubkey: string; privateKey: string } {
+  const secretKey = generateSecretKey()
+  return { pubkey: getPublicKey(secretKey), privateKey: Buffer.from(secretKey).toString('hex') }
 }
 
 function isStringArray(value: unknown): value is string[] {

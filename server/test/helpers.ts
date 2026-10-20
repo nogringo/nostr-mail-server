@@ -1,12 +1,16 @@
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
+import type { buildApp } from '../src/app.js'
 import { NIP98_KIND } from '../src/nip98.js'
+import { generateKeyPair } from '../src/nostr.js'
 import type {
+  Address,
   DnsLookup,
   Domain,
   DomainChecks,
   DomainConfig,
   DomainRepository,
   MxRecord,
+  NewAddress,
   NewDomain,
 } from '../src/types.js'
 
@@ -20,11 +24,17 @@ export const domainConfig: DomainConfig = {
 
 export class MemoryDomainRepository implements DomainRepository {
   readonly domains = new Map<string, Domain>()
+  readonly addresses = new Map<string, Address>()
   fail = false
 
   async findDomain(domain: string, pubkey: string): Promise<Domain | null> {
     this.assertAvailable()
     return this.domains.get(key(domain, pubkey)) ?? null
+  }
+
+  async findVerifiedDomain(domain: string): Promise<Domain | null> {
+    this.assertAvailable()
+    return [...this.domains.values()].find((claim) => claim.domain === domain && claim.verifiedAt !== null) ?? null
   }
 
   async listDomains(pubkey: string): Promise<Domain[]> {
@@ -56,8 +66,8 @@ export class MemoryDomainRepository implements DomainRepository {
     if (!current) return null
 
     if (verified) {
-      for (const [claimKey, claim] of this.domains) {
-        if (claim.domain === domain && claim.pubkey !== pubkey) this.domains.delete(claimKey)
+      for (const claim of this.domains.values()) {
+        if (claim.domain === domain && claim.pubkey !== pubkey) this.dropClaim(domain, claim.pubkey)
       }
     }
 
@@ -74,12 +84,75 @@ export class MemoryDomainRepository implements DomainRepository {
 
   async deleteDomain(domain: string, pubkey: string): Promise<boolean> {
     this.assertAvailable()
+    return this.dropClaim(domain, pubkey)
+  }
+
+  async listAddresses(domain: string): Promise<Address[]> {
+    this.assertAvailable()
+    return [...this.addresses.values()]
+      .filter((address) => address.domain === domain)
+      .sort((left, right) => left.localPart.localeCompare(right.localPart))
+  }
+
+  async findAddress(domain: string, localPart: string): Promise<Address | null> {
+    this.assertAvailable()
+    return this.addresses.get(key(domain, localPart)) ?? null
+  }
+
+  async putAddress(input: NewAddress): Promise<Address> {
+    this.assertAvailable()
+    const existing = this.addresses.get(key(input.domain, input.localPart))
+    const address = { ...input, createdAt: existing?.createdAt ?? new Date().toISOString() }
+    this.addresses.set(key(input.domain, input.localPart), address)
+    return address
+  }
+
+  async deleteAddress(domain: string, localPart: string): Promise<boolean> {
+    this.assertAvailable()
+    return this.addresses.delete(key(domain, localPart))
+  }
+
+  // Mirrors the foreign key: the addresses of a claim go away with it.
+  private dropClaim(domain: string, pubkey: string): boolean {
+    for (const [addressKey, address] of this.addresses) {
+      if (address.domain === domain && address.ownerPubkey === pubkey) this.addresses.delete(addressKey)
+    }
     return this.domains.delete(key(domain, pubkey))
   }
 
   private assertAvailable(): void {
     if (this.fail) throw new Error('database unavailable')
   }
+}
+
+const OWNERSHIP_ONLY: DomainChecks = {
+  ownership: { status: 'ok', found: [] },
+  mx: { status: 'missing', found: [] },
+  spf: { status: 'missing', found: [] },
+  dkim: { status: 'missing', found: [] },
+  dmarc: { status: 'missing', found: [] },
+}
+
+export function claim(domain: string, pubkey: string): NewDomain {
+  const bridge = generateKeyPair()
+  return {
+    domain,
+    pubkey,
+    verificationToken: pubkey.slice(0, 32),
+    dkimSelector: 'nostrmail',
+    dkimPublicKey: 'public',
+    dkimPrivateKey: 'private',
+    bridgePubkey: bridge.pubkey,
+    bridgePrivateKey: bridge.privateKey,
+  }
+}
+
+// Stores a claim whose ownership record was found, as a check would.
+export async function verifyDomain(repo: DomainRepository, domain: string, pubkey: string): Promise<Domain> {
+  await repo.createDomain(claim(domain, pubkey))
+  const verified = await repo.recordChecks(domain, pubkey, OWNERSHIP_ONLY, true)
+  if (!verified) throw new Error(`The claim on ${domain} disappeared`)
+  return verified
 }
 
 export class FakeDns implements DnsLookup {
@@ -138,6 +211,23 @@ export function authorization(sk: Uint8Array, options: TokenOptions): string {
   return `Nostr ${Buffer.from(JSON.stringify(event)).toString('base64')}`
 }
 
-function key(domain: string, pubkey: string): string {
-  return `${domain}:${pubkey}`
+export type App = ReturnType<typeof buildApp>
+
+export function request(
+  app: App,
+  user: Signer,
+  method: 'GET' | 'PUT' | 'POST' | 'DELETE',
+  path: string,
+  payload?: object,
+) {
+  return app.inject({
+    method,
+    url: path,
+    headers: { host: API_HOST, authorization: authorization(user.sk, { method, path }) },
+    payload,
+  })
+}
+
+function key(domain: string, id: string): string {
+  return `${domain}:${id}`
 }

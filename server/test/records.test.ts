@@ -10,6 +10,8 @@ const domain: Domain = {
   dkimSelector: 'nostrmail',
   dkimPublicKey: 'MIIBIjANBgkqh+kiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA==',
   dkimPrivateKey: 'unused',
+  bridgePubkey: 'b'.repeat(64),
+  bridgePrivateKey: 'unused',
   checks: null,
   checkedAt: null,
   verifiedAt: null,
