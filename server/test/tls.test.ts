@@ -8,7 +8,14 @@ import { connect as connectTls } from 'node:tls'
 import { afterEach, expect, test } from 'vitest'
 import { createSmtpServer } from '../src/smtp.js'
 import { readTls, reloadTls } from '../src/tls.js'
-import { FakeBlobStore, FakeRelayNetwork, fixtureTlsFiles, MemoryDomainRepository, replyReader } from './helpers.js'
+import {
+  FakeAuthDns,
+  FakeBlobStore,
+  FakeRelayNetwork,
+  fixtureTlsFiles,
+  MemoryDomainRepository,
+  replyReader,
+} from './helpers.js'
 
 const cleanups: (() => Promise<void>)[] = []
 
@@ -31,6 +38,7 @@ async function setup() {
     new MemoryDomainRepository(),
     new FakeRelayNetwork(),
     new FakeBlobStore(),
+    new FakeAuthDns().resolve,
     { mxHost: 'mx.example.org', maxMessageBytes: 1024 },
     { tls: loaded },
   )

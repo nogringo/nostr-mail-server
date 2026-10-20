@@ -1,5 +1,6 @@
 import type { Socket } from 'node:net'
 import { fileURLToPath } from 'node:url'
+import type { DNSResolver } from 'mailauth'
 import { decrypt, getConversationKey } from 'nostr-tools/nip44'
 import { finalizeEvent, generateSecretKey, getPublicKey, type NostrEvent } from 'nostr-tools/pure'
 import type { buildApp } from '../src/app.js'
@@ -183,6 +184,20 @@ export class FakeDns implements DnsLookup {
 
   private assertResolvable(name: string): void {
     if (this.failing.has(name)) throw Object.assign(new Error(`queryTxt ESERVFAIL ${name}`), { code: 'ESERVFAIL' })
+  }
+}
+
+// Answers the TXT lookups of mailauth like dns.promises.resolve, any other name does not exist.
+export class FakeAuthDns {
+  readonly txtRecords = new Map<string, string[]>()
+  readonly timingOut = new Set<string>()
+
+  readonly resolve: DNSResolver = async (name, rrtype) => {
+    if (this.timingOut.has(name))
+      throw Object.assign(new Error(`query${rrtype} ETIMEOUT ${name}`), { code: 'ETIMEOUT' })
+    const values = rrtype === 'TXT' ? this.txtRecords.get(name) : undefined
+    if (!values) throw Object.assign(new Error(`query${rrtype} ENOTFOUND ${name}`), { code: 'ENOTFOUND' })
+    return values.map((value) => [value])
   }
 }
 

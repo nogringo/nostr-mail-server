@@ -155,6 +155,8 @@ answered with a temporary error so the sending server retries.
 | `RCPT TO` whose pubkey publishes no DM relay list (kind 10050) | `450 4.2.0` |
 | More than 50 recipients | `452 4.5.3` |
 | Message above `MAX_MESSAGE_BYTES` | `552 5.3.4` |
+| Message failing DMARC from a domain whose policy is `reject` | `550 5.7.1` |
+| The same, while the SPF or a DKIM lookup failed | `451 4.7.0` |
 | No Blossom server stores a large message, a recipient's relays all refuse it, or the database fails | `451` |
 | Every recipient's wrap accepted by at least one of its relays | `250` |
 
@@ -162,8 +164,8 @@ Each recipient gets its own gift wrap (NIP-59) of a kind 1301 rumor written by
 the `_smtp` key of the recipient's domain, as the Nostr Mail protocol describes
 for mail from a legacy sender:
 
-- `content` is the MIME, after the `Return-Path` and `Received` headers the
-  server adds on top.
+- `content` is the MIME, after the `Return-Path`, `Received-SPF`,
+  `Authentication-Results` and `Received` headers the server adds on top.
 - `email-id` is the SHA-256 of the message as received, so a retried delivery
   keeps the same id.
 - `mail-from` is the SMTP envelope sender.
@@ -203,7 +205,39 @@ applies to the next connections without a restart; a pair that does not match
 is logged and the previous one stays. Without these settings STARTTLS is not
 offered.
 
-Not done yet: SPF, DKIM and DMARC checks.
+### SPF, DKIM and DMARC
+
+Every message is checked with [mailauth](https://github.com/postalsys/mailauth)
+before it is delivered: SPF of the envelope sender (of the HELO name for a
+bounce) against the client address, each `DKIM-Signature`, DMARC of the `From`
+domain, and ARC. The results go above the server's `Received` line, under the
+`MX_HOST` name:
+
+```
+Return-Path: <alice@sender.example>
+Received-SPF: pass (mx.example.org: domain of alice@sender.example designates 192.0.2.1 as permitted sender) ...
+Authentication-Results: mx.example.org;
+ dkim=pass header.i=@sender.example header.s=mail header.a=rsa-sha256 header.b=cFGJUfAx;
+ spf=pass (...) smtp.mailfrom=alice@sender.example smtp.helo=mail.sender.example;
+ dmarc=pass (p=REJECT arc=none) policy.dmarc=reject header.from=sender.example header.d=sender.example
+Received: from ...
+```
+
+Only a DMARC failure on a domain whose policy is `reject` refuses the message,
+as that domain asks. When a lookup of SPF or of a DKIM key failed, the message
+might pass once it works, so it is deferred instead. Everything else is delivered with its results, and the
+recipient's client decides: `quarantine`, `none`, a `reject` in test mode
+(`t=y`), or SPF failing alone, which forwarding often causes. ARC is reported,
+never used to override DMARC, since anyone can seal a message.
+
+An `Authentication-Results` field that arrives with the message under the
+`MX_HOST` name is removed (RFC 8601 section 5), so the only one left with that
+name is the server's. `email-id` stays the hash of the message as received.
+
+SPF reads the address of the sending server, so it has to reach the server
+unchanged. Docker keeps it for IPv4 port publishing, not for IPv6, where its
+proxy connects from the gateway: give `MX_HOST` no AAAA record unless IPv6
+reaches the container directly.
 
 ## Configuration
 
@@ -217,7 +251,7 @@ cp .env.example .env
 | `MX_HOST` | yes | | Inbound SMTP host that connected domains point their MX at |
 | `SPF_INCLUDE` | yes | | Domain whose SPF record lists the outbound SMTP servers |
 | `DKIM_SELECTOR` | no | `nostrmail` | Selector given to new claims; existing claims keep theirs |
-| `DNS_SERVERS` | no | system resolver | Comma-separated IP addresses used for the checks |
+| `DNS_SERVERS` | no | system resolver | Comma-separated IP addresses used for the record checks and for SPF, DKIM and DMARC |
 | `PORT` | no | `3000` | HTTP port |
 | `SMTP_PORT` | no | `2525` | SMTP port that receives mail for the connected domains |
 | `MAX_MESSAGE_BYTES` | no | `26214400` (25 MiB) | Largest message accepted over SMTP, advertised with `SIZE` |

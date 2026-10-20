@@ -1,14 +1,17 @@
 import { createDecipheriv } from 'node:crypto'
 import { type AddressInfo, connect } from 'node:net'
+import { dkimSign } from 'mailauth'
 import nodemailer from 'nodemailer'
 import { npubEncode } from 'nostr-tools/nip19'
 import type { NostrEvent } from 'nostr-tools/pure'
 import { afterEach, expect, test } from 'vitest'
+import { generateDkimKeyPair } from '../src/dkim.js'
 import { MAX_INLINE_MIME_BYTES } from '../src/inbound.js'
 import { createSmtpServer } from '../src/smtp.js'
 import type { TlsCredentials } from '../src/tls.js'
 import {
   claim,
+  FakeAuthDns,
   FakeBlobStore,
   FakeRelayNetwork,
   MemoryDomainRepository,
@@ -42,10 +45,12 @@ async function setup({ tls }: { tls?: TlsCredentials } = {}) {
   const repo = new MemoryDomainRepository()
   const network = new FakeRelayNetwork()
   const blobs = new FakeBlobStore()
+  const authDns = new FakeAuthDns()
   const server = createSmtpServer(
     repo,
     network,
     blobs,
+    authDns.resolve,
     { mxHost: 'mx.example.org', maxMessageBytes: MAX_MESSAGE_BYTES },
     { tls },
   )
@@ -66,7 +71,7 @@ async function setup({ tls }: { tls?: TlsCredentials } = {}) {
   const send = (to: string[], raw = MESSAGE) =>
     transport.sendMail({ envelope: { from: 'alice@sender.example', to }, raw })
 
-  return { repo, network, blobs, port, domain, bob, send }
+  return { repo, network, blobs, authDns, port, domain, bob, send }
 }
 
 test('a message to a declared address is gift wrapped to its pubkey and published', async () => {
@@ -91,7 +96,7 @@ test('a message to a declared address is gift wrapped to its pubkey and publishe
     ['mail-from', 'alice@sender.example'],
   ])
   expect(rumor.content).toMatch(
-    /^Return-Path: <alice@sender\.example>\r\nReceived: from .+\r\n\tby mx\.example\.org with ESMTP id \w+;\r\n\t.+ \+0000\r\n/,
+    /^Return-Path: <alice@sender\.example>\r\nReceived-SPF: [\s\S]+?\r\nAuthentication-Results: mx\.example\.org;[\s\S]+?\r\nReceived: from .+\r\n\tby mx\.example\.org with ESMTP id \w+;\r\n\t.+ \+0000\r\n/,
   )
   expect(rumor.content.endsWith(MESSAGE)).toBe(true)
 })
@@ -201,7 +206,7 @@ test('a message above the inline limit is stored on Blossom and referenced from 
   ])
 
   const mime = decryptBlob(blob.bytes, rumor)
-  expect(mime).toMatch(/^Return-Path: <alice@sender\.example>\r\nReceived: /)
+  expect(mime).toMatch(/^Return-Path: <alice@sender\.example>\r\nReceived-SPF: /)
   expect(mime.endsWith(raw)).toBe(true)
 })
 
@@ -287,6 +292,93 @@ test('a message sent over STARTTLS is delivered and traced as ESMTPS', async () 
   const { rumor } = openWrap(event, bob.sk)
   expect(rumor.content).toMatch(/\tby mx\.example\.org with ESMTPS id /)
 })
+
+test('SPF, DKIM and DMARC results are added above the Received line', async () => {
+  const { network, authDns, bob, send } = await setup()
+  const { raw } = await authenticSender(authDns, 'v=DMARC1; p=reject')
+
+  await send(['bob@example.com'], raw)
+
+  const { content } = openWrap(network.published[0].event, bob.sk).rumor
+  expect(content).toMatch(/^Return-Path: <alice@sender\.example>\r\nReceived-SPF: pass /)
+  const results = content.slice(content.indexOf('Authentication-Results: '), content.indexOf('Received: from'))
+  expect(results).toMatch(/^Authentication-Results: mx\.example\.org;/)
+  expect(results).toMatch(/dkim=pass header\.i=@sender\.example header\.s=mail/)
+  expect(results).toMatch(/spf=pass .+ smtp\.mailfrom=alice@sender\.example/)
+  expect(results).toMatch(/dmarc=pass \(p=REJECT/)
+  expect(content.endsWith(raw)).toBe(true)
+})
+
+test('a message failing DMARC under p=reject is refused with 550', async () => {
+  const { network, authDns, send } = await setup()
+  forgedSender(authDns, 'v=DMARC1; p=reject')
+
+  await expect(send(['bob@example.com'])).rejects.toMatchObject({
+    code: 'EMESSAGE',
+    responseCode: 550,
+    response: expect.stringMatching(/^550 5\.7\.1 The DMARC policy of sender\.example rejects this message/),
+  })
+  expect(network.published).toHaveLength(0)
+})
+
+test('a message failing DMARC under p=reject while SPF times out is deferred with 451', async () => {
+  const { network, authDns, send } = await setup()
+  forgedSender(authDns, 'v=DMARC1; p=reject')
+  authDns.timingOut.add('sender.example')
+
+  await expect(send(['bob@example.com'])).rejects.toMatchObject({
+    code: 'EMESSAGE',
+    responseCode: 451,
+    response: expect.stringMatching(/^451 4\.7\.0 The DMARC policy of sender\.example could not be checked/),
+  })
+  expect(network.published).toHaveLength(0)
+})
+
+test.each(['p=quarantine', 'p=none', 'p=reject; t=y'])(
+  'a message failing DMARC under %s is delivered with its results',
+  async (policy) => {
+    const { network, authDns, bob, send } = await setup()
+    forgedSender(authDns, `v=DMARC1; ${policy}`)
+
+    await send(['bob@example.com'])
+
+    const { content } = openWrap(network.published[0].event, bob.sk).rumor
+    expect(content).toMatch(/spf=fail /)
+    expect(content).toMatch(/dmarc=fail /)
+  },
+)
+
+test('results that came with the message under the name of the server are removed', async () => {
+  const { network, bob, send } = await setup()
+  const forged = 'Authentication-Results: mx.example.org;\r\n dkim=pass header.d=bank.example\r\n'
+  const relayed = 'Authentication-Results: relay.example; spf=pass smtp.mailfrom=sender.example\r\n'
+
+  await send(['bob@example.com'], forged + relayed + MESSAGE)
+
+  const { content } = openWrap(network.published[0].event, bob.sk).rumor
+  expect(content.match(/^Authentication-Results: mx\.example\.org;/gm)).toHaveLength(1)
+  expect(content).not.toContain('bank.example')
+  expect(content.endsWith(relayed + MESSAGE)).toBe(true)
+})
+
+// sender.example lets 127.0.0.1 send and signs MESSAGE with its DKIM key.
+async function authenticSender(authDns: FakeAuthDns, dmarc: string): Promise<{ raw: string }> {
+  const { publicKey, privateKey } = await generateDkimKeyPair()
+  authDns.txtRecords.set('sender.example', ['v=spf1 ip4:127.0.0.1 -all'])
+  authDns.txtRecords.set('mail._domainkey.sender.example', [`v=DKIM1; k=rsa; p=${publicKey}`])
+  authDns.txtRecords.set('_dmarc.sender.example', [dmarc])
+
+  const { signatures } = await dkimSign(MESSAGE, {
+    signatureData: [{ signingDomain: 'sender.example', selector: 'mail', privateKey }],
+  })
+  return { raw: signatures + MESSAGE }
+}
+
+// sender.example does not let 127.0.0.1 send and MESSAGE carries no signature.
+function forgedSender(authDns: FakeAuthDns, dmarc: string): void {
+  authDns.txtRecords.set('sender.example', ['v=spf1 ip4:192.0.2.1 -all'])
+  authDns.txtRecords.set('_dmarc.sender.example', [dmarc])
+}
 
 function largeMessage(bytes: number): string {
   const line = 'y'.repeat(76)

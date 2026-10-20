@@ -11,7 +11,7 @@ The project is built in small steps. What exists today:
 | Addresses on the domain (`local part -> npub`, plus `npub...@domain`) and NIP-05 on the domain | done |
 | Receive mail over SMTP and deliver it over Nostr, large mail through Blossom | done |
 | STARTTLS on incoming mail | done |
-| Check SPF, DKIM and DMARC on incoming mail | later |
+| Check SPF, DKIM and DMARC on incoming mail | done |
 | Send mail with the domain's `_smtp` key and DKIM signing | later |
 | Website: sign in with Nostr, connect a domain, check its records | done |
 | Deploy on one machine: HTTPS site and API, SMTP on port 25 | done |

@@ -1,3 +1,4 @@
+import type { DNSResolver } from 'mailauth'
 import { hexToBytes } from 'nostr-tools/utils'
 import {
   SMTPServer,
@@ -7,6 +8,7 @@ import {
   type SMTPServerSession,
 } from 'smtp-server'
 import { findAddressPubkey, parseEmailAddress } from './address.js'
+import { authenticateMessage, dmarcRejection, removeForgedResults, summarize } from './authentication.js'
 import { type BlobStore, type EncryptedBlob, encryptBlob } from './blossom.js'
 import { emailIdOf, type InboundEmail, MAX_INLINE_MIME_BYTES, wrapInboundEmail } from './inbound.js'
 import type { Inbox, RelayNetwork } from './relays.js'
@@ -38,6 +40,7 @@ export function createSmtpServer(
   repo: DomainRepository,
   relays: RelayNetwork,
   blobs: BlobStore,
+  resolver: DNSResolver,
   { mxHost, maxMessageBytes }: Pick<AppConfig, 'mxHost' | 'maxMessageBytes'>,
   { logger = silent, tls }: { logger?: SmtpLogger; tls?: TlsCredentials } = {},
 ): SMTPServer {
@@ -67,7 +70,25 @@ export function createSmtpServer(
 
     const targets = recipients.get(session.envelope) ?? []
     const mailFrom = session.envelope.mailFrom ? session.envelope.mailFrom.address : ''
-    const mime = Buffer.concat([Buffer.from(traceHeaders(session, mailFrom, mxHost)), message])
+    const authentication = await authenticateMessage(
+      message,
+      { ip: session.remoteAddress, helo: session.hostNameAppearsAs, mailFrom },
+      mxHost,
+      resolver,
+    )
+    const rejection = dmarcRejection(authentication)
+    if (rejection?.temporary) {
+      throw smtpError(451, `4.7.0 The DMARC policy of ${rejection.domain} could not be checked, try again later`)
+    }
+    if (rejection) {
+      logger.info({ session: session.id, domain: rejection.domain }, 'Rejected an email failing DMARC')
+      throw smtpError(550, `5.7.1 The DMARC policy of ${rejection.domain} rejects this message`)
+    }
+
+    const mime = Buffer.concat([
+      Buffer.from(traceHeaders(session, mailFrom, mxHost, authentication.headers)),
+      removeForgedResults(message, mxHost),
+    ])
     const email: InboundEmail = {
       mailFrom,
       emailId: emailIdOf(message),
@@ -90,7 +111,13 @@ export function createSmtpServer(
     }
 
     logger.info(
-      { session: session.id, emailId: email.emailId, recipients: targets.length, bytes: mime.length },
+      {
+        session: session.id,
+        emailId: email.emailId,
+        recipients: targets.length,
+        bytes: mime.length,
+        ...summarize(authentication),
+      },
       'Delivered an email',
     )
     return 'Delivered over Nostr'
@@ -151,10 +178,12 @@ async function readMessage(stream: SMTPServerDataStream): Promise<Buffer> {
 }
 
 // RFC 5321 4.4: the server that delivers the message adds Return-Path and a Received line.
-function traceHeaders(session: SMTPServerSession, mailFrom: string, mxHost: string): string {
+// RFC 7208 9.1 and RFC 8601 5: the results of the checks go on top of that Received line.
+function traceHeaders(session: SMTPServerSession, mailFrom: string, mxHost: string, results: string): string {
   const date = new Date().toUTCString().replace('GMT', '+0000')
   return (
     `Return-Path: <${mailFrom}>\r\n` +
+    results +
     `Received: from ${session.hostNameAppearsAs} (${session.clientHostname} [${session.remoteAddress}])\r\n` +
     `\tby ${mxHost} with ${session.transmissionType} id ${session.id};\r\n` +
     `\t${date}\r\n`

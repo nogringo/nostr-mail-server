@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "fastify": "^5.12.7",
+    "mailauth": "8.0.1",
     "nostr-tools": "^2.25.2",
     "pg": "^8.23.1",
     "smtp-server": "3.19.17"
