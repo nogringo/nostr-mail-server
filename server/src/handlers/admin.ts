@@ -1,21 +1,30 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { normalizeDomain } from '../domain.js'
-import type { DomainRepository, DomainSummary } from '../types.js'
+import { checkServerRecords } from '../records.js'
+import type { ApiConfig, DnsLookup, DomainRepository, DomainSummary } from '../types.js'
 import { authenticateAdmin } from './auth.js'
 
 type DomainRequest = FastifyRequest<{ Params: { domain: string } }>
 
 // What the operator of the server sees and does, authenticated with NIP-98 by a key of ADMIN_PUBKEYS.
-export function registerAdminRoutes(app: FastifyInstance, repo: DomainRepository, admins: string[]): void {
+export function registerAdminRoutes(
+  app: FastifyInstance,
+  repo: DomainRepository,
+  { config, dns }: { config: ApiConfig; dns: DnsLookup },
+): void {
+  const admins = config.adminPubkeys
+
+  // The server's own records are checked live, so a reload shows a fix.
   app.get('/admin/domains', async (request, reply) => {
     if (authenticateAdmin(request, reply, admins) === null) return reply
 
-    const [domains, suspensions, abuseReports] = await Promise.all([
+    const [domains, suspensions, abuseReports, serverRecords] = await Promise.all([
       repo.listAllDomains(),
       repo.listSuspensions(),
       repo.listAbuseReports(),
+      checkServerRecords(config, dns),
     ])
-    return reply.send({ domains: domains.map(present), suspensions, abuseReports })
+    return reply.send({ domains: domains.map(present), suspensions, abuseReports, serverRecords })
   })
 
   app.put('/admin/domains/:domain/suspension', async (request: DomainRequest, reply) => {

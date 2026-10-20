@@ -6,13 +6,15 @@ import {
   createApi,
   type RecordCheck,
   type RecordId,
+  type ServerRecord,
   type Suspension,
 } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { npubOf, plural, shortNpub, timeAgo } from '../lib/format'
 import type { Signer } from '../lib/signer'
 import AbuseReportRow from './AbuseReportRow'
-import { Button, CopyButton, ErrorText } from './ui'
+import RecordRow from './RecordRow'
+import { Button, CopyButton, ErrorText, TONES, type Tone } from './ui'
 
 const RECORDS: [RecordId, string][] = [
   ['ownership', 'Ownership'],
@@ -22,10 +24,6 @@ const RECORDS: [RecordId, string][] = [
   ['dkim', 'DKIM'],
   ['dmarc', 'DMARC'],
 ]
-
-const TONES = { ok: 'text-ok', wait: 'text-wait', bad: 'text-bad', none: 'text-muted' }
-
-type Tone = keyof typeof TONES
 
 export default function Admin({ signer }: { signer: Signer }) {
   const api = useMemo(() => createApi(signer), [signer])
@@ -59,7 +57,7 @@ export default function Admin({ signer }: { signer: Signer }) {
     )
   }
 
-  const { domains, suspensions, abuseReports } = overview
+  const { domains, suspensions, abuseReports, serverRecords } = overview
   const suspended = new Set(suspensions.map((suspension) => suspension.domain))
   const served = domains.filter((domain) => !suspended.has(domain.domain))
   const verified = served.filter((domain) => domain.verifiedAt)
@@ -75,6 +73,7 @@ export default function Admin({ signer }: { signer: Signer }) {
           ? 'No domain is connected yet.'
           : `${plural(verified.length, 'domain')} connected, ${sending} sending and receiving${suspensions.length ? `, ${suspensions.length} suspended` : ''}. ${plural(addresses, 'named address', 'named addresses')}.`}
       </p>
+      <ServerDns records={serverRecords} />
       {verified.length > 0 && (
         <Section title="Connected" count={verified.length}>
           {verified.map((domain) => (
@@ -142,6 +141,49 @@ function Section({
       </h2>
       {note && <p className="mt-1 text-muted text-sm">{note}</p>}
       <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">{children}</ul>
+    </section>
+  )
+}
+
+// Open while a record needs fixing, one click away once every record is found.
+function ServerDns({ records }: { records: ServerRecord[] }) {
+  const problems = records.filter((record) => record.check.status !== 'ok').length
+  const [shown, setShown] = useState(problems > 0)
+
+  return (
+    <section className="mt-10">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="font-medium">DNS of this server</h2>
+        <p className={`text-sm ${problems ? 'text-bad' : 'text-ok'}`}>
+          {problems ? `${plural(problems, 'record')} to fix` : 'Every record found'}
+        </p>
+      </div>
+      {shown && (
+        <div id="server-dns">
+          <p className="mt-1 text-muted text-sm">
+            Checked when the page loads. Connected domains point their MX at the name of the A record and include the
+            name of the SPF record in their own. The PTR record is set at the hosting provider: receivers trust the mail
+            this server sends when its address names it back. The server works over IPv4, so its name should have no
+            AAAA record.
+          </p>
+          <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
+            {records.map((record) => (
+              <RecordRow key={record.id} record={record} />
+            ))}
+          </ul>
+        </div>
+      )}
+      {problems === 0 && (
+        <Button
+          variant="quiet"
+          className="mt-3 text-sm"
+          aria-expanded={shown}
+          aria-controls="server-dns"
+          onClick={() => setShown((current) => !current)}
+        >
+          {shown ? 'Hide records' : 'Show records'}
+        </Button>
+      )}
     </section>
   )
 }

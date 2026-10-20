@@ -20,6 +20,15 @@ export interface DnsRecord {
   check: RecordCheck | null
 }
 
+// A record the server itself needs, checked when the admin overview loads.
+export interface ServerRecord {
+  id: 'host' | 'ptr' | 'spf'
+  type: 'A' | 'PTR' | 'TXT'
+  name: string
+  value: string
+  check: RecordCheck
+}
+
 export interface Domain {
   domain: string
   verifiedAt: string | null
@@ -72,6 +81,7 @@ export interface AdminOverview {
   domains: AdminDomain[]
   suspensions: Suspension[]
   abuseReports: AbuseReport[]
+  serverRecords: ServerRecord[]
 }
 
 export class ApiError extends Error {

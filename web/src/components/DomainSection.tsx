@@ -1,15 +1,14 @@
 import { useState } from 'react'
-import type { Api, CheckStatus, DnsRecord, Domain, RecordId } from '../lib/api'
+import type { Api, DnsRecord, Domain, RecordId } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { timeAgo } from '../lib/format'
 import AbuseReportRow from './AbuseReportRow'
 import Addresses from './Addresses'
-import { Button, CopyButton, ErrorText } from './ui'
+import RecordRow from './RecordRow'
+import { Button, ErrorText, TONES, type Tone } from './ui'
 
 const RECEIVE: RecordId[] = ['ownership', 'mx', 'https']
 const SEND: RecordId[] = ['spf', 'dkim', 'dmarc']
-
-const TONES = { ok: 'text-ok', wait: 'text-wait', bad: 'text-bad', none: 'text-muted' }
 
 interface Props {
   domain: Domain
@@ -156,42 +155,9 @@ function RecordGroup({ title, note, records }: { title: string; note: string; re
   )
 }
 
-function RecordRow({ record }: { record: DnsRecord }) {
-  const check = recordStatus(record)
-  const failed = record.check && record.check.status !== 'ok' && record.check.found.length > 0
-
-  return (
-    <li className="grid grid-cols-[3rem_minmax(0,1fr)] gap-x-3 gap-y-1 px-4 py-3 sm:grid-cols-[3rem_minmax(0,1fr)_9rem]">
-      <span className="font-medium font-mono text-muted text-sm leading-6">{record.type}</span>
-      <div className="min-w-0 space-y-1 font-mono text-sm leading-6">
-        <Field text={record.name} label={`${record.type} name`} />
-        <Field text={record.value} label={`${record.type} value`} />
-        {record.priority !== undefined && <p className="font-sans text-muted">Priority {record.priority}</p>}
-        {failed && (
-          <p className="break-all font-sans text-bad">
-            Found: <span className="font-mono">{record.check?.found.join(', ')}</span>
-          </p>
-        )}
-      </div>
-      <p className={`col-start-2 text-sm leading-6 sm:col-start-3 sm:text-right ${TONES[check.tone]}`}>{check.text}</p>
-    </li>
-  )
-}
-
-function Field({ text, label }: { text: string; label: string }) {
-  return (
-    <div className="flex items-start justify-between gap-2">
-      <span className="break-all">{text}</span>
-      <CopyButton text={text} label={label} />
-    </div>
-  )
-}
-
 function pick(domain: Domain, ids: RecordId[]): DnsRecord[] {
   return domain.records.filter((record) => ids.includes(record.id))
 }
-
-type Tone = keyof typeof TONES
 
 function domainStatus(domain: Domain): { tone: Tone; text: string } {
   const found = (id: RecordId) => domain.records.find((record) => record.id === id)?.check?.status === 'ok'
@@ -202,17 +168,4 @@ function domainStatus(domain: Domain): { tone: Tone; text: string } {
   if (!found('https')) return { tone: 'wait', text: 'Receiving mail, waiting for the A record' }
   if (!found('spf') || !found('dkim')) return { tone: 'wait', text: 'Receiving mail, waiting for SPF and DKIM to send' }
   return { tone: 'ok', text: 'Sending and receiving mail' }
-}
-
-const CHECKS: Record<CheckStatus, { tone: Tone; text: string }> = {
-  ok: { tone: 'ok', text: 'Found' },
-  missing: { tone: 'wait', text: 'Missing' },
-  mismatch: { tone: 'bad', text: 'Different value' },
-  error: { tone: 'bad', text: 'Lookup failed' },
-}
-
-function recordStatus(record: DnsRecord): { tone: Tone; text: string } {
-  if (!record.check) return { tone: 'none', text: 'Not checked' }
-  if (!record.required && record.check.status !== 'ok') return { tone: 'none', text: 'Optional' }
-  return CHECKS[record.check.status]
 }

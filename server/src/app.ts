@@ -29,7 +29,7 @@ export function buildApp(
   registerAddressRoutes(app, repo)
   registerNip05Routes(app, repo)
   registerCertificateRoutes(app, repo)
-  registerAdminRoutes(app, repo, config.adminPubkeys)
+  registerAdminRoutes(app, repo, { config, dns })
   registerAbuseRoutes(app, repo, config.adminPubkeys)
 
   return app

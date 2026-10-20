@@ -1,4 +1,4 @@
-import type { Socket } from 'node:net'
+import { isIPv4, isIPv6, type Socket } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import type { DNSResolver } from 'mailauth'
 import type { Filter } from 'nostr-tools/filter'
@@ -416,7 +416,24 @@ export class FakeDns implements DnsLookup {
   readonly txtRecords = new Map<string, string[]>()
   readonly mxRecords = new Map<string, MxRecord[]>()
   readonly addressRecords = new Map<string, string[]>()
+  // By IP address.
+  readonly ptrRecords = new Map<string, string[]>()
   readonly failing = new Set<string>()
+
+  // The same records, answered like dns.promises.resolve.
+  readonly resolve: DNSResolver = async (name, rrtype) => {
+    this.assertResolvable(name)
+    const addresses = this.addressRecords.get(name) ?? []
+    const answers: Record<string, unknown[]> = {
+      TXT: (this.txtRecords.get(name) ?? []).map((value) => [value]),
+      MX: this.mxRecords.get(name) ?? [],
+      A: addresses.filter((address) => isIPv4(address)),
+      AAAA: addresses.filter((address) => isIPv6(address)),
+    }
+    const found = answers[rrtype] ?? []
+    if (!found.length) throw Object.assign(new Error(`query${rrtype} ENODATA ${name}`), { code: 'ENODATA' })
+    return found as Awaited<ReturnType<DNSResolver>>
+  }
 
   async txt(name: string): Promise<string[]> {
     this.assertResolvable(name)
@@ -431,6 +448,11 @@ export class FakeDns implements DnsLookup {
   async addresses(name: string): Promise<string[]> {
     this.assertResolvable(name)
     return this.addressRecords.get(name) ?? []
+  }
+
+  async reverse(address: string): Promise<string[]> {
+    this.assertResolvable(address)
+    return this.ptrRecords.get(address) ?? []
   }
 
   private assertResolvable(name: string): void {

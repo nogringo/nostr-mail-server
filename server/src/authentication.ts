@@ -2,7 +2,7 @@ import { type AuthenticateResult, authenticate, type DNSResolver } from 'mailaut
 import { splitHeader } from './mime.js'
 
 // RFC 7208 4.6.4: an SPF evaluation may be cut off once it takes more than 20 seconds.
-const SPF_TIME_LIMIT_MS = 20_000
+export const SPF_TIME_LIMIT_MS = 20_000
 const AUTHENTICATION_RESULTS = /^authentication-results[ \t]*:/i
 
 export interface DmarcRejection {

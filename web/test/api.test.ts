@@ -73,7 +73,7 @@ test('sends a body as JSON and signs its hash', async () => {
 })
 
 test('loads the overview of the server for an admin', async () => {
-  const overview = { domains: [], suspensions: [], abuseReports: [] }
+  const overview = { domains: [], suspensions: [], abuseReports: [], serverRecords: [] }
   const { api, requests } = recordingApi(() => Response.json(overview))
 
   expect(await api.adminOverview()).toEqual(overview)

@@ -1,5 +1,9 @@
 import { type ButtonHTMLAttributes, useEffect, useState } from 'react'
 
+export const TONES = { ok: 'text-ok', wait: 'text-wait', bad: 'text-bad', none: 'text-muted' }
+
+export type Tone = keyof typeof TONES
+
 const VARIANTS = {
   primary: 'rounded-md bg-ink px-4 py-2 font-medium text-paper hover:bg-ink/85',
   secondary: 'rounded-md border border-rule px-4 py-2 font-medium hover:border-muted',

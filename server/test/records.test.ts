@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { checkRecords, expectedRecords } from '../src/records.js'
+import { checkRecords, checkServerRecords, expectedRecords } from '../src/records.js'
 import type { Domain } from '../src/types.js'
 import { domainConfig, FakeDns } from './helpers.js'
 
@@ -180,4 +180,93 @@ test('a failing lookup is reported as an error without affecting the others', as
   const checks = await checkRecords(domain, domainConfig, dns)
   expect(checks.dmarc).toEqual({ status: 'error', found: [] })
   expect(checks.ownership.status).toBe('ok')
+})
+
+function configuredServerDns(): FakeDns {
+  const dns = new FakeDns()
+  dns.addressRecords.set('mx.example.org', ['192.0.2.10'])
+  dns.ptrRecords.set('192.0.2.10', ['mx.example.org'])
+  dns.txtRecords.set('_spf.example.org', ['v=spf1 ip4:192.0.2.10 -all'])
+  return dns
+}
+
+test('checkServerRecords passes a server whose name, address and SPF record agree', async () => {
+  const records = await checkServerRecords(domainConfig, configuredServerDns())
+
+  expect(records).toEqual([
+    {
+      id: 'host',
+      type: 'A',
+      name: 'mx.example.org',
+      value: '192.0.2.10',
+      check: { status: 'ok', found: ['192.0.2.10'] },
+    },
+    {
+      id: 'ptr',
+      type: 'PTR',
+      name: '192.0.2.10',
+      value: 'mx.example.org',
+      check: { status: 'ok', found: ['mx.example.org'] },
+    },
+    {
+      id: 'spf',
+      type: 'TXT',
+      name: '_spf.example.org',
+      value: 'v=spf1 ip4:192.0.2.10 -all',
+      check: { status: 'ok', found: ['v=spf1 ip4:192.0.2.10 -all'] },
+    },
+  ])
+})
+
+test('checkServerRecords reports missing records when nothing is published', async () => {
+  const records = await checkServerRecords(domainConfig, new FakeDns())
+
+  for (const record of records) expect(record.check, record.id).toEqual({ status: 'missing', found: [] })
+})
+
+test('the server SPF record may list the address with other mechanisms', async () => {
+  for (const record of ['v=spf1 a:mx.example.org -all', 'v=spf1 ip4:192.0.2.0/24 ~all']) {
+    const dns = configuredServerDns()
+    dns.txtRecords.set('_spf.example.org', ['google-site-verification=abc', record])
+
+    const [, , spf] = await checkServerRecords(domainConfig, dns)
+    expect(spf.check, record).toEqual({ status: 'ok', found: [record] })
+  }
+})
+
+test('the server SPF record is a mismatch when it does not list the address', async () => {
+  const dns = configuredServerDns()
+  dns.txtRecords.set('_spf.example.org', ['v=spf1 ip4:198.51.100.7 -all'])
+
+  const [, , spf] = await checkServerRecords(domainConfig, dns)
+  expect(spf.check).toEqual({ status: 'mismatch', found: ['v=spf1 ip4:198.51.100.7 -all'] })
+})
+
+test('the server SPF record is an error when a name it includes cannot be looked up', async () => {
+  const dns = configuredServerDns()
+  dns.txtRecords.set('_spf.example.org', ['v=spf1 include:_spf.broken.example -all'])
+  dns.failing.add('_spf.broken.example')
+
+  const [, , spf] = await checkServerRecords(domainConfig, dns)
+  expect(spf.check).toEqual({ status: 'error', found: ['v=spf1 include:_spf.broken.example -all'] })
+})
+
+test('PTR matches regardless of case and trailing dot, and is a mismatch for another name', async () => {
+  const dns = configuredServerDns()
+  dns.ptrRecords.set('192.0.2.10', ['MX.Example.org.'])
+  expect((await checkServerRecords(domainConfig, dns))[1].check.status).toBe('ok')
+
+  dns.ptrRecords.set('192.0.2.10', ['vps-123.provider.example.'])
+  expect((await checkServerRecords(domainConfig, dns))[1].check).toEqual({
+    status: 'mismatch',
+    found: ['vps-123.provider.example'],
+  })
+})
+
+test('the server A record is a mismatch with an AAAA record', async () => {
+  const dns = configuredServerDns()
+  dns.addressRecords.set('mx.example.org', ['192.0.2.10', '2001:db8::1'])
+
+  const [host] = await checkServerRecords(domainConfig, dns)
+  expect(host.check).toEqual({ status: 'mismatch', found: ['192.0.2.10', '2001:db8::1'] })
 })

@@ -14,8 +14,9 @@ import {
 function setup() {
   const repo = new MemoryDomainRepository()
   const admin = signer()
-  const app = buildApp(repo, { ...apiConfig, adminPubkeys: [admin.pubkey] }, new FakeDns(), new FakeRelayNetwork())
-  return { repo, app, admin }
+  const dns = new FakeDns()
+  const app = buildApp(repo, { ...apiConfig, adminPubkeys: [admin.pubkey] }, dns, new FakeRelayNetwork())
+  return { repo, app, admin, dns }
 }
 
 test('GET /admin/domains lists every claim of every key with its address count', async () => {
@@ -49,6 +50,41 @@ test('GET /admin/domains lists every claim of every key with its address count',
       createdAt: expect.any(String),
       addressCount: 0,
       checks: null,
+    },
+  ])
+
+  await app.close()
+})
+
+test('GET /admin/domains checks the DNS records of the server itself', async () => {
+  const { app, admin, dns } = setup()
+  dns.addressRecords.set('mx.example.org', ['192.0.2.10'])
+  dns.ptrRecords.set('192.0.2.10', ['vps-123.provider.example'])
+
+  const response = await request(app, admin, 'GET', '/admin/domains')
+
+  expect(response.statusCode).toBe(200)
+  expect(response.json().serverRecords).toEqual([
+    {
+      id: 'host',
+      type: 'A',
+      name: 'mx.example.org',
+      value: '192.0.2.10',
+      check: { status: 'ok', found: ['192.0.2.10'] },
+    },
+    {
+      id: 'ptr',
+      type: 'PTR',
+      name: '192.0.2.10',
+      value: 'mx.example.org',
+      check: { status: 'mismatch', found: ['vps-123.provider.example'] },
+    },
+    {
+      id: 'spf',
+      type: 'TXT',
+      name: '_spf.example.org',
+      value: 'v=spf1 ip4:192.0.2.10 -all',
+      check: { status: 'missing', found: [] },
     },
   ])
 

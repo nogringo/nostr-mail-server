@@ -140,7 +140,7 @@ same NIP-98 authentication. Any other key gets `403 not_admin`.
 
 | Method | Path | Action |
 |--------|------|--------|
-| `GET` | `/admin/domains` | `{"domains": [...], "suspensions": [...], "abuseReports": [...]}`: every claim of every key, verified or not, sorted by domain then by age, every suspended domain and every [abuse report](#abuse-reports), newest first |
+| `GET` | `/admin/domains` | `{"domains": [...], "suspensions": [...], "abuseReports": [...], "serverRecords": [...]}`: every claim of every key, verified or not, sorted by domain then by age, every suspended domain, every [abuse report](#abuse-reports), newest first, and the [server's own records](#server-records) |
 | `GET` | `/admin/abuse-reports/{id}` | The message of any abuse report, or `404 abuse_report_not_found` |
 | `PUT` | `/admin/domains/{domain}/suspension` | Suspend the domain, claimed or not: `201` when suspended, `200` when it already was, `400 invalid_domain` |
 | `DELETE` | `/admin/domains/{domain}/suspension` | Lift the suspension: `204`, or `404 suspension_not_found` |
@@ -165,6 +165,32 @@ A claim is returned as:
 `checks` holds the six records of the last check, `null` before the first one.
 `addressCount` counts the named addresses the claim declared. A suspension is
 returned as `{"domain": "example.com", "suspendedAt": "<date>"}`.
+
+### Server records
+
+`serverRecords` are the records the server itself needs, looked up on every
+call through `DNS_SERVERS`:
+
+| `id` | Record | Found when |
+|------|--------|------------|
+| `host` | A of `MX_HOST` | Its only address is `PUBLIC_IPV4`: any other A or any AAAA is a mismatch |
+| `ptr` | PTR of `PUBLIC_IPV4` | It names `MX_HOST`, the name the server greets with when it sends |
+| `spf` | TXT of `SPF_INCLUDE` | A record with `include:<SPF_INCLUDE>` passes SPF for `PUBLIC_IPV4`, so `a`, `mx` or a wider `ip4` range count too |
+
+Each is returned as:
+
+```json
+{
+  "id": "spf",
+  "type": "TXT",
+  "name": "_spf.example.org",
+  "value": "v=spf1 ip4:203.0.113.10 -all",
+  "check": { "status": "ok", "found": ["v=spf1 ip4:203.0.113.10 -all"] }
+}
+```
+
+`value` is the suggested record. `status` is `ok`, `missing`, `mismatch` or
+`error` when a lookup failed, as for the records of a domain.
 
 ### Suspension
 

@@ -9,7 +9,8 @@ since the owner verified it, each message shown or downloaded as `.eml`.
 `/admin` lists every domain connected to the server, verified or not, with
 its owner, its named addresses and the records of its last check, and
 suspends a domain or lifts its suspension. It also lists the mail sent to
-`abuse@` of every domain. Only the keys of the server's `ADMIN_PUBKEYS` can
+`abuse@` of every domain, and checks the server's own DNS records (A, PTR and
+SPF) each time it loads. Only the keys of the server's `ADMIN_PUBKEYS` can
 open it.
 
 Sign-in uses a NIP-07 extension or a NIP-46 bunker (`bunker://` link or

@@ -57,4 +57,7 @@ no IPv6, so it goes out over IPv4. Two records make receivers trust it:
 | PTR | `PUBLIC_IPV4`, at the hosting provider | `SITE_HOST` |
 
 The connected domains include `SITE_HOST` in their own SPF record, so this one
-has to list the machine's address.
+has to list the machine's address. The admin page, `https://SITE_HOST/admin`,
+checks both along with the A record of `SITE_HOST`, which should have no AAAA:
+Docker hands the server the connections it gets over IPv6 from its own gateway
+address, so SPF would be checked against the wrong address.

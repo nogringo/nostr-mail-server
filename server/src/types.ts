@@ -1,3 +1,4 @@
+import type { DNSResolver } from 'mailauth'
 import type { NostrEvent } from 'nostr-tools/pure'
 
 export interface AppConfig {
@@ -49,6 +50,15 @@ export interface DnsRecord {
   value: string
   priority?: number
   required: boolean
+}
+
+// What the server itself needs in DNS, and what a check of it found.
+export interface ServerRecord {
+  id: 'host' | 'ptr' | 'spf'
+  type: 'A' | 'PTR' | 'TXT'
+  name: string
+  value: string
+  check: RecordCheck
 }
 
 export interface Domain {
@@ -202,4 +212,8 @@ export interface DnsLookup {
   mx(name: string): Promise<MxRecord[]>
   // The A and AAAA records.
   addresses(name: string): Promise<string[]>
+  // The host names of the PTR records of an IP address.
+  reverse(address: string): Promise<string[]>
+  // The raw answers mailauth evaluates SPF with.
+  resolve: DNSResolver
 }

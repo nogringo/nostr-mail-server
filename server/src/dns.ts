@@ -15,6 +15,8 @@ export function createDnsLookup(servers: string[] = []): DnsLookup {
       const [ipv4, ipv6] = await Promise.all([orEmpty(resolver.resolve4(name)), orEmpty(resolver.resolve6(name))])
       return [...ipv4, ...ipv6]
     },
+    reverse: (address) => orEmpty(resolver.reverse(address)),
+    resolve: rawAnswers(resolver),
   }
 }
 
@@ -44,9 +46,12 @@ export async function findExchangers(
   return hosts.filter(Boolean)
 }
 
-// mailauth expects the answers and errors of dns.promises.resolve, MX objects included.
 export function createAuthResolver(servers: string[] = []): DNSResolver {
-  const resolver = createResolver(servers)
+  return rawAnswers(createResolver(servers))
+}
+
+// mailauth expects the answers and errors of dns.promises.resolve, MX objects included.
+function rawAnswers(resolver: Resolver): DNSResolver {
   return (name, rrtype) => resolver.resolve(name, rrtype) as ReturnType<DNSResolver>
 }
 
