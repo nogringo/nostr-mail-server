@@ -17,17 +17,11 @@ interface View {
 
 const OWNER = {
   subtitle: 'for your domain',
-  title: 'Email at your own domain, delivered over Nostr.',
-  intro: (
-    <>
-      Sign in with your Nostr key, connect a domain you own and publish its DNS records. Mail sent to{' '}
-      <span className="font-mono text-base text-ink">npub...@yourdomain.com</span> then reaches you in Nostr Mail.
-    </>
-  ),
+  title: 'Sign in with your Nostr key',
+  intro: 'It owns the domains you connect: sign in with the same key to manage them later.',
 }
 
-const VIEWS: Record<'home' | 'dashboard' | 'connect' | 'domain' | 'admin', View> = {
-  home: { ...OWNER, Page: Home },
+const VIEWS: Record<'dashboard' | 'connect' | 'domain' | 'admin', View> = {
   dashboard: { ...OWNER, Page: Dashboard },
   connect: { ...OWNER, Page: Connect },
   domain: { ...OWNER, Page: DomainPage },
@@ -39,7 +33,7 @@ const VIEWS: Record<'home' | 'dashboard' | 'connect' | 'domain' | 'admin', View>
   },
 }
 
-export default function App({ view = 'home' }: { view?: keyof typeof VIEWS }) {
+export default function App({ view }: { view: keyof typeof VIEWS }) {
   const [signer, setSigner] = useState<Signer | null>(null)
   const [restoring, setRestoring] = useState(true)
   const { subtitle, Page, title, intro } = VIEWS[view]
@@ -81,12 +75,4 @@ export default function App({ view = 'home' }: { view?: keyof typeof VIEWS }) {
       </main>
     </div>
   )
-}
-
-// Signed in, the home page leads to the domains.
-function Home() {
-  useEffect(() => {
-    window.location.replace('/dashboard')
-  }, [])
-  return null
 }

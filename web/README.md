@@ -1,8 +1,9 @@
 # nostr-mail-server website
 
-Sign in with a Nostr key. `/` leads a signed in key to `/dashboard`, the list
-of its domains with the state of each. `/connect` connects a new domain and
-opens its page.
+`/` is the home page: what the service does and how it works, rendered at
+build time with no script. The other pages ask for a Nostr key first.
+`/dashboard` lists the domains of the key with the state of each. `/connect`
+connects a new domain and opens its page.
 
 `/domain?name=<domain>` is the page of one domain, in tabs:
 
