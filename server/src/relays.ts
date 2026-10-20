@@ -13,9 +13,10 @@ const PUBLISH_TIMEOUT_MS = 10000
 // servers one recipient makes us contact.
 const MAX_URLS = 8
 
-// Where a pubkey receives: its DM relays (kind 10050) and Blossom servers (kind 10063).
+// Where a pubkey receives: its DM relays (kind 10050), else its NIP-65 read
+// relays (kind 10002), and its Blossom servers (kind 10063).
 export interface Inbox {
-  dmRelays: string[]
+  relays: string[]
   blossomServers: string[]
 }
 
@@ -43,9 +44,9 @@ export class NostrRelayNetwork implements RelayNetwork {
       authors: [pubkey],
     })
 
-    // NIP-65: the lists may only be on the pubkey's write relays.
+    // NIP-65: a pubkey publishes its lists on its write relays.
     const relayList = latest(lists, RELAY_LIST_KIND, pubkey)
-    if (!latest(lists, DM_RELAY_LIST_KIND, pubkey) && relayList) {
+    if (relayList) {
       const fromWriteRelays = await this.query(writeRelaysOf(relayList), {
         kinds: [DM_RELAY_LIST_KIND, BLOSSOM_SERVER_LIST_KIND],
         authors: [pubkey],
@@ -53,12 +54,7 @@ export class NostrRelayNetwork implements RelayNetwork {
       lists.push(...fromWriteRelays)
     }
 
-    const dmList = latest(lists, DM_RELAY_LIST_KIND, pubkey)
-    const serverList = latest(lists, BLOSSOM_SERVER_LIST_KIND, pubkey)
-    return {
-      dmRelays: dmList ? dmRelaysOf(dmList) : [],
-      blossomServers: serverList ? blossomServersOf(serverList) : [],
-    }
+    return inboxOf(lists, pubkey)
   }
 
   async publish(relays: string[], event: NostrEvent, authKey: Uint8Array): Promise<string[]> {
@@ -106,8 +102,24 @@ export function latest(events: NostrEvent[], kind: number, pubkey: string): Nost
     )
 }
 
+export function inboxOf(lists: NostrEvent[], pubkey: string): Inbox {
+  const relayList = latest(lists, RELAY_LIST_KIND, pubkey)
+  const dmList = latest(lists, DM_RELAY_LIST_KIND, pubkey)
+  const serverList = latest(lists, BLOSSOM_SERVER_LIST_KIND, pubkey)
+  const dmRelays = dmList ? dmRelaysOf(dmList) : []
+  const readRelays = relayList ? readRelaysOf(relayList) : []
+  return {
+    relays: dmRelays.length ? dmRelays : readRelays,
+    blossomServers: serverList ? blossomServersOf(serverList) : [],
+  }
+}
+
 export function dmRelaysOf(dmList: NostrEvent): string[] {
   return urlsOf(dmList, (tag) => tag[0] === 'relay', normalizeRelayUrl)
+}
+
+export function readRelaysOf(relayList: NostrEvent): string[] {
+  return urlsOf(relayList, (tag) => tag[0] === 'r' && tag[2] !== 'write', normalizeRelayUrl)
 }
 
 export function writeRelaysOf(relayList: NostrEvent): string[] {

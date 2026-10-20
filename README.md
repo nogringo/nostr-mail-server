@@ -33,7 +33,8 @@ The project is built in small steps. What exists today:
 Each connected domain gets its own Nostr key, published as `_smtp@<domain>`.
 
 - Inbound: the server receives SMTP for the connected domains, gift wraps each
-  message with the domain's key and publishes it to the recipient's DM relays.
+  message with the domain's key and publishes it to the recipient's DM relays,
+  or to its NIP-65 read relays when it lists none.
 - Outbound: Nostr Mail clients wrap the mail they send from the domain to
   `_smtp@<domain>`, and the server sends it over SMTP to the recipients' MX,
   signed with the domain's DKIM key.

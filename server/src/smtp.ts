@@ -81,13 +81,13 @@ export function createSmtpServer(
     const added = targets.filter((target) => !accepted.some((recipient) => recipient.pubkey === target.pubkey))
     const inboxes = await Promise.all(added.map((target) => relays.findInbox(target.pubkey)))
     // A complaint is kept on the server anyway, and goes on to whoever can get it.
-    if (!abuse && inboxes.some((inbox) => !inbox.dmRelays.length)) {
-      throw smtpError(450, '4.2.0 The recipient has no Nostr DM relays yet')
+    if (!abuse && inboxes.some((inbox) => !inbox.relays.length)) {
+      throw smtpError(450, '4.2.0 The recipient has no Nostr inbox relays yet')
     }
 
     added.forEach((target, index) => {
-      if (inboxes[index].dmRelays.length) accepted.push({ ...target, ...inboxes[index] })
-      else logger.info({ session: session.id, pubkey: target.pubkey }, 'An abuse report recipient has no DM relays')
+      if (inboxes[index].relays.length) accepted.push({ ...target, ...inboxes[index] })
+      else logger.info({ session: session.id, pubkey: target.pubkey }, 'An abuse report recipient has no inbox relays')
     })
     recipients.set(session.envelope, accepted)
     if (abuse) {
@@ -167,9 +167,9 @@ export function createSmtpServer(
     }
 
     const delivered = await Promise.all(
-      targets.map(async ({ writer, pubkey, dmRelays }) => {
+      targets.map(async ({ writer, pubkey, relays: inboxRelays }) => {
         const wrap = wrapInboundEmail(email, writer.privateKey, pubkey)
-        const accepted = await relays.publish(dmRelays, wrap, hexToBytes(writer.privateKey))
+        const accepted = await relays.publish(inboxRelays, wrap, hexToBytes(writer.privateKey))
         return accepted.length > 0
       }),
     )

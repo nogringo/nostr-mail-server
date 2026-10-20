@@ -222,7 +222,7 @@ answered with a temporary error so the sending server retries.
 | Step | Answer |
 |------|--------|
 | `RCPT TO` on a domain that is not verified or is suspended, or a local part that is neither a declared address, an npub nor `abuse` (`abuse` is taken on a suspended domain, on one the server served once, and on `MX_HOST`) | `550 5.1.1` |
-| `RCPT TO` with a pubkey that publishes no DM relay list (kind 10050), except to `abuse` | `450 4.2.0` |
+| `RCPT TO` with a pubkey that has no inbox relays (neither DM relays in a kind 10050 nor read relays in a kind 10002), except to `abuse` | `450 4.2.0` |
 | More than 50 recipients | `452 4.5.3` |
 | Message above `MAX_MESSAGE_BYTES` | `552 5.3.4` |
 | Message failing DMARC from a domain whose policy is `reject` | `550 5.7.1` |
@@ -245,7 +245,7 @@ for mail from a legacy sender:
 `abuse@<domain>` (RFC 2142) always exists on a verified domain. It reaches the
 domain owner and every key of `ADMIN_PUBKEYS`, plus the pubkey it is declared
 to, if any: the server sends the domain's mail, so its admins hear about
-complaints too. Each of them gets one wrap. A pubkey without DM relays is
+complaints too. Each of them gets one wrap. A pubkey without inbox relays is
 skipped rather than deferring the complaint, which the server keeps anyway.
 
 `abuse@` keeps taking mail when the domain is out of service: while it is
@@ -260,7 +260,7 @@ suspended takes no mail at all.
 
 The server's key is created on its first start and stored in the database; its
 hex pubkey is logged as `serverPubkey` when SMTP starts listening. When nobody
-can get a complaint over Nostr (no admin, or no DM relays), the server answers
+can get a complaint over Nostr (no admin, or no inbox relays), the server answers
 `250` with `Kept on this server`.
 
 The server also keeps every message sent to `abuse@`, once per domain, before
@@ -307,8 +307,11 @@ the author (the domain key) and the recipient, then on their own defaults. The
 blob is on both lists, and `BLOSSOM_SERVERS` defaults to the servers Nostr
 Mail clients always check as a last resort.
 
-DM relays are looked up on `INDEXER_RELAYS`, then on the pubkey's NIP-65 write
-relays, along with their Blossom servers (kind 10063). A list is written by
+A recipient's wrap goes to its inbox relays: its DM relays (kind 10050) when it
+lists any, else the read relays of its NIP-65 list (kind 10002). The NIP-65
+list is looked up on `INDEXER_RELAYS`. The DM relays and the Blossom servers
+(kind 10063) are looked up there too and on the pubkey's NIP-65 write relays,
+and the most recent list wins. A list is written by
 whoever holds the key, so only public `wss://` and `https://` hosts are
 contacted, at most 8 of each per recipient. The server answers
 NIP-42 AUTH with the domain's key.
@@ -438,7 +441,7 @@ cp .env.example .env
 | `MAX_MESSAGE_BYTES` | no | `26214400` (25 MiB) | Largest message accepted over SMTP, advertised with `SIZE`, and largest blob read to send |
 | `BLOSSOM_SERVERS` | no | `https://blossom.nmail.li`, `https://blossom.yakihonne.com`, `https://blossom.ditto.pub` | Comma-separated `https://` Blossom servers given to new claims for their large mail; existing claims keep theirs |
 | `DOMAIN_RELAYS` | no | `wss://relay.nmail.li`, `wss://relay.ditto.pub`, `wss://nos.lol`, `wss://relay.primal.net` | Comma-separated `wss://` relays the domain keys announce (kinds 10002 and 10050), publish their lists on, and receive the mail to send on |
-| `INDEXER_RELAYS` | no | `wss://purplepag.es`, `wss://user.kindpag.es`, `wss://indexer.coracle.social` | Comma-separated `wss://` relays where relay lists (kinds 10002 and 10050) are looked up |
+| `INDEXER_RELAYS` | no | `wss://purplepag.es`, `wss://user.kindpag.es`, `wss://indexer.coracle.social` | Comma-separated `wss://` relays where the lists of other pubkeys (kinds 10002, 10050 and 10063) are looked up |
 | `TLS_CERT_FILE` | no | | PEM certificate for `MX_HOST` offered with STARTTLS, set together with `TLS_KEY_FILE` |
 | `TLS_KEY_FILE` | no | | PEM private key of that certificate |
 

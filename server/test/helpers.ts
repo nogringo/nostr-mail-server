@@ -461,14 +461,14 @@ export interface FakeSubscription {
 }
 
 export class FakeRelayNetwork implements RelayNetwork {
-  readonly dmRelays = new Map<string, string[]>()
+  readonly inboxRelays = new Map<string, string[]>()
   readonly blossomServers = new Map<string, string[]>()
   readonly down = new Set<string>()
   readonly published: { relays: string[]; event: NostrEvent; authKey: Uint8Array }[] = []
   readonly subscriptions: FakeSubscription[] = []
 
   async findInbox(pubkey: string): Promise<Inbox> {
-    return { dmRelays: this.dmRelays.get(pubkey) ?? [], blossomServers: this.blossomServers.get(pubkey) ?? [] }
+    return { relays: this.inboxRelays.get(pubkey) ?? [], blossomServers: this.blossomServers.get(pubkey) ?? [] }
   }
 
   async publish(relays: string[], event: NostrEvent, authKey: Uint8Array): Promise<string[]> {

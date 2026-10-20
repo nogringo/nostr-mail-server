@@ -1,7 +1,7 @@
 import { finalizeEvent } from 'nostr-tools/pure'
 import { expect, test } from 'vitest'
 import { normalizeRelayUrl } from '../src/nostr.js'
-import { blossomServersOf, dmRelaysOf, latest, writeRelaysOf } from '../src/relays.js'
+import { blossomServersOf, dmRelaysOf, inboxOf, latest, readRelaysOf, writeRelaysOf } from '../src/relays.js'
 import { signer } from './helpers.js'
 
 const alice = signer()
@@ -61,6 +61,31 @@ test('writeRelaysOf skips the read-only relays', () => {
   ])
 
   expect(writeRelaysOf(relayList)).toEqual(['wss://both.example.com/', 'wss://write.example.com/'])
+})
+
+test('readRelaysOf skips the write-only relays', () => {
+  const relayList = list(10002, [
+    ['r', 'wss://both.example.com'],
+    ['r', 'wss://write.example.com', 'write'],
+    ['r', 'wss://read.example.com', 'read'],
+  ])
+
+  expect(readRelaysOf(relayList)).toEqual(['wss://both.example.com/', 'wss://read.example.com/'])
+})
+
+test('inboxOf prefers the DM relays and falls back on the NIP-65 read relays', () => {
+  const relayList = list(10002, [['r', 'wss://read.example.com', 'read']])
+  const dmList = list(10050, [['relay', 'wss://dm.example.com']])
+  const unusableDmList = list(10050, [['relay', 'ws://plain.example.com']])
+  const serverList = list(10063, [['server', 'https://blossom.example.com']])
+
+  expect(inboxOf([relayList, dmList, serverList], alice.pubkey)).toEqual({
+    relays: ['wss://dm.example.com/'],
+    blossomServers: ['https://blossom.example.com'],
+  })
+  expect(inboxOf([relayList], alice.pubkey)).toEqual({ relays: ['wss://read.example.com/'], blossomServers: [] })
+  expect(inboxOf([relayList, unusableDmList], alice.pubkey).relays).toEqual(['wss://read.example.com/'])
+  expect(inboxOf([], alice.pubkey)).toEqual({ relays: [], blossomServers: [] })
 })
 
 test('blossomServersOf keeps public https:// servers', () => {
