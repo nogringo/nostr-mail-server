@@ -12,13 +12,17 @@ The project is built in small steps. What exists today:
 | Receive mail over SMTP and deliver it over Nostr, large mail through Blossom | done |
 | Check SPF, DKIM and DMARC on incoming mail | later |
 | Send mail with the domain's `_smtp` key and DKIM signing | later |
-| Website: sign in with Nostr, connect a domain, manage addresses | later |
+| Website: sign in with Nostr, connect a domain, check its records | done |
+| Deploy on one machine: HTTPS site and API, SMTP on port 25 | done |
+| Website: manage named addresses | later |
 
 ## Layout
 
 | Path | What |
 |------|------|
 | [`server/`](server/) | The API (TypeScript, Fastify, Postgres) |
+| [`web/`](web/) | The website (Astro, React, Tailwind) |
+| [`deploy/`](deploy/) | Docker Compose and Caddy for one machine |
 
 ## How mail flows
 

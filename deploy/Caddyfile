@@ -1,0 +1,13 @@
+{$SITE_HOST} {
+	encode
+
+	@api path /domains /domains/* /.well-known/nostr.json /healthz
+	handle @api {
+		reverse_proxy server:3000
+	}
+
+	handle {
+		root * /srv
+		file_server
+	}
+}

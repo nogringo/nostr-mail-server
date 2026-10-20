@@ -1,0 +1,52 @@
+name: nostr-mail-server
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nostrmail
+      POSTGRES_USER: nostrmail
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nostrmail -d nostrmail"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres:/var/lib/postgresql
+
+  server:
+    build: ../server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://nostrmail:${POSTGRES_PASSWORD}@postgres:5432/nostrmail
+      MX_HOST: ${SITE_HOST:?}
+      SPF_INCLUDE: ${SITE_HOST}
+      SMTP_PORT: 2525
+    ports:
+      - "25:2525"
+
+  web:
+    build: ../web
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      SITE_HOST: ${SITE_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  postgres:
+  caddy-data:
+  caddy-config:

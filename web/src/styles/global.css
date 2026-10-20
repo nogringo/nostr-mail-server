@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-paper: #f1f3f2;
+  --color-surface: #ffffff;
+  --color-ink: #18223a;
+  --color-muted: #5c6579;
+  --color-rule: #d4d9de;
+  --color-accent: #2a44c9;
+  --color-ok: #1c7a50;
+  --color-wait: #9a5b00;
+  --color-bad: #b42318;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-paper: #0e1422;
+    --color-surface: #141b2c;
+    --color-ink: #e5e8ee;
+    --color-muted: #98a1b3;
+    --color-rule: #273149;
+    --color-accent: #8fa2ff;
+    --color-ok: #5cc896;
+    --color-wait: #e3a748;
+    --color-bad: #f2867b;
+  }
+}
+
+@layer base {
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    @apply bg-paper text-ink font-sans antialiased;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+}

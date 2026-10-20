@@ -1,0 +1,40 @@
+# Deployment
+
+One machine runs everything with Docker Compose:
+
+| Service | What | Published ports |
+|---------|------|-----------------|
+| `postgres` | Postgres 18 | none |
+| `server` | The [API](../server/README.md) and the inbound SMTP server | 25, to the container's 2525 |
+| `web` | Caddy: HTTPS with Let's Encrypt, the [site](../web/README.md), the API routes proxied to `server` | 80, 443 |
+
+The site and the API share one origin, `SITE_HOST`, because NIP-98 binds each
+request to the URL the browser signs. Caddy sends `/domains`, `/domains/*`,
+`/.well-known/nostr.json` and `/healthz` to the server and keeps the `Host`
+header.
+
+`SITE_HOST` is also the MX that connected domains point at, and for now the
+SPF include they are given.
+
+## Setup
+
+1. Point an A record for `SITE_HOST` at the machine, and open ports 25, 80
+   and 443.
+2. Copy the repository to the machine, then:
+
+```sh
+cd deploy
+cp .env.example .env    # set SITE_HOST and POSTGRES_PASSWORD
+sudo docker compose up -d --build
+```
+
+Caddy gets the certificate on the first request. To update, copy the new code
+and run `sudo docker compose up -d --build` again. Logs:
+`sudo docker compose logs -f server`.
+
+Not done yet:
+
+- STARTTLS on port 25.
+- HTTPS on the connected domains, which serves their NIP-05 and is needed to
+  send mail.
+- An SPF record for `SITE_HOST`, also needed to send mail.
