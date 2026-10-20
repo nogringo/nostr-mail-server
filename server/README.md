@@ -18,6 +18,8 @@ the host and path of the request. The signing pubkey owns the claims it makes.
 | `PUT` | `/domains/{domain}` | Claim a domain: `201` when created, `200` when the caller already claimed it, `400 invalid_domain`, `403 domain_suspended` for a new claim on a suspended domain |
 | `GET` | `/domains/{domain}` | One claim, `404 domain_not_found` if the caller has none |
 | `POST` | `/domains/{domain}/check` | Look the records up now and store the result, `403 domain_suspended` on a suspended domain |
+| `GET` | `/domains/{domain}/key` | `{"nsec": "nsec1..."}`, the secret of the [domain key](#domain-key) |
+| `PUT` | `/domains/{domain}/key` | Body `{"nsec": "nsec1..."}`: the domain key becomes this one, see [Domain key](#domain-key) |
 | `DELETE` | `/domains/{domain}` | Release the claim: `204`, or `404 domain_not_found` |
 
 A domain is returned as:
@@ -25,6 +27,7 @@ A domain is returned as:
 ```json
 {
   "domain": "example.com",
+  "bridgePubkey": "<hex of the domain key>",
   "verifiedAt": null,
   "suspendedAt": null,
   "checkedAt": "2026-10-20T12:00:00.000Z",
@@ -65,8 +68,24 @@ not see those of the previous owner.
 
 Each claim gets its own token, its own 2048-bit DKIM key and its own Nostr key
 pair, served as `_smtp@<domain>` (see [NIP-05](#nip-05)), all generated when it
-is created. The private keys stay on the server. It also gets the Blossom
+is created. The DKIM private key stays on the server. It also gets the Blossom
 servers of `BLOSSOM_SERVERS` at that time, which store its large mail.
+
+### Domain key
+
+The owner of a claim, verified or not, reads the nsec of its domain key with
+`GET /domains/{domain}/key`, answered with `Cache-Control: no-store`, also
+while the domain is suspended.
+
+`PUT /domains/{domain}/key` replaces it with the key of the given nsec, and
+answers the domain. The old key is gone for good, and so is the mail clients
+wrapped to it that waits to be sent, since only that key opens it. When the
+claim is verified, the [lists](#lists-of-the-domain-key) of the new key are
+published at once, and the outbox listens to it within 30 seconds. Giving the
+current key again changes nothing. It answers `400 invalid_nsec`,
+`400 owner_key` for the key that owns the claim (the server opens every gift
+wrap sent to the domain key and replaces its lists), `409 key_in_use` for the
+key of another claim, `403 domain_suspended` and `404 domain_not_found`.
 
 ### Lists of the domain key
 

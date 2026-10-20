@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { nsecEncode } from 'nostr-tools/nip19'
+import { hexToBytes } from 'nostr-tools/utils'
 import { generateDkimKeyPair } from '../dkim.js'
 import { normalizeDomain } from '../domain.js'
 import { publishDomainLists } from '../lists.js'
-import { generateKeyPair } from '../nostr.js'
+import { generateKeyPair, parseNsec } from '../nostr.js'
 import { checkRecords, expectedRecords } from '../records.js'
 import type { RelayNetwork } from '../relays.js'
 import type { AbuseReport, DnsLookup, Domain, DomainConfig, DomainRepository, Suspension } from '../types.js'
@@ -15,6 +17,8 @@ interface DomainParams {
 }
 
 type DomainRequest = FastifyRequest<{ Params: DomainParams }>
+
+type KeyRequest = FastifyRequest<{ Params: DomainParams; Body: { nsec?: unknown } | undefined }>
 
 // Domain lifecycle, authenticated with NIP-98: the signing pubkey owns the
 // claims it makes, and a claim becomes the domain's owner once its ownership
@@ -101,6 +105,43 @@ export function registerDomainRoutes(
     return reply.send({ domain: present(updated, config, null, await listOwnReports(repo, updated)) })
   })
 
+  app.get('/domains/:domain/key', async (request: DomainRequest, reply) => {
+    const pubkey = authenticate(request, reply)
+    if (pubkey === null) return reply
+
+    const domain = await findOwnDomain(repo, request, pubkey)
+    if (!domain) return reply.code(404).send({ error: 'domain_not_found' })
+
+    return reply.header('cache-control', 'no-store').send({ nsec: nsecEncode(hexToBytes(domain.bridgePrivateKey)) })
+  })
+
+  app.put('/domains/:domain/key', async (request: KeyRequest, reply) => {
+    const pubkey = authenticate(request, reply)
+    if (pubkey === null) return reply
+
+    const domain = await findOwnDomain(repo, request, pubkey)
+    if (!domain) return reply.code(404).send({ error: 'domain_not_found' })
+    if (await repo.findSuspension(domain.domain)) return reply.code(403).send({ error: 'domain_suspended' })
+
+    const bridgeKey = parseNsec(request.body?.nsec)
+    if (!bridgeKey) return reply.code(400).send({ error: 'invalid_nsec' })
+    // The server reads every gift wrap sent to the domain key and replaces its lists.
+    if (bridgeKey.pubkey === pubkey) return reply.code(400).send({ error: 'owner_key' })
+
+    if (bridgeKey.pubkey === domain.bridgePubkey) {
+      return reply.send({ domain: present(domain, config, null, await listOwnReports(repo, domain)) })
+    }
+    if (await repo.hasBridgeKey(bridgeKey.pubkey)) return reply.code(409).send({ error: 'key_in_use' })
+
+    const updated = await repo.replaceBridgeKey(domain.domain, pubkey, bridgeKey)
+    if (!updated) return reply.code(404).send({ error: 'domain_not_found' })
+    if (updated.verifiedAt && !(await publishDomainLists(relays, updated, config))) {
+      request.log.warn({ domain: updated.domain }, 'The lists of the domain key were not all published')
+    }
+
+    return reply.send({ domain: present(updated, config, null, await listOwnReports(repo, updated)) })
+  })
+
   app.delete('/domains/:domain', async (request: DomainRequest, reply) => {
     const pubkey = authenticate(request, reply)
     if (pubkey === null) return reply
@@ -117,10 +158,11 @@ async function findOwnDomain(repo: DomainRepository, request: DomainRequest, pub
   return name ? repo.findDomain(name, pubkey) : null
 }
 
-// The private keys never leave the server.
+// The private keys are left out: the owner reads the nsec of the domain key on its own route.
 function present(domain: Domain, config: DomainConfig, suspension: Suspension | null, abuseReports: AbuseReport[]) {
   return {
     domain: domain.domain,
+    bridgePubkey: domain.bridgePubkey,
     verifiedAt: domain.verifiedAt,
     suspendedAt: suspension?.suspendedAt ?? null,
     checkedAt: domain.checkedAt,

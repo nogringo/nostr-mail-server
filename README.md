@@ -23,6 +23,8 @@ The project is built in small steps. What exists today:
 | Website: a home page that explains the service before the sign-in | done |
 | Admin page: domains, suspensions, abuse reports and server DNS in tabs | done |
 | Website: a header linking your domains and, for an admin, the admin page | done |
+| Domain key: the owner shows its nsec or replaces it with their own nsec | done |
+| Domain key held by the owner's bunker (NIP-46) instead of the server | next |
 
 ## Layout
 

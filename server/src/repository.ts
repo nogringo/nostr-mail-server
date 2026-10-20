@@ -205,6 +205,32 @@ export class PgDomainRepository implements DomainRepository {
     return (result.rowCount ?? 0) > 0
   }
 
+  async hasBridgeKey(bridgePubkey: string): Promise<boolean> {
+    const result = await this.pool.query('select 1 from domains where bridge_pubkey = $1', [bridgePubkey])
+    return (result.rowCount ?? 0) > 0
+  }
+
+  async replaceBridgeKey(domain: string, pubkey: string, bridgeKey: KeyPair): Promise<Domain | null> {
+    return this.transaction(async (client) => {
+      await client.query(
+        `
+          delete from outbound_messages
+          where bridge_pubkey = (select bridge_pubkey from domains where domain = $1 and pubkey = $2)
+        `,
+        [domain, pubkey],
+      )
+      const result = await client.query<DomainRow>(
+        `
+          update domains set bridge_pubkey = $3, bridge_private_key = $4
+          where domain = $1 and pubkey = $2
+          returning ${DOMAIN_COLUMNS}
+        `,
+        [domain, pubkey, bridgeKey.pubkey, bridgeKey.privateKey],
+      )
+      return result.rows[0] ? toDomain(result.rows[0]) : null
+    })
+  }
+
   async listSuspensions(): Promise<Suspension[]> {
     const result = await this.pool.query<SuspensionRow>(
       'select domain, suspended_at from suspended_domains order by domain asc',

@@ -1,7 +1,8 @@
 import { decode } from 'nostr-tools/nip19'
 import { generateSecretKey, getPublicKey, type NostrEvent } from 'nostr-tools/pure'
-import { normalizeURL } from 'nostr-tools/utils'
+import { bytesToHex, normalizeURL } from 'nostr-tools/utils'
 import { isPublicHostname } from './domain.js'
+import type { KeyPair } from './types.js'
 
 const HEX_PUBKEY = /^[0-9a-f]{64}$/
 
@@ -47,7 +48,23 @@ export function decodeNpub(value: string): string | null {
   }
 }
 
-export function generateKeyPair(): { pubkey: string; privateKey: string } {
+// Reads a secret key given as an nsec, and returns it with its pubkey in hex.
+export function parseNsec(value: unknown): KeyPair | null {
+  if (typeof value !== 'string') return null
+
+  const key = value.trim().toLowerCase()
+  if (!key.startsWith('nsec1')) return null
+
+  try {
+    const decoded = decode(key)
+    if (decoded.type !== 'nsec') return null
+    return { pubkey: getPublicKey(decoded.data), privateKey: bytesToHex(decoded.data) }
+  } catch {
+    return null
+  }
+}
+
+export function generateKeyPair(): KeyPair {
   const secretKey = generateSecretKey()
   return { pubkey: getPublicKey(secretKey), privateKey: Buffer.from(secretKey).toString('hex') }
 }

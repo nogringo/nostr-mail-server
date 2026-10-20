@@ -31,6 +31,8 @@ export interface ServerRecord {
 
 export interface Domain {
   domain: string
+  // The domain's own key, served as _smtp@<domain>.
+  bridgePubkey: string
   verifiedAt: string | null
   // Set while the admin of the server keeps the domain out of service.
   suspendedAt: string | null
@@ -143,6 +145,9 @@ export function createApi(
     removeDomain: async (name: string): Promise<void> => {
       await call('DELETE', domainPath(name))
     },
+    domainKey: async (name: string): Promise<string> => (await call('GET', `${domainPath(name)}/key`)).nsec,
+    replaceDomainKey: async (name: string, nsec: string): Promise<Domain> =>
+      (await call('PUT', `${domainPath(name)}/key`, { nsec })).domain,
     listAddresses: async (name: string): Promise<Address[]> =>
       (await call('GET', `${domainPath(name)}/addresses`)).addresses,
     putAddress: async (name: string, localPart: string, pubkey: string): Promise<Address> =>

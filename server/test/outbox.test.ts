@@ -3,6 +3,7 @@ import type { NostrEvent } from 'nostr-tools/pure'
 import { expect, test } from 'vitest'
 import { encryptBlob } from '../src/blossom.js'
 import type { DeliveryResult, MailTransport } from '../src/delivery.js'
+import { generateKeyPair } from '../src/nostr.js'
 import { Outbox } from '../src/outbox.js'
 import {
   claim,
@@ -88,6 +89,20 @@ test('each verified domain key gets its own subscription, closed once the domain
   expect(network.open().map((subscription) => subscription.filter['#p'])).toEqual([[domain.bridgePubkey]])
   await outbox.stop()
   expect(network.open()).toEqual([])
+})
+
+test('a replaced domain key is listened to instead of the old one', async () => {
+  const { repo, network, outbox, domain } = await setup()
+  await outbox.syncSubscriptions()
+  const replacement = generateKeyPair()
+
+  await repo.replaceBridgeKey('example.com', domain.pubkey, replacement)
+  await outbox.syncSubscriptions()
+
+  const open = network.open()
+  expect(open.map((subscription) => subscription.filter['#p'])).toEqual([[replacement.pubkey]])
+  expect(Buffer.from(open[0].authKey).toString('hex')).toBe(replacement.privateKey)
+  await outbox.stop()
 })
 
 test('a suspended domain stops listening and its queued mail fails', async () => {

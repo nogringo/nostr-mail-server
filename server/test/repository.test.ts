@@ -287,6 +287,31 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect(remaining.rows).toEqual([{ count: 0 }])
   })
 
+  test('replacing the bridge key drops the outbound mail wrapped to the old one', async () => {
+    const created = await repo.createDomain(claim('rekeyed.example', CAROL))
+    const other = await repo.createDomain(claim('other.example', CAROL))
+    const wrap = outboundWrap(signer(), created.bridgePubkey)
+    const recipients = ['a@remote.example']
+    await repo.addOutboundMessage({ wrapId: wrap.id, bridgePubkey: created.bridgePubkey, wrap, recipients })
+    const replacement = generateKeyPair()
+
+    const replaced = await repo.replaceBridgeKey('rekeyed.example', CAROL, replacement)
+
+    expect(replaced).toEqual({ ...created, bridgePubkey: replacement.pubkey, bridgePrivateKey: replacement.privateKey })
+    expect(await repo.findDomain('rekeyed.example', CAROL)).toEqual(replaced)
+    expect(await repo.hasOutboundMessage(wrap.id)).toBe(false)
+    expect(await repo.hasBridgeKey(replacement.pubkey)).toBe(true)
+    expect(await repo.hasBridgeKey(created.bridgePubkey)).toBe(false)
+    expect(await repo.replaceBridgeKey('rekeyed.example', ALICE, generateKeyPair())).toBeNull()
+    await expect(repo.replaceBridgeKey('other.example', CAROL, replacement)).rejects.toThrow(
+      /domains_bridge_pubkey_unique/,
+    )
+    expect(await repo.findDomain('other.example', CAROL)).toEqual(other)
+
+    await repo.deleteDomain('rekeyed.example', CAROL)
+    await repo.deleteDomain('other.example', CAROL)
+  })
+
   test('keeps an abuse report once per domain and message, and lists the newest first', async () => {
     const message = Buffer.from('Subject: Spam\r\n\r\n\xff raw byte\r\n', 'latin1')
     const report = { mailFrom: 'spam@sender.example', from: 'Spam <spam@sender.example>', subject: 'Spam', message }

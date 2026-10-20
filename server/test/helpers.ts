@@ -169,6 +169,24 @@ export class MemoryDomainRepository implements DomainRepository {
     return this.dropClaim(domain, pubkey)
   }
 
+  async hasBridgeKey(bridgePubkey: string): Promise<boolean> {
+    this.assertAvailable()
+    return [...this.domains.values()].some((claim) => claim.bridgePubkey === bridgePubkey)
+  }
+
+  async replaceBridgeKey(domain: string, pubkey: string, bridgeKey: KeyPair): Promise<Domain | null> {
+    this.assertAvailable()
+    const current = this.domains.get(key(domain, pubkey))
+    if (!current) return null
+
+    for (const [wrapId, message] of this.outbound) {
+      if (message.bridgePubkey === current.bridgePubkey) this.outbound.delete(wrapId)
+    }
+    const next = { ...current, bridgePubkey: bridgeKey.pubkey, bridgePrivateKey: bridgeKey.privateKey }
+    this.domains.set(key(domain, pubkey), next)
+    return next
+  }
+
   async listSuspensions(): Promise<Suspension[]> {
     this.assertAvailable()
     return [...this.suspensions.values()].sort((left, right) => left.domain.localeCompare(right.domain))

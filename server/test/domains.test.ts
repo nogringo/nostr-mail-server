@@ -1,4 +1,6 @@
+import { npubEncode, nsecEncode } from 'nostr-tools/nip19'
 import { getPublicKey, verifyEvent } from 'nostr-tools/pure'
+import { bytesToHex, hexToBytes } from 'nostr-tools/utils'
 import { expect, test } from 'vitest'
 import { buildApp } from '../src/app.js'
 import {
@@ -9,8 +11,10 @@ import {
   FakeDns,
   FakeRelayNetwork,
   MemoryDomainRepository,
+  outboundWrap,
   request,
   signer,
+  verifyDomain,
 } from './helpers.js'
 
 function setup() {
@@ -288,6 +292,129 @@ test('a suspended domain shows to its owner, cannot be checked nor claimed by an
   expect(other.statusCode).toBe(403)
   expect(other.json()).toEqual({ error: 'domain_suspended' })
   expect(await repo.findDomain('example.com', alice.pubkey)).toMatchObject({ checkedAt: null })
+
+  await app.close()
+})
+
+test('the owner reads the nsec of the domain key, no other key can', async () => {
+  const { repo, app } = setup()
+  const alice = signer()
+  const created = await request(app, alice, 'PUT', '/domains/example.com')
+
+  const response = await request(app, alice, 'GET', '/domains/example.com/key')
+  const other = await request(app, signer(), 'GET', '/domains/example.com/key')
+
+  const stored = await repo.findDomain('example.com', alice.pubkey)
+  expect(created.json().domain.bridgePubkey).toBe(stored?.bridgePubkey)
+  expect(response.statusCode).toBe(200)
+  expect(response.headers['cache-control']).toBe('no-store')
+  expect(response.json()).toEqual({ nsec: nsecEncode(hexToBytes(stored?.bridgePrivateKey ?? '')) })
+  expect(other.statusCode).toBe(404)
+
+  await app.close()
+})
+
+test('the owner replaces the domain key with an nsec, whose lists are published at once', async () => {
+  const { repo, network, app } = setup()
+  const alice = signer()
+  const verified = await verifyDomain(repo, 'example.com', alice.pubkey)
+  await repo.addOutboundMessage({
+    wrapId: 'queued',
+    bridgePubkey: verified.bridgePubkey,
+    wrap: outboundWrap(signer(), verified.bridgePubkey),
+    recipients: ['bob@remote.example'],
+  })
+  const replacement = signer()
+
+  const response = await request(app, alice, 'PUT', '/domains/example.com/key', { nsec: nsecEncode(replacement.sk) })
+
+  expect(response.statusCode).toBe(200)
+  expect(response.json().domain.bridgePubkey).toBe(replacement.pubkey)
+  expect(await repo.findDomain('example.com', alice.pubkey)).toMatchObject({
+    bridgePubkey: replacement.pubkey,
+    bridgePrivateKey: bytesToHex(replacement.sk),
+  })
+  expect(repo.outbound.size).toBe(0)
+  expect(network.published.map(({ event }) => [event.kind, event.pubkey])).toEqual([
+    [10002, replacement.pubkey],
+    [10050, replacement.pubkey],
+    [10063, replacement.pubkey],
+  ])
+  const nip05 = await app.inject({
+    method: 'GET',
+    url: '/.well-known/nostr.json?name=_smtp',
+    headers: { host: 'example.com' },
+  })
+  expect(nip05.json().names._smtp).toBe(replacement.pubkey)
+
+  await app.close()
+})
+
+test('an unverified claim takes a new key without publishing its lists', async () => {
+  const { repo, network, app } = setup()
+  const alice = signer()
+  await request(app, alice, 'PUT', '/domains/example.com')
+  const replacement = signer()
+
+  const response = await request(app, alice, 'PUT', '/domains/example.com/key', { nsec: nsecEncode(replacement.sk) })
+
+  expect(response.statusCode).toBe(200)
+  expect((await repo.findDomain('example.com', alice.pubkey))?.bridgePubkey).toBe(replacement.pubkey)
+  expect(network.published).toEqual([])
+
+  await app.close()
+})
+
+test('the domain key cannot become a bad nsec, the owner key or the key of another domain', async () => {
+  const { repo, app } = setup()
+  const alice = signer()
+  await request(app, alice, 'PUT', '/domains/example.com')
+  const other = await verifyDomain(repo, 'other.example', signer().pubkey)
+  const before = await repo.findDomain('example.com', alice.pubkey)
+  const put = (payload?: object) => request(app, alice, 'PUT', '/domains/example.com/key', payload)
+
+  const answers = [
+    await put(),
+    await put({ nsec: 'nsec1nope' }),
+    await put({ nsec: npubEncode(alice.pubkey) }),
+    await put({ nsec: nsecEncode(alice.sk) }),
+    await put({ nsec: nsecEncode(hexToBytes(other.bridgePrivateKey)) }),
+  ]
+
+  expect(answers.map((answer) => [answer.statusCode, answer.json().error])).toEqual([
+    [400, 'invalid_nsec'],
+    [400, 'invalid_nsec'],
+    [400, 'invalid_nsec'],
+    [400, 'owner_key'],
+    [409, 'key_in_use'],
+  ])
+  expect(await repo.findDomain('example.com', alice.pubkey)).toEqual(before)
+
+  await app.close()
+})
+
+test('giving the current key again changes nothing, a suspended domain keeps its key', async () => {
+  const { repo, network, app } = setup()
+  const alice = signer()
+  const verified = await verifyDomain(repo, 'example.com', alice.pubkey)
+  await repo.addOutboundMessage({ wrapId: 'refused', bridgePubkey: verified.bridgePubkey, refusal: 'No' })
+  const current = { nsec: nsecEncode(hexToBytes(verified.bridgePrivateKey)) }
+
+  const same = await request(app, alice, 'PUT', '/domains/example.com/key', current)
+  await repo.suspendDomain('example.com')
+  const suspended = await request(app, alice, 'PUT', '/domains/example.com/key', { nsec: nsecEncode(signer().sk) })
+  const read = await request(app, alice, 'GET', '/domains/example.com/key')
+  const unknown = await request(app, signer(), 'PUT', '/domains/example.com/key', current)
+
+  expect(same.statusCode).toBe(200)
+  expect(same.json().domain.bridgePubkey).toBe(verified.bridgePubkey)
+  expect(repo.outbound.has('refused')).toBe(true)
+  expect(network.published).toEqual([])
+  expect(suspended.statusCode).toBe(403)
+  expect(suspended.json()).toEqual({ error: 'domain_suspended' })
+  expect(read.json()).toEqual(current)
+  expect(unknown.statusCode).toBe(404)
+  expect(await repo.findDomain('example.com', alice.pubkey)).toEqual(verified)
 
   await app.close()
 })

@@ -174,6 +174,10 @@ export interface DomainRepository {
   recordChecks(domain: string, pubkey: string, checks: DomainChecks, verified: boolean): Promise<Domain | null>
   // Also drops the addresses the claim declared.
   deleteDomain(domain: string, pubkey: string): Promise<boolean>
+  // Whether a claim on any domain has this key.
+  hasBridgeKey(bridgePubkey: string): Promise<boolean>
+  // Gives the claim another key. The outbound mail wrapped to the old one goes, since nothing opens it any more.
+  replaceBridgeKey(domain: string, pubkey: string, bridgeKey: KeyPair): Promise<Domain | null>
   listSuspensions(): Promise<Suspension[]>
   findSuspension(domain: string): Promise<Suspension | null>
   // Returns the existing suspension when the domain is already suspended.

@@ -6,6 +6,7 @@ import { timeAgo } from '../lib/format'
 import type { Signer } from '../lib/signer'
 import AbuseReportRow from './AbuseReportRow'
 import Addresses from './Addresses'
+import DomainKey from './DomainKey'
 import RecordRow from './RecordRow'
 import { type TabLink, Tabs, useHash } from './Tabs'
 import { BackLink, Button, ErrorText, TONES } from './ui'
@@ -70,7 +71,7 @@ function DomainView({ initial, api, ownPubkey }: { initial: Domain; api: Api; ow
     addresses: <Addresses domain={domain.domain} api={api} ownPubkey={ownPubkey} />,
     dns: <DnsPanel domain={domain} api={api} onChange={setDomain} />,
     abuse: <AbusePanel domain={domain} api={api} />,
-    settings: <SettingsPanel domain={domain} api={api} />,
+    settings: <SettingsPanel domain={domain} api={api} onChange={setDomain} />,
   }
 
   return (
@@ -156,7 +157,7 @@ function AbusePanel({ domain, api }: { domain: Domain; api: Api }) {
   )
 }
 
-function SettingsPanel({ domain, api }: { domain: Domain; api: Api }) {
+function SettingsPanel({ domain, api, onChange }: { domain: Domain; api: Api; onChange: (domain: Domain) => void }) {
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -174,31 +175,35 @@ function SettingsPanel({ domain, api }: { domain: Domain; api: Api }) {
   }
 
   return (
-    <>
-      <h2 className="font-medium">Remove the domain</h2>
-      <p className="mt-1 max-w-xl text-muted text-sm">
-        {domain.domain} stops receiving and sending mail
-        {domain.verifiedAt ? ', but mail to abuse@ still reaches the admins of this server.' : '.'}
-      </p>
-      <div className="mt-4 flex flex-wrap items-center gap-4 text-sm">
-        {confirming ? (
-          <>
-            <span>Remove {domain.domain}?</span>
-            <Button variant="quiet" className="text-bad" onClick={remove} disabled={busy}>
-              {busy ? 'Removing' : 'Remove'}
+    <div className="space-y-10">
+      {/* Keyed by the key, so that a revealed nsec goes with the key it belongs to. */}
+      <DomainKey key={domain.bridgePubkey} domain={domain} api={api} onChange={onChange} />
+      <div>
+        <h2 className="font-medium">Remove the domain</h2>
+        <p className="mt-1 max-w-xl text-muted text-sm">
+          {domain.domain} stops receiving and sending mail
+          {domain.verifiedAt ? ', but mail to abuse@ still reaches the admins of this server.' : '.'}
+        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-4 text-sm">
+          {confirming ? (
+            <>
+              <span>Remove {domain.domain}?</span>
+              <Button variant="quiet" className="text-bad" onClick={remove} disabled={busy}>
+                {busy ? 'Removing' : 'Remove'}
+              </Button>
+              <Button variant="quiet" onClick={() => setConfirming(false)} disabled={busy}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button variant="secondary" onClick={() => setConfirming(true)}>
+              Remove domain
             </Button>
-            <Button variant="quiet" onClick={() => setConfirming(false)} disabled={busy}>
-              Cancel
-            </Button>
-          </>
-        ) : (
-          <Button variant="secondary" onClick={() => setConfirming(true)}>
-            Remove domain
-          </Button>
-        )}
-        <ErrorText>{error}</ErrorText>
+          )}
+          <ErrorText>{error}</ErrorText>
+        </div>
       </div>
-    </>
+    </div>
   )
 }
 
