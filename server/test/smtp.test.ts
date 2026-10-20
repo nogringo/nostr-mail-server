@@ -1,10 +1,23 @@
+import { createDecipheriv } from 'node:crypto'
 import { type AddressInfo, connect } from 'node:net'
 import nodemailer from 'nodemailer'
 import { npubEncode } from 'nostr-tools/nip19'
+import type { NostrEvent } from 'nostr-tools/pure'
 import { afterEach, expect, test } from 'vitest'
 import { MAX_INLINE_MIME_BYTES } from '../src/inbound.js'
 import { createSmtpServer } from '../src/smtp.js'
-import { claim, FakeRelayNetwork, MemoryDomainRepository, openWrap, signer, verifyDomain } from './helpers.js'
+import {
+  claim,
+  FakeBlobStore,
+  FakeRelayNetwork,
+  MemoryDomainRepository,
+  openWrap,
+  signer,
+  verifyDomain,
+} from './helpers.js'
+
+const MAX_MESSAGE_BYTES = 256 * 1024
+const DOMAIN_SERVER = 'https://blossom.example.org'
 
 const MESSAGE = [
   'From: Alice <alice@sender.example>',
@@ -25,7 +38,11 @@ afterEach(async () => {
 async function setup() {
   const repo = new MemoryDomainRepository()
   const network = new FakeRelayNetwork()
-  const server = createSmtpServer(repo, network, { mxHost: 'mx.example.org' })
+  const blobs = new FakeBlobStore()
+  const server = createSmtpServer(repo, network, blobs, {
+    mxHost: 'mx.example.org',
+    maxMessageBytes: MAX_MESSAGE_BYTES,
+  })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const port = (server.server.address() as AddressInfo).port
   const transport = nodemailer.createTransport({ host: '127.0.0.1', port, secure: false, ignoreTLS: true })
@@ -43,7 +60,7 @@ async function setup() {
   const send = (to: string[], raw = MESSAGE) =>
     transport.sendMail({ envelope: { from: 'alice@sender.example', to }, raw })
 
-  return { repo, network, port, domain, bob, send }
+  return { repo, network, blobs, port, domain, bob, send }
 }
 
 test('a message to a declared address is gift wrapped to its pubkey and published', async () => {
@@ -155,10 +172,71 @@ test('a database failure defers the recipient with 451', async () => {
   await expect(send(['bob@example.com'])).rejects.toMatchObject({ code: 'EENVELOPE', responseCode: 451 })
 })
 
-test('a message over the inline limit is refused with 552 after DATA', async () => {
-  const { network, port } = await setup()
+test('a message above the inline limit is stored on Blossom and referenced from the rumor', async () => {
+  const { network, blobs, domain, bob, send } = await setup()
+  network.blossomServers.set(bob.pubkey, ['https://blossom.bob.example', DOMAIN_SERVER])
+  const raw = largeMessage(MAX_INLINE_MIME_BYTES)
+
+  await send(['bob@example.com'], raw)
+
+  expect(blobs.uploads).toHaveLength(1)
+  const [{ servers, blob, authKey }] = blobs.uploads
+  expect(domain.blossomServers).toEqual([DOMAIN_SERVER])
+  expect(servers).toEqual([DOMAIN_SERVER, 'https://blossom.bob.example'])
+  expect(Buffer.from(authKey).toString('hex')).toBe(domain.bridgePrivateKey)
+
+  const { rumor } = openWrap(network.published[0].event, bob.sk)
+  expect(rumor.content).toBe('')
+  expect(rumor.tags.slice(2)).toEqual([
+    ['x', blob.sha256],
+    ['encryption-algorithm', 'aes-gcm'],
+    ['decryption-key', blob.key],
+    ['decryption-nonce', blob.nonce],
+  ])
+
+  const mime = decryptBlob(blob.bytes, rumor)
+  expect(mime).toMatch(/^Return-Path: <alice@sender\.example>\r\nReceived: /)
+  expect(mime.endsWith(raw)).toBe(true)
+})
+
+test('every recipient references the same blob', async () => {
+  const { repo, network, blobs, domain, bob, send } = await setup()
+  const carol = signer()
+  await repo.putAddress({ domain: 'example.com', localPart: 'carol', pubkey: carol.pubkey, ownerPubkey: domain.pubkey })
+  network.dmRelays.set(carol.pubkey, ['wss://inbox.carol.example/'])
+
+  await send(['bob@example.com', 'carol@example.com'], largeMessage(MAX_INLINE_MIME_BYTES))
+
+  expect(blobs.uploads).toHaveLength(1)
+  const tagsOf = (secretKey: Uint8Array, pubkey: string) =>
+    openWrap(network.published.find((entry) => entry.event.tags[0][1] === pubkey)?.event ?? fail(), secretKey).rumor
+      .tags
+  expect(tagsOf(carol.sk, carol.pubkey)).toEqual(tagsOf(bob.sk, bob.pubkey))
+})
+
+test('a message under the inline limit does not touch Blossom', async () => {
+  const { blobs, send } = await setup()
+
+  await send(['bob@example.com'])
+
+  expect(blobs.uploads).toHaveLength(0)
+})
+
+test('the message is deferred with 451 when no Blossom server stores it', async () => {
+  const { network, blobs, send } = await setup()
+  blobs.down.add(DOMAIN_SERVER)
+
+  await expect(send(['bob@example.com'], largeMessage(MAX_INLINE_MIME_BYTES))).rejects.toMatchObject({
+    code: 'EMESSAGE',
+    responseCode: 451,
+  })
+  expect(network.published).toHaveLength(0)
+})
+
+test('a message over MAX_MESSAGE_BYTES is refused with 552 after DATA', async () => {
+  const { network, blobs, port } = await setup()
   const line = 'x'.repeat(76)
-  const body = Array.from({ length: Math.ceil(MAX_INLINE_MIME_BYTES / line.length) + 1 }, () => line).join('\r\n')
+  const body = Array.from({ length: Math.ceil(MAX_MESSAGE_BYTES / line.length) + 1 }, () => line).join('\r\n')
 
   const replies = await converse(port, [
     'EHLO client.example',
@@ -172,7 +250,22 @@ test('a message over the inline limit is refused with 552 after DATA', async () 
   expect(replies[4]).toMatch(/^354 /)
   expect(replies[5]).toMatch(/^552 /)
   expect(network.published).toHaveLength(0)
+  expect(blobs.uploads).toHaveLength(0)
 })
+
+function largeMessage(bytes: number): string {
+  const line = 'y'.repeat(76)
+  const lines = Array.from({ length: Math.ceil(bytes / line.length) }, () => line)
+  return [MESSAGE.split('\r\n\r\n')[0], '', ...lines, ''].join('\r\n')
+}
+
+// The client side of Nostr Mail large MIME.
+function decryptBlob(bytes: Buffer, rumor: NostrEvent): string {
+  const tag = (name: string) => Buffer.from(rumor.tags.find((entry) => entry[0] === name)?.[1] ?? '', 'base64')
+  const decipher = createDecipheriv('aes-256-gcm', tag('decryption-key'), tag('decryption-nonce'))
+  decipher.setAuthTag(bytes.subarray(-16))
+  return Buffer.concat([decipher.update(bytes.subarray(0, -16)), decipher.final()]).toString('utf8')
+}
 
 const FINAL_LINE = /^\d{3} .*\r\n/m
 

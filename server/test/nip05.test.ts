@@ -1,13 +1,22 @@
 import { npubEncode } from 'nostr-tools/nip19'
 import { expect, test } from 'vitest'
 import { buildApp } from '../src/app.js'
-import { type App, claim, domainConfig, FakeDns, MemoryDomainRepository, signer, verifyDomain } from './helpers.js'
+import {
+  type App,
+  claim,
+  domainConfig,
+  FakeDns,
+  FakeRelayNetwork,
+  MemoryDomainRepository,
+  signer,
+  verifyDomain,
+} from './helpers.js'
 
 const PUBKEY = 'a'.repeat(64)
 
 async function setup() {
   const repo = new MemoryDomainRepository()
-  const app = buildApp(repo, domainConfig, new FakeDns())
+  const app = buildApp(repo, domainConfig, new FakeDns(), new FakeRelayNetwork())
   const owner = signer()
   await verifyDomain(repo, 'example.com', owner.pubkey)
   await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: PUBKEY, ownerPubkey: owner.pubkey })

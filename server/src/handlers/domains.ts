@@ -2,8 +2,10 @@ import { randomBytes } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { generateDkimKeyPair } from '../dkim.js'
 import { normalizeDomain } from '../domain.js'
+import { publishDomainLists } from '../lists.js'
 import { generateKeyPair } from '../nostr.js'
 import { checkRecords, expectedRecords } from '../records.js'
+import type { RelayNetwork } from '../relays.js'
 import type { DnsLookup, Domain, DomainConfig, DomainRepository } from '../types.js'
 import { authenticate } from './auth.js'
 
@@ -19,7 +21,7 @@ type DomainRequest = FastifyRequest<{ Params: DomainParams }>
 export function registerDomainRoutes(
   app: FastifyInstance,
   repo: DomainRepository,
-  { config, dns }: { config: DomainConfig; dns: DnsLookup },
+  { config, dns, relays }: { config: DomainConfig; dns: DnsLookup; relays: RelayNetwork },
 ): void {
   app.get('/domains', async (request, reply) => {
     const pubkey = authenticate(request, reply)
@@ -50,6 +52,7 @@ export function registerDomainRoutes(
       dkimPrivateKey: dkim.privateKey,
       bridgePubkey: bridge.pubkey,
       bridgePrivateKey: bridge.privateKey,
+      blossomServers: config.blossomServers,
     })
     return reply.code(201).send({ domain: present(created, config) })
   })
@@ -74,6 +77,12 @@ export function registerDomainRoutes(
     const checks = await checkRecords(domain, config, dns)
     const updated = await repo.recordChecks(domain.domain, pubkey, checks, checks.ownership.status === 'ok')
     if (!updated) return reply.code(404).send({ error: 'domain_not_found' })
+
+    // Every check of a verified domain republishes its lists, so checking again
+    // is how a failed publication is retried.
+    if (updated.verifiedAt && !(await publishDomainLists(relays, updated, config))) {
+      request.log.warn({ domain: updated.domain }, 'The lists of the domain key were not all published')
+    }
 
     return reply.send({ domain: present(updated, config) })
   })
@@ -100,6 +109,7 @@ function present(domain: Domain, config: DomainConfig) {
     domain: domain.domain,
     verifiedAt: domain.verifiedAt,
     checkedAt: domain.checkedAt,
+    blossomServers: domain.blossomServers,
     createdAt: domain.createdAt,
     records: expectedRecords(domain, config).map((record) => ({
       ...record,

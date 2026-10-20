@@ -3,7 +3,7 @@ import type { Address, Domain, DomainChecks, DomainRepository, NewAddress, NewDo
 
 const DOMAIN_COLUMNS = `
   domain, pubkey, verification_token, dkim_selector, dkim_public_key, dkim_private_key,
-  bridge_pubkey, bridge_private_key, checks, checked_at, verified_at, created_at
+  bridge_pubkey, bridge_private_key, blossom_servers, checks, checked_at, verified_at, created_at
 `
 
 const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, created_at'
@@ -17,6 +17,7 @@ interface DomainRow {
   dkim_private_key: string
   bridge_pubkey: string
   bridge_private_key: string
+  blossom_servers: string[]
   checks: DomainChecks | null
   checked_at: Date | null
   verified_at: Date | null
@@ -67,9 +68,9 @@ export class PgDomainRepository implements DomainRepository {
       `
         insert into domains (
           domain, pubkey, verification_token, dkim_selector, dkim_public_key, dkim_private_key,
-          bridge_pubkey, bridge_private_key
+          bridge_pubkey, bridge_private_key, blossom_servers
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         on conflict (domain, pubkey) do nothing
         returning ${DOMAIN_COLUMNS}
       `,
@@ -82,6 +83,7 @@ export class PgDomainRepository implements DomainRepository {
         input.dkimPrivateKey,
         input.bridgePubkey,
         input.bridgePrivateKey,
+        input.blossomServers,
       ],
     )
     if (result.rows[0]) return toDomain(result.rows[0])
@@ -178,6 +180,7 @@ function toDomain(row: DomainRow): Domain {
     dkimPrivateKey: row.dkim_private_key,
     bridgePubkey: row.bridge_pubkey,
     bridgePrivateKey: row.bridge_private_key,
+    blossomServers: row.blossom_servers,
     checks: row.checks,
     checkedAt: row.checked_at?.toISOString() ?? null,
     verifiedAt: row.verified_at?.toISOString() ?? null,

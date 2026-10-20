@@ -1,9 +1,10 @@
 import { decrypt, getConversationKey } from 'nostr-tools/nip44'
 import { finalizeEvent, generateSecretKey, getPublicKey, type NostrEvent } from 'nostr-tools/pure'
 import type { buildApp } from '../src/app.js'
+import type { BlobStore, EncryptedBlob } from '../src/blossom.js'
 import { NIP98_KIND } from '../src/nip98.js'
 import { generateKeyPair } from '../src/nostr.js'
-import type { RelayNetwork } from '../src/relays.js'
+import type { Inbox, RelayNetwork } from '../src/relays.js'
 import type {
   Address,
   DnsLookup,
@@ -22,6 +23,9 @@ export const domainConfig: DomainConfig = {
   mxHost: 'mx.example.org',
   spfInclude: '_spf.example.org',
   dkimSelector: 'nostrmail',
+  indexerRelays: ['wss://indexer.example.org/'],
+  domainRelays: ['wss://relay.example.org/'],
+  blossomServers: ['https://blossom.example.org'],
 }
 
 export class MemoryDomainRepository implements DomainRepository {
@@ -146,6 +150,7 @@ export function claim(domain: string, pubkey: string): NewDomain {
     dkimPrivateKey: 'private',
     bridgePubkey: bridge.pubkey,
     bridgePrivateKey: bridge.privateKey,
+    blossomServers: domainConfig.blossomServers,
   }
 }
 
@@ -179,16 +184,27 @@ export class FakeDns implements DnsLookup {
 
 export class FakeRelayNetwork implements RelayNetwork {
   readonly dmRelays = new Map<string, string[]>()
+  readonly blossomServers = new Map<string, string[]>()
   readonly down = new Set<string>()
   readonly published: { relays: string[]; event: NostrEvent; authKey: Uint8Array }[] = []
 
-  async findDmRelays(pubkey: string): Promise<string[]> {
-    return this.dmRelays.get(pubkey) ?? []
+  async findInbox(pubkey: string): Promise<Inbox> {
+    return { dmRelays: this.dmRelays.get(pubkey) ?? [], blossomServers: this.blossomServers.get(pubkey) ?? [] }
   }
 
   async publish(relays: string[], event: NostrEvent, authKey: Uint8Array): Promise<string[]> {
     this.published.push({ relays, event, authKey })
     return relays.filter((relay) => !this.down.has(relay))
+  }
+}
+
+export class FakeBlobStore implements BlobStore {
+  readonly down = new Set<string>()
+  readonly uploads: { servers: string[]; blob: EncryptedBlob; authKey: Uint8Array }[] = []
+
+  async upload(servers: string[], blob: EncryptedBlob, authKey: Uint8Array): Promise<string[]> {
+    this.uploads.push({ servers, blob, authKey })
+    return servers.filter((server) => !this.down.has(server))
   }
 }
 

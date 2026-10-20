@@ -33,6 +33,7 @@ function claim(domain: string, pubkey: string): NewDomain {
     dkimPrivateKey: 'private',
     bridgePubkey: bridge.pubkey,
     bridgePrivateKey: bridge.privateKey,
+    blossomServers: ['https://blossom.example.org', 'https://cdn.example.com/blossom'],
   }
 }
 
@@ -62,7 +63,12 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
   })
 
   test('applies the pending migrations once', async () => {
-    expect(applied).toEqual(['001_create_domains.sql', '002_create_addresses.sql', '003_add_bridge_keys.sql'])
+    expect(applied).toEqual([
+      '001_create_domains.sql',
+      '002_create_addresses.sql',
+      '003_add_bridge_keys.sql',
+      '004_add_blossom_servers.sql',
+    ])
     expect(await migrate(url)).toEqual([])
   })
 
@@ -71,6 +77,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     const again = await repo.createDomain(claim('example.com', ALICE))
 
     expect(again.verificationToken).toBe(created.verificationToken)
+    expect(created.blossomServers).toEqual(['https://blossom.example.org', 'https://cdn.example.com/blossom'])
     expect(created.verifiedAt).toBeNull()
     expect(await repo.findDomain('example.com', ALICE)).toEqual(created)
   })

@@ -1,3 +1,4 @@
+import { isIP } from 'node:net'
 import { domainToASCII } from 'node:url'
 
 const LABEL = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/
@@ -13,6 +14,13 @@ export function normalizeDomain(value: string): string | null {
   if (/^\d+$/.test(labels[labels.length - 1])) return null
 
   return ascii
+}
+
+// Hosts found in relay or server lists are written by whoever holds a key: only
+// public names are contacted, no IP literal, single label or localhost.
+export function isPublicHostname(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '')
+  return host.includes('.') && isIP(host) === 0 && !host.endsWith('.localhost')
 }
 
 // Normalizes a DNS name taken from a record or the configuration, where labels

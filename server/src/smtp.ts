@@ -7,16 +7,19 @@ import {
   type SMTPServerSession,
 } from 'smtp-server'
 import { findAddressPubkey, parseEmailAddress } from './address.js'
-import { emailIdOf, MAX_INLINE_MIME_BYTES, wrapInboundEmail } from './inbound.js'
-import type { RelayNetwork } from './relays.js'
+import { type BlobStore, type EncryptedBlob, encryptBlob } from './blossom.js'
+import { emailIdOf, type InboundEmail, MAX_INLINE_MIME_BYTES, wrapInboundEmail } from './inbound.js'
+import type { Inbox, RelayNetwork } from './relays.js'
 import type { AppConfig, Domain, DomainRepository } from './types.js'
 
 const MAX_RECIPIENTS = 50
+// RFC 5321 4.5.3.2.7: a server waits 5 minutes for the next command. The timer
+// also runs while a message is delivered after DATA, uploads included.
+const SOCKET_TIMEOUT_MS = 5 * 60 * 1000
 
-interface Recipient {
+interface Recipient extends Inbox {
   domain: Domain
   pubkey: string
-  relays: string[]
 }
 
 export interface SmtpLogger {
@@ -33,7 +36,8 @@ type SmtpError = Error & { responseCode?: number }
 export function createSmtpServer(
   repo: DomainRepository,
   relays: RelayNetwork,
-  { mxHost }: Pick<AppConfig, 'mxHost'>,
+  blobs: BlobStore,
+  { mxHost, maxMessageBytes }: Pick<AppConfig, 'mxHost' | 'maxMessageBytes'>,
   { logger = silent }: { logger?: SmtpLogger } = {},
 ): SMTPServer {
   // Keyed by envelope, which the server replaces for every transaction.
@@ -49,29 +53,31 @@ export function createSmtpServer(
     if (!domain || !pubkey) throw smtpError(550, '5.1.1 No such user here')
     if (accepted.some((recipient) => recipient.pubkey === pubkey)) return
 
-    const dmRelays = await relays.findDmRelays(pubkey)
-    if (!dmRelays.length) throw smtpError(450, '4.2.0 The recipient has no Nostr DM relays yet')
+    const inbox = await relays.findInbox(pubkey)
+    if (!inbox.dmRelays.length) throw smtpError(450, '4.2.0 The recipient has no Nostr DM relays yet')
 
-    accepted.push({ domain, pubkey, relays: dmRelays })
+    accepted.push({ domain, pubkey, ...inbox })
     recipients.set(session.envelope, accepted)
   }
 
   async function deliver(stream: SMTPServerDataStream, session: SMTPServerSession): Promise<string> {
     const message = await readMessage(stream)
-    if (stream.sizeExceeded) {
-      throw smtpError(552, `5.3.4 Messages are limited to ${MAX_INLINE_MIME_BYTES} bytes for now`)
-    }
-
-    const mailFrom = session.envelope.mailFrom ? session.envelope.mailFrom.address : ''
-    const email = {
-      mime: traceHeaders(session, mailFrom, mxHost) + message.toString('utf8'),
-      mailFrom,
-      emailId: emailIdOf(message),
-    }
+    if (stream.sizeExceeded) throw smtpError(552, `5.3.4 Messages are limited to ${maxMessageBytes} bytes`)
 
     const targets = recipients.get(session.envelope) ?? []
+    const mailFrom = session.envelope.mailFrom ? session.envelope.mailFrom.address : ''
+    const mime = Buffer.concat([Buffer.from(traceHeaders(session, mailFrom, mxHost)), message])
+    const email: InboundEmail = {
+      mailFrom,
+      emailId: emailIdOf(message),
+      body:
+        mime.length < MAX_INLINE_MIME_BYTES
+          ? { mime: mime.toString('utf8') }
+          : { blob: await storeBlob(mime, targets) },
+    }
+
     const delivered = await Promise.all(
-      targets.map(async ({ domain, pubkey, relays: dmRelays }) => {
+      targets.map(async ({ domain, pubkey, dmRelays }) => {
         const wrap = wrapInboundEmail(email, domain.bridgePrivateKey, pubkey)
         const accepted = await relays.publish(dmRelays, wrap, hexToBytes(domain.bridgePrivateKey))
         return accepted.length > 0
@@ -82,8 +88,25 @@ export function createSmtpServer(
       throw smtpError(451, '4.4.0 The recipient relays did not take the message, try again later')
     }
 
-    logger.info({ session: session.id, emailId: email.emailId, recipients: targets.length }, 'Delivered an email')
+    logger.info(
+      { session: session.id, emailId: email.emailId, recipients: targets.length, bytes: mime.length },
+      'Delivered an email',
+    )
     return 'Delivered over Nostr'
+  }
+
+  // One blob for every recipient, on the servers of the domain keys that write
+  // the rumors and on the recipients' own: clients look in both.
+  async function storeBlob(mime: Buffer, targets: Recipient[]): Promise<EncryptedBlob> {
+    const blob = encryptBlob(mime)
+    const servers = [
+      ...new Set(targets.flatMap((target) => [...target.domain.blossomServers, ...target.blossomServers])),
+    ]
+    // Any domain key can sign the upload: clients find the blob by its hash.
+    const stored = await blobs.upload(servers, blob, hexToBytes(targets[0].domain.bridgePrivateKey))
+    if (!stored.length) throw smtpError(451, '4.4.0 No Blossom server took the message, try again later')
+
+    return blob
   }
 
   // An unexpected failure is answered as temporary so the sender retries.
@@ -106,9 +129,10 @@ export function createSmtpServer(
   return new SMTPServer({
     name: mxHost,
     banner: 'Nostr Mail',
-    size: MAX_INLINE_MIME_BYTES,
+    size: maxMessageBytes,
     // AUTH is for submission servers; STARTTLS needs the certificate the deployment provides.
     disabledCommands: ['AUTH', 'STARTTLS'],
+    socketTimeout: SOCKET_TIMEOUT_MS,
     logger: false,
     onRcptTo: (address, session, callback) => respond(session, acceptRecipient(address, session), callback),
     onData: (stream, session, callback) => respond(session, deliver(stream, session), callback),

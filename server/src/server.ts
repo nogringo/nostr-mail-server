@@ -1,4 +1,5 @@
 import { buildApp } from './app.js'
+import { blossom } from './blossom.js'
 import { loadConfig } from './config.js'
 import { createDnsLookup } from './dns.js'
 import { migrate } from './migrations.js'
@@ -9,9 +10,9 @@ import { createSmtpServer } from './smtp.js'
 const config = loadConfig()
 const migrations = await migrate(config.databaseUrl)
 const repo = new PgDomainRepository(config.databaseUrl)
-const app = buildApp(repo, config, createDnsLookup(config.dnsServers), { logger: true })
 const relays = new NostrRelayNetwork(config.indexerRelays)
-const smtp = createSmtpServer(repo, relays, config, { logger: app.log.child({ component: 'smtp' }) })
+const app = buildApp(repo, config, createDnsLookup(config.dnsServers), relays, { logger: true })
+const smtp = createSmtpServer(repo, relays, blossom, config, { logger: app.log.child({ component: 'smtp' }) })
 
 if (migrations.length) app.log.info({ migrations }, 'applied database migrations')
 

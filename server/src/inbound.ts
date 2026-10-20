@@ -2,16 +2,18 @@ import { createHash } from 'node:crypto'
 import { wrapEvent } from 'nostr-tools/nip59'
 import type { NostrEvent } from 'nostr-tools/pure'
 import { hexToBytes } from 'nostr-tools/utils'
+import type { EncryptedBlob } from './blossom.js'
 
 export const EMAIL_KIND = 1301
 // NIP-44 caps a plaintext at 65535 bytes and NIP-59 encrypts twice, so Nostr
-// Mail keeps MIME inline below 32 KB.
+// Mail keeps MIME inline below 32 KB and moves larger messages to Blossom.
 export const MAX_INLINE_MIME_BYTES = 32 * 1024
 
 export interface InboundEmail {
-  mime: string
   mailFrom: string
   emailId: string
+  // The MIME itself, or the Blossom blob holding it once it is too large.
+  body: { mime: string } | { blob: Pick<EncryptedBlob, 'sha256' | 'key' | 'nonce'> }
 }
 
 // Nostr Mail core: mail received over SMTP is written on the sender's behalf by
@@ -20,15 +22,24 @@ export function wrapInboundEmail(email: InboundEmail, bridgePrivateKey: string, 
   return wrapEvent(
     {
       kind: EMAIL_KIND,
-      tags: [
-        ['email-id', email.emailId],
-        ['mail-from', email.mailFrom],
-      ],
-      content: email.mime,
+      tags: [['email-id', email.emailId], ['mail-from', email.mailFrom], ...blobTags(email.body)],
+      content: 'mime' in email.body ? email.body.mime : '',
     },
     hexToBytes(bridgePrivateKey),
     recipientPubkey,
   )
+}
+
+// Nostr Mail large MIME: an empty content and these tags point to the blob.
+function blobTags(body: InboundEmail['body']): string[][] {
+  if (!('blob' in body)) return []
+
+  return [
+    ['x', body.blob.sha256],
+    ['encryption-algorithm', 'aes-gcm'],
+    ['decryption-key', body.blob.key],
+    ['decryption-nonce', body.blob.nonce],
+  ]
 }
 
 // Derived from the message, so a delivery the sender retries keeps its id.

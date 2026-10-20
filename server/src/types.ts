@@ -1,15 +1,21 @@
 export interface AppConfig {
   port: number
   smtpPort: number
+  maxMessageBytes: number
   databaseUrl: string
   mxHost: string
   spfInclude: string
   dkimSelector: string
   dnsServers: string[]
   indexerRelays: string[]
+  domainRelays: string[]
+  blossomServers: string[]
 }
 
-export type DomainConfig = Pick<AppConfig, 'mxHost' | 'spfInclude' | 'dkimSelector'>
+export type DomainConfig = Pick<
+  AppConfig,
+  'mxHost' | 'spfInclude' | 'dkimSelector' | 'indexerRelays' | 'domainRelays' | 'blossomServers'
+>
 
 export type RecordId = 'ownership' | 'mx' | 'spf' | 'dkim' | 'dmarc'
 
@@ -41,6 +47,8 @@ export interface Domain {
   // The domain's own key, served as _smtp@<domain>.
   bridgePubkey: string
   bridgePrivateKey: string
+  // Where the domain's large mail is stored, published as the kind 10063 of its key.
+  blossomServers: string[]
   checks: DomainChecks | null
   checkedAt: string | null
   verifiedAt: string | null
@@ -57,6 +65,7 @@ export type NewDomain = Pick<
   | 'dkimPrivateKey'
   | 'bridgePubkey'
   | 'bridgePrivateKey'
+  | 'blossomServers'
 >
 
 export interface Address {

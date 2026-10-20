@@ -1,13 +1,23 @@
-import { getPublicKey } from 'nostr-tools/pure'
+import { getPublicKey, verifyEvent } from 'nostr-tools/pure'
 import { expect, test } from 'vitest'
 import { buildApp } from '../src/app.js'
-import { API_HOST, authorization, domainConfig, FakeDns, MemoryDomainRepository, request, signer } from './helpers.js'
+import {
+  API_HOST,
+  authorization,
+  domainConfig,
+  FakeDns,
+  FakeRelayNetwork,
+  MemoryDomainRepository,
+  request,
+  signer,
+} from './helpers.js'
 
 function setup() {
   const repo = new MemoryDomainRepository()
   const dns = new FakeDns()
-  const app = buildApp(repo, domainConfig, dns)
-  return { repo, dns, app }
+  const network = new FakeRelayNetwork()
+  const app = buildApp(repo, domainConfig, dns, network)
+  return { repo, dns, network, app }
 }
 
 function publishOwnership(dns: FakeDns, domain: string, value: string) {
@@ -30,6 +40,7 @@ test('PUT claims a domain and returns the records to publish', async () => {
   const { domain } = response.json()
   expect(domain.domain).toBe('example.com')
   expect(domain.verifiedAt).toBeNull()
+  expect(domain.blossomServers).toEqual(domainConfig.blossomServers)
   expect(domain.records.map((record: { id: string }) => record.id)).toEqual(['ownership', 'mx', 'spf', 'dkim', 'dmarc'])
   expect(domain.records.map((record: { check: unknown }) => record.check)).toEqual([null, null, null, null, null])
   expect(ownershipValue(response.json())).toMatch(/^nostr-mail-verification=[0-9a-f]{32}$/)
@@ -151,6 +162,41 @@ test('check verifies the domain once the ownership record is published', async (
   expect(after.json().domain.records[1].check.status).toBe('missing')
 
   await app.close()
+})
+
+test('a check that finds the domain verified publishes the lists of its key', async () => {
+  const { repo, dns, network, app } = setup()
+  const alice = signer()
+  const created = await request(app, alice, 'PUT', '/domains/example.com')
+  await request(app, alice, 'POST', '/domains/example.com/check')
+  expect(network.published).toHaveLength(0)
+
+  publishOwnership(dns, 'example.com', ownershipValue(created.json()))
+  await request(app, alice, 'POST', '/domains/example.com/check')
+
+  const claim = await repo.findDomain('example.com', alice.pubkey)
+  expect(network.published.map(({ event }) => event.kind)).toEqual([10002, 10063])
+  for (const { relays, event, authKey } of network.published) {
+    expect(relays).toEqual(['wss://relay.example.org/', 'wss://indexer.example.org/'])
+    expect(event.pubkey).toBe(claim?.bridgePubkey)
+    expect(verifyEvent(event)).toBe(true)
+    expect(Buffer.from(authKey).toString('hex')).toBe(claim?.bridgePrivateKey)
+  }
+  expect(network.published[0].event.tags).toEqual([['r', 'wss://relay.example.org/']])
+  expect(network.published[1].event.tags).toEqual([['server', 'https://blossom.example.org']])
+})
+
+test('a check still succeeds when the lists cannot be published', async () => {
+  const { dns, network, app } = setup()
+  const alice = signer()
+  const created = await request(app, alice, 'PUT', '/domains/example.com')
+  network.down.add('wss://relay.example.org/').add('wss://indexer.example.org/')
+
+  publishOwnership(dns, 'example.com', ownershipValue(created.json()))
+  const response = await request(app, alice, 'POST', '/domains/example.com/check')
+
+  expect(response.statusCode).toBe(200)
+  expect(response.json().domain.verifiedAt).toBeTypeOf('string')
 })
 
 test('verification sticks when a later check fails to find the record', async () => {

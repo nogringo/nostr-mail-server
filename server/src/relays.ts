@@ -1,19 +1,27 @@
 import type { Filter } from 'nostr-tools/filter'
 import { SimplePool } from 'nostr-tools/pool'
 import { finalizeEvent, type NostrEvent } from 'nostr-tools/pure'
+import { normalizeBlossomUrl } from './blossom.js'
 import { normalizeRelayUrl } from './nostr.js'
 
-const RELAY_LIST_KIND = 10002
-const DM_RELAY_LIST_KIND = 10050
+export const RELAY_LIST_KIND = 10002
+export const DM_RELAY_LIST_KIND = 10050
+export const BLOSSOM_SERVER_LIST_KIND = 10063
 const QUERY_TIMEOUT_MS = 5000
 const PUBLISH_TIMEOUT_MS = 10000
-// A relay list is written by whoever holds the recipient key: cap how many
-// relays one recipient makes us contact.
-const MAX_RELAYS = 8
+// A list is written by whoever holds the recipient key: cap how many relays or
+// servers one recipient makes us contact.
+const MAX_URLS = 8
+
+// Where a pubkey receives: its DM relays (kind 10050) and Blossom servers (kind 10063).
+export interface Inbox {
+  dmRelays: string[]
+  blossomServers: string[]
+}
 
 export interface RelayNetwork {
-  // The pubkey's DM relays (kind 10050), or [] when it publishes none.
-  findDmRelays(pubkey: string): Promise<string[]>
+  // Lists the pubkey does not publish come back empty.
+  findInbox(pubkey: string): Promise<Inbox>
   // Returns the relays that accepted the event. `authKey` answers NIP-42 challenges.
   publish(relays: string[], event: NostrEvent, authKey: Uint8Array): Promise<string[]>
 }
@@ -23,24 +31,28 @@ export class NostrRelayNetwork implements RelayNetwork {
 
   constructor(private readonly indexerRelays: string[]) {}
 
-  async findDmRelays(pubkey: string): Promise<string[]> {
+  async findInbox(pubkey: string): Promise<Inbox> {
     const lists = await this.query(this.indexerRelays, {
-      kinds: [RELAY_LIST_KIND, DM_RELAY_LIST_KIND],
+      kinds: [RELAY_LIST_KIND, DM_RELAY_LIST_KIND, BLOSSOM_SERVER_LIST_KIND],
       authors: [pubkey],
     })
-    const dmList = latest(lists, DM_RELAY_LIST_KIND, pubkey)
-    if (dmList) return dmRelaysOf(dmList)
 
-    // NIP-65: the DM relay list may only be on the pubkey's write relays.
+    // NIP-65: the lists may only be on the pubkey's write relays.
     const relayList = latest(lists, RELAY_LIST_KIND, pubkey)
-    if (!relayList) return []
+    if (!latest(lists, DM_RELAY_LIST_KIND, pubkey) && relayList) {
+      const fromWriteRelays = await this.query(writeRelaysOf(relayList), {
+        kinds: [DM_RELAY_LIST_KIND, BLOSSOM_SERVER_LIST_KIND],
+        authors: [pubkey],
+      })
+      lists.push(...fromWriteRelays)
+    }
 
-    const fromWriteRelays = await this.query(writeRelaysOf(relayList), {
-      kinds: [DM_RELAY_LIST_KIND],
-      authors: [pubkey],
-    })
-    const found = latest(fromWriteRelays, DM_RELAY_LIST_KIND, pubkey)
-    return found ? dmRelaysOf(found) : []
+    const dmList = latest(lists, DM_RELAY_LIST_KIND, pubkey)
+    const serverList = latest(lists, BLOSSOM_SERVER_LIST_KIND, pubkey)
+    return {
+      dmRelays: dmList ? dmRelaysOf(dmList) : [],
+      blossomServers: serverList ? blossomServersOf(serverList) : [],
+    }
   }
 
   async publish(relays: string[], event: NostrEvent, authKey: Uint8Array): Promise<string[]> {
@@ -73,14 +85,25 @@ export function latest(events: NostrEvent[], kind: number, pubkey: string): Nost
 }
 
 export function dmRelaysOf(dmList: NostrEvent): string[] {
-  return relayUrls(dmList.tags.filter((tag) => tag[0] === 'relay').map((tag) => tag[1]))
+  return urlsOf(dmList, (tag) => tag[0] === 'relay', normalizeRelayUrl)
 }
 
 export function writeRelaysOf(relayList: NostrEvent): string[] {
-  return relayUrls(relayList.tags.filter((tag) => tag[0] === 'r' && tag[2] !== 'read').map((tag) => tag[1]))
+  return urlsOf(relayList, (tag) => tag[0] === 'r' && tag[2] !== 'read', normalizeRelayUrl)
 }
 
-function relayUrls(values: (string | undefined)[]): string[] {
-  const urls = values.map((value) => (value ? normalizeRelayUrl(value) : null)).filter((url) => url !== null)
-  return [...new Set(urls)].slice(0, MAX_RELAYS)
+export function blossomServersOf(serverList: NostrEvent): string[] {
+  return urlsOf(serverList, (tag) => tag[0] === 'server', normalizeBlossomUrl)
+}
+
+function urlsOf(
+  list: NostrEvent,
+  keep: (tag: string[]) => boolean,
+  normalize: (url: string) => string | null,
+): string[] {
+  const urls = list.tags
+    .filter(keep)
+    .map((tag) => (tag[1] ? normalize(tag[1]) : null))
+    .filter((url) => url !== null)
+  return [...new Set(urls)].slice(0, MAX_URLS)
 }

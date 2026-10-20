@@ -1,7 +1,7 @@
 import { finalizeEvent } from 'nostr-tools/pure'
 import { expect, test } from 'vitest'
 import { normalizeRelayUrl } from '../src/nostr.js'
-import { dmRelaysOf, latest, writeRelaysOf } from '../src/relays.js'
+import { blossomServersOf, dmRelaysOf, latest, writeRelaysOf } from '../src/relays.js'
 import { signer } from './helpers.js'
 
 const alice = signer()
@@ -61,4 +61,15 @@ test('writeRelaysOf skips the read-only relays', () => {
   ])
 
   expect(writeRelaysOf(relayList)).toEqual(['wss://both.example.com/', 'wss://write.example.com/'])
+})
+
+test('blossomServersOf keeps public https:// servers', () => {
+  const serverList = list(10063, [
+    ['server', 'https://Blossom.Example.com/'],
+    ['server', 'http://plain.example.com'],
+    ['server', 'https://192.168.1.10'],
+    ['server', 'https://cdn.example.org/blossom/'],
+  ])
+
+  expect(blossomServersOf(serverList)).toEqual(['https://blossom.example.com', 'https://cdn.example.org/blossom'])
 })

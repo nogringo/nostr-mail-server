@@ -26,6 +26,7 @@ A domain is returned as:
   "domain": "example.com",
   "verifiedAt": null,
   "checkedAt": "2026-10-20T12:00:00.000Z",
+  "blossomServers": ["https://blossom.nmail.li"],
   "createdAt": "2026-10-20T11:58:00.000Z",
   "records": [
     {
@@ -56,7 +57,22 @@ so a client can show what is wrong.
 
 Each claim gets its own token, its own 2048-bit DKIM key and its own Nostr key
 pair, served as `_smtp@<domain>` (see [NIP-05](#nip-05)), all generated when it
-is created. The private keys stay on the server.
+is created. The private keys stay on the server. It also gets the Blossom
+servers of `BLOSSOM_SERVERS` at that time, which store its large mail.
+
+### Lists of the domain key
+
+The domain key writes the mail the domain receives, so clients read its lists
+to find what it refers to. Every check that finds the domain verified
+publishes, signed by that key, on `DOMAIN_RELAYS` and `INDEXER_RELAYS`:
+
+| Kind | Content |
+|------|---------|
+| 10002 (NIP-65) | `DOMAIN_RELAYS`, the relays where its lists are found |
+| 10063 (BUD-03) | The claim's Blossom servers |
+
+A failed publication is logged and does not fail the check: checking again
+publishes the lists again.
 
 ### Ownership
 
@@ -138,8 +154,8 @@ answered with a temporary error so the sending server retries.
 | `RCPT TO` on a domain that is not verified, or a local part that is neither a declared address nor an npub | `550 5.1.1` |
 | `RCPT TO` whose pubkey publishes no DM relay list (kind 10050) | `450 4.2.0` |
 | More than 50 recipients | `452 4.5.3` |
-| Message above 32 KB | `552 5.3.4` |
-| A recipient's relays all refuse the message, or the database fails | `451` |
+| Message above `MAX_MESSAGE_BYTES` | `552 5.3.4` |
+| No Blossom server stores a large message, a recipient's relays all refuse it, or the database fails | `451` |
 | Every recipient's wrap accepted by at least one of its relays | `250` |
 
 Each recipient gets its own gift wrap (NIP-59) of a kind 1301 rumor written by
@@ -152,13 +168,34 @@ for mail from a legacy sender:
   keeps the same id.
 - `mail-from` is the SMTP envelope sender.
 
+### Large messages
+
+NIP-44 caps what a gift wrap can carry, so a MIME of 32 KB or more goes to
+Blossom, as Nostr Mail clients expect:
+
+1. The MIME is encrypted with AES-256-GCM under a random key and nonce. The
+   blob is the ciphertext followed by the 16-byte tag.
+2. The blob is uploaded (BUD-02) to the Blossom servers of the recipient's
+   domain and to the ones the recipient lists in its own kind 10063, with a
+   BUD-11 token signed by a domain key and scoped to each server and to the
+   blob. One server storing it is enough.
+3. The rumor's `content` is empty and it carries `x` (SHA-256 of the blob),
+   `encryption-algorithm` (`aes-gcm`), `decryption-key` and
+   `decryption-nonce` (both base64). Every recipient gets the same blob.
+
+Clients look for the blob on the servers of the most recent kind 10063 among
+the author (the domain key) and the recipient, then on their own defaults. The
+blob is on both lists, and `BLOSSOM_SERVERS` defaults to the servers Nostr
+Mail clients always check as a last resort.
+
 DM relays are looked up on `INDEXER_RELAYS`, then on the pubkey's NIP-65 write
-relays. A relay list is written by whoever holds the key, so only public
-`wss://` hosts are contacted, at most 8 per recipient. The server answers
+relays, along with their Blossom servers (kind 10063). A list is written by
+whoever holds the key, so only public `wss://` and `https://` hosts are
+contacted, at most 8 of each per recipient. The server answers
 NIP-42 AUTH with the domain's key.
 
-Not done yet: messages above 32 KB (Blossom), STARTTLS (it needs the
-certificate the deployment will provide), SPF, DKIM and DMARC checks.
+Not done yet: STARTTLS (it needs the certificate the deployment will
+provide), SPF, DKIM and DMARC checks.
 
 ## Configuration
 
@@ -175,6 +212,9 @@ cp .env.example .env
 | `DNS_SERVERS` | no | system resolver | Comma-separated IP addresses used for the checks |
 | `PORT` | no | `3000` | HTTP port |
 | `SMTP_PORT` | no | `2525` | SMTP port that receives mail for the connected domains |
+| `MAX_MESSAGE_BYTES` | no | `26214400` (25 MiB) | Largest message accepted over SMTP, advertised with `SIZE` |
+| `BLOSSOM_SERVERS` | no | `https://blossom.nmail.li`, `https://blossom.yakihonne.com`, `https://blossom.ditto.pub` | Comma-separated `https://` Blossom servers given to new claims for their large mail; existing claims keep theirs |
+| `DOMAIN_RELAYS` | no | `wss://relay.nmail.li`, `wss://relay.ditto.pub`, `wss://nos.lol`, `wss://relay.primal.net` | Comma-separated `wss://` relays the domain keys announce (kind 10002) and publish their lists on |
 | `INDEXER_RELAYS` | no | `wss://purplepag.es`, `wss://user.kindpag.es`, `wss://indexer.coracle.social` | Comma-separated `wss://` relays where relay lists (kinds 10002 and 10050) are looked up |
 
 The pending files of `migrations/` are applied at startup.
