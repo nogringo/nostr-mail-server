@@ -3,6 +3,7 @@ import { expect, test } from 'vitest'
 import { buildApp } from '../src/app.js'
 import {
   API_HOST,
+  apiConfig,
   authorization,
   domainConfig,
   FakeDns,
@@ -16,7 +17,7 @@ function setup() {
   const repo = new MemoryDomainRepository()
   const dns = new FakeDns()
   const network = new FakeRelayNetwork()
-  const app = buildApp(repo, domainConfig, dns, network)
+  const app = buildApp(repo, apiConfig, dns, network)
   return { repo, dns, network, app }
 }
 

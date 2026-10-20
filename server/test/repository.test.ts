@@ -176,6 +176,16 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     ).rejects.toThrow(/addresses_local_part/)
   })
 
+  test('lists every claim with the addresses it declared', async () => {
+    const summaries = await repo.listAllDomains()
+
+    expect(summaries.map(({ domain, pubkey, addressCount }) => ({ domain, pubkey, addressCount }))).toEqual([
+      { domain: 'example.com', pubkey: ALICE, addressCount: 1 },
+      { domain: 'example.com', pubkey: BOB, addressCount: 0 },
+    ])
+    expect(summaries[0].verifiedAt).toBeTypeOf('string')
+  })
+
   test('the addresses go away when another key takes the domain over', async () => {
     await repo.recordChecks('example.com', BOB, checks, true)
 

@@ -3,8 +3,8 @@ import { expect, test } from 'vitest'
 import { buildApp } from '../src/app.js'
 import {
   type App,
+  apiConfig,
   claim,
-  domainConfig,
   FakeDns,
   FakeRelayNetwork,
   MemoryDomainRepository,
@@ -16,7 +16,7 @@ const PUBKEY = 'a'.repeat(64)
 
 async function setup() {
   const repo = new MemoryDomainRepository()
-  const app = buildApp(repo, domainConfig, new FakeDns(), new FakeRelayNetwork())
+  const app = buildApp(repo, apiConfig, new FakeDns(), new FakeRelayNetwork())
   const owner = signer()
   await verifyDomain(repo, 'example.com', owner.pubkey)
   await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: PUBKEY, ownerPubkey: owner.pubkey })

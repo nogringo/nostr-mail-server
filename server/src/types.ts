@@ -14,6 +14,8 @@ export interface AppConfig {
   domainRelays: string[]
   blossomServers: string[]
   tls: TlsFiles | null
+  // Hex pubkeys allowed to see every domain of the server.
+  adminPubkeys: string[]
 }
 
 // PEM files of the certificate SMTP offers with STARTTLS.
@@ -26,6 +28,8 @@ export type DomainConfig = Pick<
   AppConfig,
   'mxHost' | 'spfInclude' | 'publicIpv4' | 'dkimSelector' | 'indexerRelays' | 'domainRelays' | 'blossomServers'
 >
+
+export type ApiConfig = DomainConfig & Pick<AppConfig, 'adminPubkeys'>
 
 export type RecordId = 'ownership' | 'mx' | 'https' | 'spf' | 'dkim' | 'dmarc'
 
@@ -63,6 +67,11 @@ export interface Domain {
   checkedAt: string | null
   verifiedAt: string | null
   createdAt: string
+}
+
+export type DomainSummary = Domain & {
+  // The addresses its claim declared.
+  addressCount: number
 }
 
 export type NewDomain = Pick<
@@ -114,6 +123,8 @@ export interface DomainRepository {
   findVerifiedDomainByBridgePubkey(bridgePubkey: string): Promise<Domain | null>
   listVerifiedDomains(): Promise<Domain[]>
   listDomains(pubkey: string): Promise<Domain[]>
+  // Every claim of every key, verified or not.
+  listAllDomains(): Promise<DomainSummary[]>
   // Returns the existing claim when this pubkey already claimed the domain.
   createDomain(input: NewDomain): Promise<Domain>
   // A verified claim becomes the domain's owner: the other claims on it, and their addresses, are dropped.

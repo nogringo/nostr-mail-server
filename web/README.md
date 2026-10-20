@@ -5,6 +5,10 @@ and check them. Once the domain is verified, the page lists its addresses:
 `npub...@<domain>`, always available, and the named ones the owner adds, each
 pointing at an npub or a hex public key.
 
+`/admin` lists every domain connected to the server, verified or not, with
+its owner, its named addresses and the records of its last check. Only the
+keys of the server's `ADMIN_PUBKEYS` can open it.
+
 Sign-in uses a NIP-07 extension or a NIP-46 bunker (`bunker://` link or
 `name@domain`). Every API call is signed with
 [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) for the
@@ -18,7 +22,7 @@ Start the [API](../server/README.md) on port 3000, then:
 
 ```sh
 npm install
-npm run dev         # http://localhost:4321, /domains proxied to the API
+npm run dev         # http://localhost:4321, /domains and /admin/* proxied to the API
 ```
 
 `API_URL` points the proxy at another API (default `http://localhost:3000`).
@@ -27,5 +31,5 @@ npm run dev         # http://localhost:4321, /domains proxied to the API
 npm run check       # Biome
 npm run typecheck   # astro check
 npm test            # Vitest
-npm run build       # static site in dist/
+npm run build       # static site in dist/, each page as <name>.html
 ```

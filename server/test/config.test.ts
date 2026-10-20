@@ -1,5 +1,8 @@
+import { npubEncode } from 'nostr-tools/nip19'
 import { expect, test } from 'vitest'
 import { loadConfig } from '../src/config.js'
+
+const ADMIN = 'a'.repeat(64)
 
 const required = {
   DATABASE_URL: 'postgres://localhost/nostrmail',
@@ -23,6 +26,7 @@ test('loadConfig applies the defaults', () => {
     domainRelays: ['wss://relay.nmail.li', 'wss://relay.ditto.pub', 'wss://nos.lol', 'wss://relay.primal.net'],
     blossomServers: ['https://blossom.nmail.li', 'https://blossom.yakihonne.com', 'https://blossom.ditto.pub'],
     tls: null,
+    adminPubkeys: [],
   })
 })
 
@@ -39,6 +43,7 @@ test('loadConfig reads the optional settings', () => {
     DNS_SERVERS: '1.1.1.1, 2606:4700::1111',
     TLS_CERT_FILE: '/certs/mx.crt',
     TLS_KEY_FILE: ' /certs/mx.key ',
+    ADMIN_PUBKEYS: `${npubEncode(ADMIN)}, ${'B'.repeat(64)}, ${ADMIN}`,
   })
 
   expect(config.port).toBe(8080)
@@ -50,6 +55,7 @@ test('loadConfig reads the optional settings', () => {
   expect(config.dkimSelector).toBe('mail2026')
   expect(config.dnsServers).toEqual(['1.1.1.1', '2606:4700::1111'])
   expect(config.tls).toEqual({ certFile: '/certs/mx.crt', keyFile: '/certs/mx.key' })
+  expect(config.adminPubkeys).toEqual([ADMIN, 'b'.repeat(64)])
 })
 
 test.each(Object.keys(required))('loadConfig requires %s', (name) => {
@@ -69,4 +75,5 @@ test('loadConfig rejects invalid values', () => {
   expect(() => loadConfig({ ...required, DKIM_SELECTOR: 'a.b' })).toThrow(/DKIM_SELECTOR/)
   expect(() => loadConfig({ ...required, DNS_SERVERS: 'dns.google' })).toThrow(/DNS_SERVERS/)
   expect(() => loadConfig({ ...required, PUBLIC_IPV4: '2001:db8::1' })).toThrow(/PUBLIC_IPV4/)
+  expect(() => loadConfig({ ...required, ADMIN_PUBKEYS: 'alice@example.com' })).toThrow(/ADMIN_PUBKEYS/)
 })

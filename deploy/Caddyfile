@@ -10,13 +10,15 @@
 {$SITE_HOST} {
 	encode
 
-	@api path /domains /domains/* /.well-known/nostr.json /healthz
+	@api path /domains /domains/* /admin/* /.well-known/nostr.json /healthz
 	handle @api {
 		reverse_proxy server:3000
 	}
 
+	# The pages are built as admin.html: /admin is the page, /admin/* the API.
 	handle {
 		root * /srv
+		try_files {path}.html {path}
 		file_server
 	}
 }

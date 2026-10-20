@@ -122,6 +122,35 @@ cannot be declared:
 The addresses belong to the owner's claim: they are deleted with it, when the
 owner releases the domain or when another key takes it over.
 
+## Admin
+
+The keys of `ADMIN_PUBKEYS` see every domain connected to the server, with the
+same NIP-98 authentication. Any other key gets `403 not_admin`.
+
+| Method | Path | Action |
+|--------|------|--------|
+| `GET` | `/admin/domains` | Every claim of every key, verified or not, sorted by domain then by age |
+
+A claim is returned as:
+
+```json
+{
+  "domain": "example.com",
+  "pubkey": "<hex of the claiming key>",
+  "verifiedAt": "2026-10-20T12:00:00.000Z",
+  "checkedAt": "2026-10-20T12:00:00.000Z",
+  "createdAt": "2026-10-20T11:58:00.000Z",
+  "addressCount": 2,
+  "checks": {
+    "ownership": { "status": "ok", "found": ["nostr-mail-verification=0f3c..."] },
+    "mx": { "status": "ok", "found": ["10 mx.example.org"] }
+  }
+}
+```
+
+`checks` holds the six records of the last check, `null` before the first one.
+`addressCount` counts the named addresses the claim declared.
+
 ## NIP-05
 
 `GET /.well-known/nostr.json?name=<local part>` answers on the connected
@@ -322,6 +351,7 @@ cp .env.example .env
 | `MX_HOST` | yes | | SMTP host that connected domains point their MX at, and the name the server greets with when it sends |
 | `SPF_INCLUDE` | yes | | Domain whose SPF record lists the address the server sends from |
 | `PUBLIC_IPV4` | yes | | IPv4 address that connected domains point their A record at, so that their HTTPS reaches this server |
+| `ADMIN_PUBKEYS` | no | nobody | Comma-separated npubs or hex public keys allowed to call the [admin routes](#admin) |
 | `DKIM_SELECTOR` | no | `nostrmail` | Selector given to new claims; existing claims keep theirs |
 | `DNS_SERVERS` | no | system resolver | Comma-separated IP addresses used for the record checks and for SPF, DKIM and DMARC |
 | `PORT` | no | `3000` | HTTP port |

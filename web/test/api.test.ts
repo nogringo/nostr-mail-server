@@ -71,3 +71,12 @@ test('sends a body as JSON and signs its hash', async () => {
   const event = await unpackEventFromToken(headers.authorization)
   expect(event.tags).toContainEqual(['payload', hashPayload({ pubkey: 'npub1alice' })])
 })
+
+test('lists every domain of the server for an admin', async () => {
+  const { api, requests } = recordingApi(() => Response.json({ domains: [] }))
+
+  expect(await api.listAllDomains()).toEqual([])
+
+  expect(requests[0].url).toBe(`${ORIGIN}/admin/domains`)
+  expect(requests[0].init.method).toBe('GET')
+})

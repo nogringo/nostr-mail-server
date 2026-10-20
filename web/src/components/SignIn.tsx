@@ -1,9 +1,15 @@
-import { type SubmitEvent, useState } from 'react'
+import { type ReactNode, type SubmitEvent, useState } from 'react'
 import { describeError } from '../lib/errors'
 import { hasExtension, type Signer, signInWithBunker, signInWithExtension } from '../lib/signer'
 import { Button, ErrorText } from './ui'
 
-export default function SignIn({ onSignIn }: { onSignIn: (signer: Signer) => void }) {
+interface Props {
+  title: string
+  children: ReactNode
+  onSignIn: (signer: Signer) => void
+}
+
+export default function SignIn({ title, children, onSignIn }: Props) {
   const [bunker, setBunker] = useState('')
   const [busy, setBusy] = useState<'extension' | 'bunker' | null>(null)
   const [authUrl, setAuthUrl] = useState<string | null>(null)
@@ -30,13 +36,8 @@ export default function SignIn({ onSignIn }: { onSignIn: (signer: Signer) => voi
 
   return (
     <section className="max-w-2xl pt-12 sm:pt-20">
-      <h1 className="text-balance font-semibold text-4xl tracking-tight sm:text-5xl">
-        Email at your own domain, delivered over Nostr.
-      </h1>
-      <p className="mt-6 max-w-xl text-lg text-muted leading-relaxed">
-        Sign in with your Nostr key, connect a domain you own and publish its DNS records. Mail sent to{' '}
-        <span className="font-mono text-base text-ink">npub...@yourdomain.com</span> then reaches you in Nostr Mail.
-      </p>
+      <h1 className="text-balance font-semibold text-4xl tracking-tight sm:text-5xl">{title}</h1>
+      <p className="mt-6 max-w-xl text-lg text-muted leading-relaxed">{children}</p>
 
       <div className="mt-12 space-y-8">
         <div className="space-y-2">

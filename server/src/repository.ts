@@ -5,6 +5,7 @@ import type {
   Domain,
   DomainChecks,
   DomainRepository,
+  DomainSummary,
   NewAddress,
   NewDomain,
   NewOutboundMessage,
@@ -95,6 +96,19 @@ export class PgDomainRepository implements DomainRepository {
       [pubkey],
     )
     return result.rows.map(toDomain)
+  }
+
+  async listAllDomains(): Promise<DomainSummary[]> {
+    const result = await this.pool.query<DomainRow & { address_count: number }>(
+      `
+        select ${DOMAIN_COLUMNS},
+               (select count(*) from addresses a where a.domain = domains.domain and a.owner_pubkey = domains.pubkey)::int
+                 as address_count
+        from domains
+        order by domain asc, created_at asc
+      `,
+    )
+    return result.rows.map((row) => ({ ...toDomain(row), addressCount: row.address_count }))
   }
 
   async createDomain(input: NewDomain): Promise<Domain> {

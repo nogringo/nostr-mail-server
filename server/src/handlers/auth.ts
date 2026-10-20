@@ -18,3 +18,16 @@ export function authenticate(request: FastifyRequest, reply: FastifyReply): stri
 
   return result.pubkey
 }
+
+// Returns the authenticated pubkey when it is an admin, or null after sending a 401 or a 403.
+export function authenticateAdmin(request: FastifyRequest, reply: FastifyReply, admins: string[]): string | null {
+  const pubkey = authenticate(request, reply)
+  if (pubkey === null) return null
+
+  if (!admins.includes(pubkey)) {
+    reply.code(403).send({ error: 'not_admin' })
+    return null
+  }
+
+  return pubkey
+}

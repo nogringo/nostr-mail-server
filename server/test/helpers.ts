@@ -15,11 +15,13 @@ import type { Inbox, RelayNetwork, Subscription } from '../src/relays.js'
 import { readTls, type TlsCredentials } from '../src/tls.js'
 import type {
   Address,
+  ApiConfig,
   DnsLookup,
   Domain,
   DomainChecks,
   DomainConfig,
   DomainRepository,
+  DomainSummary,
   MxRecord,
   NewAddress,
   NewDomain,
@@ -40,6 +42,8 @@ export const domainConfig: DomainConfig = {
   domainRelays: ['wss://relay.example.org/'],
   blossomServers: ['https://blossom.example.org'],
 }
+
+export const apiConfig: ApiConfig = { ...domainConfig, adminPubkeys: [] }
 
 export interface StoredRecipient {
   status: RecipientOutcome['status']
@@ -90,6 +94,18 @@ export class MemoryDomainRepository implements DomainRepository {
     return [...this.domains.values()]
       .filter((domain) => domain.pubkey === pubkey)
       .sort((left, right) => left.domain.localeCompare(right.domain))
+  }
+
+  async listAllDomains(): Promise<DomainSummary[]> {
+    this.assertAvailable()
+    return [...this.domains.values()]
+      .map((domain) => ({
+        ...domain,
+        addressCount: [...this.addresses.values()].filter(
+          (address) => address.domain === domain.domain && address.ownerPubkey === domain.pubkey,
+        ).length,
+      }))
+      .sort((left, right) => left.domain.localeCompare(right.domain) || left.createdAt.localeCompare(right.createdAt))
   }
 
   async createDomain(input: NewDomain): Promise<Domain> {

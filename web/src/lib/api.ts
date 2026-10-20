@@ -5,6 +5,11 @@ export type RecordId = 'ownership' | 'mx' | 'https' | 'spf' | 'dkim' | 'dmarc'
 
 export type CheckStatus = 'ok' | 'missing' | 'mismatch' | 'error'
 
+export interface RecordCheck {
+  status: CheckStatus
+  found: string[]
+}
+
 export interface DnsRecord {
   id: RecordId
   type: 'MX' | 'TXT' | 'A'
@@ -12,7 +17,7 @@ export interface DnsRecord {
   value: string
   priority?: number
   required: boolean
-  check: { status: CheckStatus; found: string[] } | null
+  check: RecordCheck | null
 }
 
 export interface Domain {
@@ -29,6 +34,17 @@ export interface Address {
   address: string
   pubkey: string
   createdAt: string
+}
+
+// A claim of any key, as an admin of the server sees it.
+export interface AdminDomain {
+  domain: string
+  pubkey: string
+  verifiedAt: string | null
+  checkedAt: string | null
+  createdAt: string
+  addressCount: number
+  checks: Record<RecordId, RecordCheck> | null
 }
 
 export class ApiError extends Error {
@@ -89,5 +105,6 @@ export function createApi(
     removeAddress: async (name: string, localPart: string): Promise<void> => {
       await call('DELETE', addressPath(name, localPart))
     },
+    listAllDomains: async (): Promise<AdminDomain[]> => (await call('GET', '/admin/domains')).domains,
   }
 }

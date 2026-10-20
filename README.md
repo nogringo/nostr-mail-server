@@ -17,6 +17,7 @@ The project is built in small steps. What exists today:
 | Deploy on one machine: HTTPS site and API, SMTP on port 25 | done |
 | Website: named addresses (`alice@domain` to any npub) | done |
 | NIP-05 over HTTPS on the connected domains (A record, certificate on demand) | done |
+| Admin page: every connected domain, its owner, addresses and records | done |
 
 ## Layout
 

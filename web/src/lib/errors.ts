@@ -8,6 +8,7 @@ const MESSAGES: Record<string, string> = {
   reserved_local_part: 'This name is reserved.',
   invalid_pubkey: 'Enter an npub or a hex public key.',
   address_not_found: 'This address no longer exists. Reload the page.',
+  not_admin: 'This key is not an admin of this server. Add its npub to ADMIN_PUBKEYS.',
   no_extension: 'No Nostr extension found in this browser.',
   invalid_bunker: 'Enter a bunker:// link or the name@domain of your bunker.',
   bunker_timeout: 'Your bunker did not answer in time.',

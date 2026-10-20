@@ -8,6 +8,10 @@ export function shortNpub(npub: string): string {
   return `${npub.slice(0, 10)}...${npub.slice(-4)}`
 }
 
+export function plural(count: number, one: string, many = `${one}s`): string {
+  return `${count} ${count === 1 ? one : many}`
+}
+
 const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 const UNITS = [
   ['day', 86_400],

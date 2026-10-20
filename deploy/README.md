@@ -10,8 +10,9 @@ One machine runs everything with Docker Compose:
 
 The site and the API share one origin, `SITE_HOST`, because NIP-98 binds each
 request to the URL the browser signs. Caddy sends `/domains`, `/domains/*`,
-`/.well-known/nostr.json` and `/healthz` to the server and keeps the `Host`
-header.
+`/admin/*`, `/.well-known/nostr.json` and `/healthz` to the server and keeps
+the `Host` header. The site's pages are built as `<name>.html`, so `/admin` is
+the admin page and `/admin/*` the API.
 
 The connected domains point their A record at `PUBLIC_IPV4`, this machine. For
 any other host name, Caddy gets a certificate on demand once the server says
@@ -31,11 +32,13 @@ only, and Caddy uses Let's Encrypt alone so the files stay at the same path.
 
 ```sh
 cd deploy
-cp .env.example .env    # set SITE_HOST, PUBLIC_IPV4 and POSTGRES_PASSWORD
+cp .env.example .env    # set SITE_HOST, PUBLIC_IPV4, POSTGRES_PASSWORD and ADMIN_PUBKEYS
 sudo docker compose up -d --build
 ```
 
-Caddy gets the certificate when it starts. To update, copy the new code
+`ADMIN_PUBKEYS` lists the npubs that can sign in at `https://SITE_HOST/admin`
+and see every domain connected to the server. Caddy gets the certificate when
+it starts. To update, copy the new code
 and run `sudo docker compose up -d --build` again. Logs:
 `sudo docker compose logs -f server`.
 

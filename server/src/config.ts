@@ -1,7 +1,7 @@
 import { isIP } from 'node:net'
 import { normalizeBlossomUrl } from './blossom.js'
 import { normalizeHostname } from './domain.js'
-import { normalizeRelayUrl } from './nostr.js'
+import { normalizeRelayUrl, parsePubkey } from './nostr.js'
 import type { AppConfig, TlsFiles } from './types.js'
 
 const DNS_NAME = /^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/
@@ -42,7 +42,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     domainRelays: parseUrls(env.DOMAIN_RELAYS, 'DOMAIN_RELAYS', normalizeRelayUrl, DEFAULT_DOMAIN_RELAYS),
     blossomServers: parseUrls(env.BLOSSOM_SERVERS, 'BLOSSOM_SERVERS', normalizeBlossomUrl, DEFAULT_BLOSSOM_SERVERS),
     tls: parseTlsFiles(env.TLS_CERT_FILE, env.TLS_KEY_FILE),
+    adminPubkeys: parseAdminPubkeys(env.ADMIN_PUBKEYS),
   }
+}
+
+function parseAdminPubkeys(value: string | undefined): string[] {
+  const keys = value
+    ?.split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map(parsePubkey)
+
+  if (!keys?.length) return []
+  if (keys.some((key) => key === null)) {
+    throw new Error('ADMIN_PUBKEYS must contain comma-separated npubs or hex public keys')
+  }
+
+  return [...new Set(keys as string[])]
 }
 
 function parseTlsFiles(cert: string | undefined, key: string | undefined): TlsFiles | null {

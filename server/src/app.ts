@@ -1,14 +1,15 @@
 import Fastify, { type FastifyError } from 'fastify'
 import { registerAddressRoutes } from './handlers/addresses.js'
+import { registerAdminRoutes } from './handlers/admin.js'
 import { registerCertificateRoutes } from './handlers/certificates.js'
 import { registerDomainRoutes } from './handlers/domains.js'
 import { registerNip05Routes } from './handlers/nip05.js'
 import type { RelayNetwork } from './relays.js'
-import type { DnsLookup, DomainConfig, DomainRepository } from './types.js'
+import type { ApiConfig, DnsLookup, DomainRepository } from './types.js'
 
 export function buildApp(
   repo: DomainRepository,
-  config: DomainConfig,
+  config: ApiConfig,
   dns: DnsLookup,
   relays: RelayNetwork,
   { logger = false }: { logger?: boolean } = {},
@@ -27,6 +28,7 @@ export function buildApp(
   registerAddressRoutes(app, repo)
   registerNip05Routes(app, repo)
   registerCertificateRoutes(app, repo)
+  registerAdminRoutes(app, repo, config.adminPubkeys)
 
   return app
 }
