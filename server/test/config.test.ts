@@ -1,5 +1,5 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
+import test from 'node:test'
 import { loadConfig } from '../src/config.js'
 
 const required = {
@@ -20,7 +20,12 @@ test('loadConfig applies the defaults', () => {
 })
 
 test('loadConfig reads the optional settings', () => {
-  const config = loadConfig({ ...required, PORT: '8080', DKIM_SELECTOR: 'Mail2026', DNS_SERVERS: '1.1.1.1, 2606:4700::1111' })
+  const config = loadConfig({
+    ...required,
+    PORT: '8080',
+    DKIM_SELECTOR: 'Mail2026',
+    DNS_SERVERS: '1.1.1.1, 2606:4700::1111',
+  })
 
   assert.equal(config.port, 8080)
   assert.equal(config.dkimSelector, 'mail2026')

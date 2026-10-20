@@ -1,5 +1,5 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
+import test from 'node:test'
 import { normalizeDomain, normalizeHost } from '../src/domain.js'
 
 test('normalizeDomain lowercases and drops the trailing dot', () => {

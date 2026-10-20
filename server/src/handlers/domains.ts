@@ -97,7 +97,10 @@ function present(domain: Domain, config: DomainConfig) {
     verifiedAt: domain.verifiedAt,
     checkedAt: domain.checkedAt,
     createdAt: domain.createdAt,
-    records: expectedRecords(domain, config).map((record) => ({ ...record, check: domain.checks?.[record.id] ?? null })),
+    records: expectedRecords(domain, config).map((record) => ({
+      ...record,
+      check: domain.checks?.[record.id] ?? null,
+    })),
   }
 }
 

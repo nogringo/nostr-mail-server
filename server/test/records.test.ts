@@ -1,5 +1,5 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
+import test from 'node:test'
 import { checkRecords, expectedRecords } from '../src/records.js'
 import type { Domain } from '../src/types.js'
 import { domainConfig, FakeDns } from './helpers.js'
@@ -35,7 +35,13 @@ test('expectedRecords lists the five records with their names and values', () =>
   assert.deepEqual(
     records.map(({ id, type, name, value, required }) => ({ id, type, name, value, required })),
     [
-      { id: 'ownership', type: 'TXT', name: '_nostr-mail.example.com', value: 'nostr-mail-verification=token123', required: true },
+      {
+        id: 'ownership',
+        type: 'TXT',
+        name: '_nostr-mail.example.com',
+        value: 'nostr-mail-verification=token123',
+        required: true,
+      },
       { id: 'mx', type: 'MX', name: 'example.com', value: 'mx.example.org', required: true },
       { id: 'spf', type: 'TXT', name: 'example.com', value: 'v=spf1 include:_spf.example.org ~all', required: true },
       {
@@ -74,7 +80,10 @@ test('ownership is a mismatch when only another token is published', async () =>
 
 test('ownership passes when other keys also published their token', async () => {
   const dns = new FakeDns()
-  dns.txtRecords.set('_nostr-mail.example.com', ['nostr-mail-verification=someone-else', 'nostr-mail-verification=token123'])
+  dns.txtRecords.set('_nostr-mail.example.com', [
+    'nostr-mail-verification=someone-else',
+    'nostr-mail-verification=token123',
+  ])
 
   const checks = await checkRecords(domain, domainConfig, dns)
   assert.equal(checks.ownership.status, 'ok')
@@ -101,7 +110,10 @@ test('MX matches regardless of case and trailing dot', async () => {
 
 test('SPF ignores unrelated TXT records and accepts other mechanisms', async () => {
   const dns = new FakeDns()
-  dns.txtRecords.set('example.com', ['google-site-verification=abc', 'v=spf1 ip4:203.0.113.4 +include:_SPF.example.org -all'])
+  dns.txtRecords.set('example.com', [
+    'google-site-verification=abc',
+    'v=spf1 ip4:203.0.113.4 +include:_SPF.example.org -all',
+  ])
 
   const checks = await checkRecords(domain, domainConfig, dns)
   assert.deepEqual(checks.spf, { status: 'ok', found: ['v=spf1 ip4:203.0.113.4 +include:_SPF.example.org -all'] })
@@ -113,7 +125,10 @@ test('SPF is a mismatch without our include or with two SPF records', async () =
   assert.equal((await checkRecords(domain, domainConfig, withoutInclude)).spf.status, 'mismatch')
 
   const twoRecords = new FakeDns()
-  twoRecords.txtRecords.set('example.com', ['v=spf1 include:_spf.example.org ~all', 'v=spf1 include:_spf.google.com ~all'])
+  twoRecords.txtRecords.set('example.com', [
+    'v=spf1 include:_spf.example.org ~all',
+    'v=spf1 include:_spf.google.com ~all',
+  ])
   assert.equal((await checkRecords(domain, domainConfig, twoRecords)).spf.status, 'mismatch')
 })
 

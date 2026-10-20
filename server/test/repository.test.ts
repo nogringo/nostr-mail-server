@@ -1,6 +1,6 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
+import test from 'node:test'
 import pg from 'pg'
 import { migrate } from '../src/migrations.js'
 import { PgDomainRepository } from '../src/repository.js'
@@ -8,7 +8,7 @@ import type { DomainChecks, NewDomain } from '../src/types.js'
 
 // Runs against a real Postgres when TEST_DATABASE_URL is set, inside a
 // throwaway schema.
-const databaseUrl = process.env.TEST_DATABASE_URL
+const databaseUrl = process.env.TEST_DATABASE_URL ?? ''
 
 const ALICE = 'a'.repeat(64)
 const BOB = 'b'.repeat(64)
@@ -38,7 +38,7 @@ test('PgDomainRepository', { skip: !databaseUrl && 'TEST_DATABASE_URL is not set
   await admin.connect()
   await admin.query(`create schema ${schema}`)
 
-  const url = new URL(databaseUrl!)
+  const url = new URL(databaseUrl)
   url.searchParams.set('options', `-c search_path=${schema}`)
   const repo = new PgDomainRepository(url.toString())
 
@@ -71,7 +71,12 @@ test('PgDomainRepository', { skip: !databaseUrl && 'TEST_DATABASE_URL is not set
   })
 
   await t.test('records checks without verifying', async () => {
-    const updated = await repo.recordChecks('example.com', BOB, { ...checks, ownership: { status: 'missing', found: [] } }, false)
+    const updated = await repo.recordChecks(
+      'example.com',
+      BOB,
+      { ...checks, ownership: { status: 'missing', found: [] } },
+      false,
+    )
 
     assert.equal(updated?.verifiedAt, null)
     assert.ok(updated?.checkedAt)
@@ -92,7 +97,9 @@ test('PgDomainRepository', { skip: !databaseUrl && 'TEST_DATABASE_URL is not set
   await t.test('a domain has at most one verified owner', async () => {
     await repo.createDomain(claim('example.com', BOB))
     await assert.rejects(
-      admin.query(`update ${schema}.domains set verified_at = now() where domain = 'example.com' and pubkey = $1`, [BOB]),
+      admin.query(`update ${schema}.domains set verified_at = now() where domain = 'example.com' and pubkey = $1`, [
+        BOB,
+      ]),
       /domains_one_verified_owner/,
     )
   })

@@ -38,12 +38,18 @@ export async function checkRecords(domain: Domain, config: RecordsConfig, dns: D
     settle(async () => {
       const found = await dns.txt(`${OWNERSHIP_LABEL}.${name}`)
       const expected = OWNERSHIP_PREFIX + domain.verificationToken
-      return verdict(found, found.some((value) => value.trim() === expected))
+      return verdict(
+        found,
+        found.some((value) => value.trim() === expected),
+      )
     }),
     settle(async () => {
       const records = await dns.mx(name)
       const found = records.map((record) => `${record.priority} ${normalizeHostname(record.exchange)}`)
-      return verdict(found, records.every((record) => normalizeHostname(record.exchange) === config.mxHost))
+      return verdict(
+        found,
+        records.every((record) => normalizeHostname(record.exchange) === config.mxHost),
+      )
     }),
     settle(async () => {
       // RFC 7208 3.2: more than one SPF record makes SPF fail, so it is a mismatch.
@@ -52,7 +58,10 @@ export async function checkRecords(domain: Domain, config: RecordsConfig, dns: D
     }),
     settle(async () => {
       const found = await dns.txt(`${domain.dkimSelector}._domainkey.${name}`)
-      return verdict(found, found.some((value) => dkimPublicKey(value) === domain.dkimPublicKey))
+      return verdict(
+        found,
+        found.some((value) => dkimPublicKey(value) === domain.dkimPublicKey),
+      )
     }),
     settle(async () => {
       const found = (await dns.txt(`_dmarc.${name}`)).filter((value) => /^v=DMARC1\s*(;|$)/i.test(value.trim()))

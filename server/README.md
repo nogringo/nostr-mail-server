@@ -89,9 +89,13 @@ npm run dev
 ```
 
 ```sh
+npm run check       # Biome: format, lint and import order (check:write fixes)
 npm run typecheck
 npm test
 ```
+
+The Biome configuration is [`biome.json`](../biome.json) at the repository root,
+so it also covers the other packages.
 
 The repository test runs against a real Postgres when `TEST_DATABASE_URL` is
 set, inside a throwaway schema it drops afterwards:

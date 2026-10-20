@@ -16,6 +16,8 @@
   },
   "scripts": {
     "build": "tsc",
+    "check": "biome check",
+    "check:write": "biome check --write",
     "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
     "start": "node dist/server.js",
     "test": "node --import tsx --test test/*.test.ts",
@@ -27,6 +29,7 @@
     "pg": "^8.23.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.15",
     "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
     "tsx": "^4.23.15",

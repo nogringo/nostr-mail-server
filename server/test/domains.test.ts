@@ -1,7 +1,15 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
+import test from 'node:test'
 import { buildApp } from '../src/app.js'
-import { API_HOST, authorization, domainConfig, FakeDns, MemoryDomainRepository, signer, type Signer } from './helpers.js'
+import {
+  API_HOST,
+  authorization,
+  domainConfig,
+  FakeDns,
+  MemoryDomainRepository,
+  type Signer,
+  signer,
+} from './helpers.js'
 
 function setup() {
   const repo = new MemoryDomainRepository()
@@ -25,7 +33,9 @@ function publishOwnership(dns: FakeDns, domain: string, value: string) {
 }
 
 function ownershipValue(body: { domain: { records: { id: string; value: string }[] } }): string {
-  return body.domain.records.find((record) => record.id === 'ownership')!.value
+  const record = body.domain.records.find((record) => record.id === 'ownership')
+  assert.ok(record)
+  return record.value
 }
 
 test('PUT claims a domain and returns the records to publish', async () => {
@@ -266,13 +276,23 @@ test('a token signed for another request is refused', async () => {
 
   const cases = [
     { reason: 'url_mismatch', token: authorization(alice.sk, { method: 'PUT', path: '/domains/other.com' }) },
-    { reason: 'url_mismatch', token: authorization(alice.sk, { method: 'PUT', path: '/domains/example.com', host: 'evil.example' }) },
+    {
+      reason: 'url_mismatch',
+      token: authorization(alice.sk, { method: 'PUT', path: '/domains/example.com', host: 'evil.example' }),
+    },
     { reason: 'method_mismatch', token: authorization(alice.sk, { method: 'DELETE', path: '/domains/example.com' }) },
     {
       reason: 'stale_event',
-      token: authorization(alice.sk, { method: 'PUT', path: '/domains/example.com', createdAt: Math.floor(Date.now() / 1000) - 120 }),
+      token: authorization(alice.sk, {
+        method: 'PUT',
+        path: '/domains/example.com',
+        createdAt: Math.floor(Date.now() / 1000) - 120,
+      }),
     },
-    { reason: 'invalid_event', token: authorization(alice.sk, { method: 'PUT', path: '/domains/example.com', kind: 1 }) },
+    {
+      reason: 'invalid_event',
+      token: authorization(alice.sk, { method: 'PUT', path: '/domains/example.com', kind: 1 }),
+    },
     { reason: 'invalid_token', token: 'Nostr not-base64-json' },
   ]
 

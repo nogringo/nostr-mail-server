@@ -1,6 +1,14 @@
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { NIP98_KIND } from '../src/nip98.js'
-import type { DnsLookup, Domain, DomainChecks, DomainConfig, DomainRepository, MxRecord, NewDomain } from '../src/types.js'
+import type {
+  DnsLookup,
+  Domain,
+  DomainChecks,
+  DomainConfig,
+  DomainRepository,
+  MxRecord,
+  NewDomain,
+} from '../src/types.js'
 
 export const API_HOST = 'app.example.org'
 
@@ -54,7 +62,12 @@ export class MemoryDomainRepository implements DomainRepository {
     }
 
     const now = new Date().toISOString()
-    const next = { ...current, checks, checkedAt: now, verifiedAt: verified ? (current.verifiedAt ?? now) : current.verifiedAt }
+    const next = {
+      ...current,
+      checks,
+      checkedAt: now,
+      verifiedAt: verified ? (current.verifiedAt ?? now) : current.verifiedAt,
+    }
     this.domains.set(key(domain, pubkey), next)
     return next
   }

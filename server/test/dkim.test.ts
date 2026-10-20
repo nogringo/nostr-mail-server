@@ -1,6 +1,6 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createPublicKey, sign, verify } from 'node:crypto'
+import test from 'node:test'
 import { generateDkimKeyPair } from '../src/dkim.js'
 
 test('generateDkimKeyPair returns a matching 2048-bit RSA pair', async () => {

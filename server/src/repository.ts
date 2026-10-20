@@ -50,7 +50,14 @@ export class PgDomainRepository implements DomainRepository {
         on conflict (domain, pubkey) do nothing
         returning ${DOMAIN_COLUMNS}
       `,
-      [input.domain, input.pubkey, input.verificationToken, input.dkimSelector, input.dkimPublicKey, input.dkimPrivateKey],
+      [
+        input.domain,
+        input.pubkey,
+        input.verificationToken,
+        input.dkimSelector,
+        input.dkimPublicKey,
+        input.dkimPrivateKey,
+      ],
     )
     if (result.rows[0]) return toDomain(result.rows[0])
 
