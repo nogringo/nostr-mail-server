@@ -12,7 +12,7 @@ The project is built in small steps. What exists today:
 | Receive mail over SMTP and deliver it over Nostr, large mail through Blossom | done |
 | STARTTLS on incoming mail | done |
 | Check SPF, DKIM and DMARC on incoming mail | done |
-| Send mail with the domain's `_smtp` key and DKIM signing | later |
+| Send mail over SMTP, DKIM signed, with a retry queue | done |
 | Website: sign in with Nostr, connect a domain, check its records | done |
 | Deploy on one machine: HTTPS site and API, SMTP on port 25 | done |
 | Website: named addresses (`alice@domain` to any npub) | done |
@@ -32,9 +32,9 @@ Each connected domain gets its own Nostr key, published as `_smtp@<domain>`.
 
 - Inbound: the server receives SMTP for the connected domains, gift wraps each
   message with the domain's key and publishes it to the recipient's DM relays.
-- Outbound (to come): Nostr Mail clients wrap the mail they send from the
-  domain to `_smtp@<domain>`, and the server sends it over SMTP, signed with
-  the domain's DKIM key.
+- Outbound: Nostr Mail clients wrap the mail they send from the domain to
+  `_smtp@<domain>`, and the server sends it over SMTP to the recipients' MX,
+  signed with the domain's DKIM key.
 
 Clients find both the addresses and the `_smtp` key through NIP-05 on the
 address domain, so a connected domain points its A record at this server,

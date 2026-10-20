@@ -9,11 +9,13 @@ export const EMAIL_KIND = 1301
 // Mail keeps MIME inline below 32 KB and moves larger messages to Blossom.
 export const MAX_INLINE_MIME_BYTES = 32 * 1024
 
+// The MIME itself, or the Blossom blob holding it once it is too large.
+export type EmailBody = { mime: string } | { blob: Pick<EncryptedBlob, 'sha256' | 'key' | 'nonce'> }
+
 export interface InboundEmail {
   mailFrom: string
   emailId: string
-  // The MIME itself, or the Blossom blob holding it once it is too large.
-  body: { mime: string } | { blob: Pick<EncryptedBlob, 'sha256' | 'key' | 'nonce'> }
+  body: EmailBody
 }
 
 // Nostr Mail core: mail received over SMTP is written on the sender's behalf by
@@ -31,7 +33,7 @@ export function wrapInboundEmail(email: InboundEmail, bridgePrivateKey: string, 
 }
 
 // Nostr Mail large MIME: an empty content and these tags point to the blob.
-function blobTags(body: InboundEmail['body']): string[][] {
+function blobTags(body: EmailBody): string[][] {
   if (!('blob' in body)) return []
 
   return [

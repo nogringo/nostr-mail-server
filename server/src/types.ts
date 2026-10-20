@@ -1,3 +1,5 @@
+import type { NostrEvent } from 'nostr-tools/pure'
+
 export interface AppConfig {
   port: number
   smtpPort: number
@@ -87,9 +89,30 @@ export interface Address {
 
 export type NewAddress = Pick<Address, 'domain' | 'localPart' | 'pubkey' | 'ownerPubkey'>
 
+// A gift wrap addressed to a domain key: queued with its recipients, or refused.
+export type NewOutboundMessage = { wrapId: string; bridgePubkey: string } & (
+  | { wrap: NostrEvent; recipients: string[] }
+  | { refusal: string }
+)
+
+export interface OutboundMessage {
+  wrapId: string
+  bridgePubkey: string
+  wrap: NostrEvent
+  receivedAt: string
+  // The recipients due for an attempt.
+  recipients: { address: string; attempts: number }[]
+}
+
+export type RecipientOutcome =
+  | { status: 'delivered' | 'failed'; response: string }
+  | { status: 'pending'; response: string; nextAttemptAt: Date }
+
 export interface DomainRepository {
   findDomain(domain: string, pubkey: string): Promise<Domain | null>
   findVerifiedDomain(domain: string): Promise<Domain | null>
+  findVerifiedDomainByBridgePubkey(bridgePubkey: string): Promise<Domain | null>
+  listVerifiedDomains(): Promise<Domain[]>
   listDomains(pubkey: string): Promise<Domain[]>
   // Returns the existing claim when this pubkey already claimed the domain.
   createDomain(input: NewDomain): Promise<Domain>
@@ -102,6 +125,14 @@ export interface DomainRepository {
   // Creates the address, or points an existing one at the new pubkey.
   putAddress(input: NewAddress): Promise<Address>
   deleteAddress(domain: string, localPart: string): Promise<boolean>
+  hasOutboundMessage(wrapId: string): Promise<boolean>
+  // Does nothing when the wrap is already known.
+  addOutboundMessage(input: NewOutboundMessage): Promise<void>
+  listDueOutboundMessages(limit: number): Promise<OutboundMessage[]>
+  // The wrap is dropped once no recipient is pending.
+  recordOutcomes(wrapId: string, outcomes: Map<string, RecipientOutcome>): Promise<void>
+  // Deletes the messages received before `before` that wait for nothing.
+  pruneOutboundMessages(before: Date): Promise<number>
 }
 
 export interface MxRecord {

@@ -2,7 +2,8 @@
 
 Lets a Nostr key claim a domain, tells it which DNS records to publish, checks
 them, then lets the owner declare addresses that the domain serves over NIP-05.
-Mail sent to those addresses over SMTP is delivered to their pubkeys over Nostr.
+Mail sent to those addresses over SMTP is delivered to their pubkeys over Nostr,
+and mail their pubkeys send from them over Nostr goes out over SMTP.
 
 ## Domains
 
@@ -70,6 +71,7 @@ publishes, signed by that key, on `DOMAIN_RELAYS` and `INDEXER_RELAYS`:
 | Kind | Content |
 |------|---------|
 | 10002 (NIP-65) | `DOMAIN_RELAYS`, the relays where its lists are found |
+| 10050 (NIP-17) | `DOMAIN_RELAYS`, where clients send the mail the domain relays |
 | 10063 (BUD-03) | The claim's Blossom servers |
 
 A failed publication is logged and does not fail the check: checking again
@@ -246,6 +248,68 @@ unchanged. Docker keeps it for IPv4 port publishing, not for IPv6, where its
 proxy connects from the gateway: give `MX_HOST` no AAAA record unless IPv6
 reaches the container directly.
 
+## Sending mail
+
+A Nostr Mail client sends mail for a legacy recipient through the domain of its
+From address: it resolves `_smtp@<domain>` and gift wraps a kind 1301 rumor to
+that key, the SMTP envelope in its tags (`mail-from`, then one `rcpt-to` per
+recipient, Cc and Bcc included). The server delivers it over SMTP, DKIM signed
+by the domain.
+
+### Receiving the wraps
+
+Each verified domain key has its own subscription to kind 1059 events tagged
+with it on `DOMAIN_RELAYS`, the relays of its kind 10050. Each one opens its own
+connections and answers NIP-42 AUTH with its key, since a DM relay may serve the
+gift wraps of only one authenticated key per connection. NIP-59 dates a wrap up
+to two days back, so a subscription reaches two days back too, and every
+subscription is renewed every 10 minutes to recover from dropped connections.
+A wrap seen again is recognized by its id and handled once.
+
+A wrap is refused, and never sent, when:
+
+| Check | Refusal |
+|-------|---------|
+| The domain's last check found SPF and DKIM | `<domain> does not send mail until its SPF and DKIM records are found` |
+| The wrap opens with the domain key, its seal is signed by the rumor's author, and the rumor is a kind 1301 | The wrap does not hold an email |
+| `mail-from` is an address of the domain that resolves to the author, as NIP-05 shows it: a declared name, or the author's own `npub1...` | `<address> is not an address of the sender` |
+| 1 to 50 `rcpt-to` tags, each `local@domain` with a dot-atom local part | Not an address mail can be relayed to |
+
+The refusal is recorded with the wrap id and logged.
+
+### Delivery
+
+An accepted wrap is queued in Postgres, the wrap itself kept until every
+recipient has an outcome. Delivery then:
+
+1. Reads the MIME: the rumor's `content`, or for a large email the Blossom blob
+   its tags point to, looked for on the domain's servers and `BLOSSOM_SERVERS`,
+   then on the sender's kind 10063, checked against its hash and decrypted.
+2. Checks the `From` field: one address, which belongs to the sender like
+   `mail-from`. DMARC aligns it with the DKIM signature, so it cannot name
+   anyone else. Otherwise every recipient fails.
+3. Signs the message with the domain's DKIM key (relaxed/relaxed, rsa-sha256),
+   lines turned into CRLF first.
+4. Sends one transaction per recipient domain, straight to its MX hosts in
+   order of preference (the domain itself without MX), on port 25, greeting as
+   `MX_HOST` and with STARTTLS when offered, without checking the certificate.
+
+| Answer | Outcome |
+|--------|---------|
+| 2xx | Delivered |
+| 5xx, a domain that does not exist or has a null MX, a refused From | Failed |
+| 4xx, a host that cannot be reached, a blob not found | Tried again after 5, 15, 30 minutes, 1, 2, 4 then every 8 hours, failed after 4 days |
+
+A temporary answer moves on to the next MX host, a permanent one stops. Each
+recipient keeps the last answer. Messages that wait for nothing are deleted a
+week after they arrived. Delivery status notifications (kind 7679) are not sent
+yet.
+
+Receivers check SPF against the server's address, through `include:SPF_INCLUDE`
+in the domain's record, and many check that the address resolves back to
+`MX_HOST`. So `SPF_INCLUDE` has to list the address the server sends from, and
+its PTR record has to name `MX_HOST`.
+
 ## Configuration
 
 ```sh
@@ -255,16 +319,16 @@ cp .env.example .env
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | yes | | Postgres connection string |
-| `MX_HOST` | yes | | Inbound SMTP host that connected domains point their MX at |
-| `SPF_INCLUDE` | yes | | Domain whose SPF record lists the outbound SMTP servers |
+| `MX_HOST` | yes | | SMTP host that connected domains point their MX at, and the name the server greets with when it sends |
+| `SPF_INCLUDE` | yes | | Domain whose SPF record lists the address the server sends from |
 | `PUBLIC_IPV4` | yes | | IPv4 address that connected domains point their A record at, so that their HTTPS reaches this server |
 | `DKIM_SELECTOR` | no | `nostrmail` | Selector given to new claims; existing claims keep theirs |
 | `DNS_SERVERS` | no | system resolver | Comma-separated IP addresses used for the record checks and for SPF, DKIM and DMARC |
 | `PORT` | no | `3000` | HTTP port |
 | `SMTP_PORT` | no | `2525` | SMTP port that receives mail for the connected domains |
-| `MAX_MESSAGE_BYTES` | no | `26214400` (25 MiB) | Largest message accepted over SMTP, advertised with `SIZE` |
+| `MAX_MESSAGE_BYTES` | no | `26214400` (25 MiB) | Largest message accepted over SMTP, advertised with `SIZE`, and largest blob read to send |
 | `BLOSSOM_SERVERS` | no | `https://blossom.nmail.li`, `https://blossom.yakihonne.com`, `https://blossom.ditto.pub` | Comma-separated `https://` Blossom servers given to new claims for their large mail; existing claims keep theirs |
-| `DOMAIN_RELAYS` | no | `wss://relay.nmail.li`, `wss://relay.ditto.pub`, `wss://nos.lol`, `wss://relay.primal.net` | Comma-separated `wss://` relays the domain keys announce (kind 10002) and publish their lists on |
+| `DOMAIN_RELAYS` | no | `wss://relay.nmail.li`, `wss://relay.ditto.pub`, `wss://nos.lol`, `wss://relay.primal.net` | Comma-separated `wss://` relays the domain keys announce (kinds 10002 and 10050), publish their lists on, and receive the mail to send on |
 | `INDEXER_RELAYS` | no | `wss://purplepag.es`, `wss://user.kindpag.es`, `wss://indexer.coracle.social` | Comma-separated `wss://` relays where relay lists (kinds 10002 and 10050) are looked up |
 | `TLS_CERT_FILE` | no | | PEM certificate for `MX_HOST` offered with STARTTLS, set together with `TLS_KEY_FILE` |
 | `TLS_KEY_FILE` | no | | PEM private key of that certificate |

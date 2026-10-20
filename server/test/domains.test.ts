@@ -182,7 +182,7 @@ test('a check that finds the domain verified publishes the lists of its key', as
   await request(app, alice, 'POST', '/domains/example.com/check')
 
   const claim = await repo.findDomain('example.com', alice.pubkey)
-  expect(network.published.map(({ event }) => event.kind)).toEqual([10002, 10063])
+  expect(network.published.map(({ event }) => event.kind)).toEqual([10002, 10050, 10063])
   for (const { relays, event, authKey } of network.published) {
     expect(relays).toEqual(['wss://relay.example.org/', 'wss://indexer.example.org/'])
     expect(event.pubkey).toBe(claim?.bridgePubkey)
@@ -190,7 +190,8 @@ test('a check that finds the domain verified publishes the lists of its key', as
     expect(Buffer.from(authKey).toString('hex')).toBe(claim?.bridgePrivateKey)
   }
   expect(network.published[0].event.tags).toEqual([['r', 'wss://relay.example.org/']])
-  expect(network.published[1].event.tags).toEqual([['server', 'https://blossom.example.org']])
+  expect(network.published[1].event.tags).toEqual([['relay', 'wss://relay.example.org/']])
+  expect(network.published[2].event.tags).toEqual([['server', 'https://blossom.example.org']])
 })
 
 test('a check still succeeds when the lists cannot be published', async () => {

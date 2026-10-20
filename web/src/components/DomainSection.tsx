@@ -5,9 +5,8 @@ import { timeAgo } from '../lib/format'
 import Addresses from './Addresses'
 import { Button, CopyButton, ErrorText } from './ui'
 
-// The records that let the domain receive and serve its addresses. Sending will
-// add SPF, DKIM and DMARC.
 const RECEIVE: RecordId[] = ['ownership', 'mx', 'https']
+const SEND: RecordId[] = ['spf', 'dkim', 'dmarc']
 
 const TONES = { ok: 'text-ok', wait: 'text-wait', bad: 'text-bad', none: 'text-muted' }
 
@@ -19,8 +18,8 @@ interface Props {
   onRemove: (name: string) => void
 }
 
-// A domain that does not receive yet shows its DNS setup. Once it receives,
-// its addresses come first and the records stay one click away.
+// A domain that does not send and receive yet shows its DNS setup. Once it
+// does, its addresses come first and the records stay one click away.
 export default function DomainSection({ domain, ownPubkey, api, onChange, onRemove }: Props) {
   const [busy, setBusy] = useState<'check' | 'remove' | null>(null)
   const [confirming, setConfirming] = useState(false)
@@ -53,9 +52,14 @@ export default function DomainSection({ domain, ownPubkey, api, onChange, onRemo
   const dns = (
     <div id={`dns-${domain.domain}`} className="mt-8">
       <RecordGroup
-        title="DNS records"
+        title="To receive mail"
         note="The MX record sends all mail for the domain here, the A record lets apps find its addresses. Some DNS providers want only the part of the name before your domain, like _nostr-mail, and nothing for the domain itself."
         records={pick(domain, RECEIVE)}
+      />
+      <RecordGroup
+        title="To send mail"
+        note="SPF and DKIM prove that mail from the domain really comes from it. If the domain already has an SPF record, add the include to it rather than publishing a second one."
+        records={pick(domain, SEND)}
       />
       <div className="mt-4 flex flex-wrap items-center gap-4">
         <Button variant={needsDns ? 'primary' : 'secondary'} onClick={check} disabled={busy !== null}>
@@ -93,7 +97,7 @@ export default function DomainSection({ domain, ownPubkey, api, onChange, onRemo
         )}
         {confirming ? (
           <span className="flex flex-wrap items-center gap-4">
-            <span>Remove {domain.domain}? Mail sent to it will stop arriving.</span>
+            <span>Remove {domain.domain}? It will stop receiving and sending mail.</span>
             <Button variant="quiet" className="text-bad" onClick={remove} disabled={busy !== null}>
               {busy === 'remove' ? 'Removing' : 'Remove'}
             </Button>
@@ -169,7 +173,8 @@ function domainStatus(domain: Domain): { tone: Tone; text: string } {
   if (!domain.verifiedAt) return { tone: 'wait', text: 'Waiting for the ownership record' }
   if (!found('mx')) return { tone: 'wait', text: 'Verified, waiting for the MX record' }
   if (!found('https')) return { tone: 'wait', text: 'Receiving mail, waiting for the A record' }
-  return { tone: 'ok', text: 'Receiving mail' }
+  if (!found('spf') || !found('dkim')) return { tone: 'wait', text: 'Receiving mail, waiting for SPF and DKIM to send' }
+  return { tone: 'ok', text: 'Sending and receiving mail' }
 }
 
 const CHECKS: Record<CheckStatus, { tone: Tone; text: string }> = {
@@ -180,5 +185,7 @@ const CHECKS: Record<CheckStatus, { tone: Tone; text: string }> = {
 }
 
 function recordStatus(record: DnsRecord): { tone: Tone; text: string } {
-  return record.check ? CHECKS[record.check.status] : { tone: 'none', text: 'Not checked' }
+  if (!record.check) return { tone: 'none', text: 'Not checked' }
+  if (!record.required && record.check.status !== 'ok') return { tone: 'none', text: 'Optional' }
+  return CHECKS[record.check.status]
 }

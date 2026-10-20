@@ -109,3 +109,9 @@ function dkimPublicKey(record: string): string | undefined {
 
   return undefined
 }
+
+// A domain sends once its last check found SPF and DKIM: receivers would take
+// its mail for spoofing otherwise, and the sending address would pay for it.
+export function sendsMail({ checks }: Pick<Domain, 'checks'>): boolean {
+  return checks?.spf.status === 'ok' && checks.dkim.status === 'ok'
+}

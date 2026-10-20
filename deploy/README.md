@@ -5,7 +5,7 @@ One machine runs everything with Docker Compose:
 | Service | What | Published ports |
 |---------|------|-----------------|
 | `postgres` | Postgres 18 | none |
-| `server` | The [API](../server/README.md) and the inbound SMTP server | 25, to the container's 2525 |
+| `server` | The [API](../server/README.md), the inbound SMTP server and the sending of mail | 25, to the container's 2525 |
 | `web` | Caddy: HTTPS with Let's Encrypt, the [site](../web/README.md), the API routes proxied to `server` | 80, 443 |
 
 The site and the API share one origin, `SITE_HOST`, because NIP-98 binds each
@@ -26,7 +26,7 @@ only, and Caddy uses Let's Encrypt alone so the files stay at the same path.
 ## Setup
 
 1. Point an A record for `SITE_HOST` at the machine, and open ports 25, 80
-   and 443.
+   and 443. Outbound port 25 has to be open too.
 2. Copy the repository to the machine, then:
 
 ```sh
@@ -42,4 +42,15 @@ and run `sudo docker compose up -d --build` again. Logs:
 The SMTP server waits for that certificate: on a first start it restarts until
 Caddy has it, which takes a few seconds once the A record resolves.
 
-Not done yet: an SPF record for `SITE_HOST`, needed to send mail.
+## Sending
+
+The server sends mail itself, from `PUBLIC_IPV4`: Docker gives the container
+no IPv6, so it goes out over IPv4. Two records make receivers trust it:
+
+| Record | Where | Value |
+|--------|-------|-------|
+| TXT (SPF) | `SITE_HOST` | `v=spf1 ip4:<PUBLIC_IPV4> -all` |
+| PTR | `PUBLIC_IPV4`, at the hosting provider | `SITE_HOST` |
+
+The connected domains include `SITE_HOST` in their own SPF record, so this one
+has to list the machine's address.

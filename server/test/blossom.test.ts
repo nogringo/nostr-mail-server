@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { type NostrEvent, verifyEvent } from 'nostr-tools/pure'
 import { afterEach, expect, test } from 'vitest'
-import { blossom, encryptBlob, normalizeBlossomUrl } from '../src/blossom.js'
+import { blossom, decryptBlob, encryptBlob, normalizeBlossomUrl } from '../src/blossom.js'
 import { signer } from './helpers.js'
 
 const servers: Server[] = []
@@ -112,4 +112,38 @@ test('upload returns only the servers that stored the blob', async () => {
   )
 
   expect(stored).toEqual([good.url])
+})
+
+test('decryptBlob reads what encryptBlob wrote, and refuses a blob that was changed', () => {
+  const mime = Buffer.from('Subject: Hi\r\n\r\nHello\r\n')
+  const blob = encryptBlob(mime)
+
+  expect(decryptBlob(blob.bytes, blob.key, blob.nonce)).toEqual(mime)
+  const tampered = Buffer.from(blob.bytes)
+  tampered[0] ^= 1
+  expect(() => decryptBlob(tampered, blob.key, blob.nonce)).toThrow()
+})
+
+test('download returns the first copy whose hash matches', async () => {
+  const blob = encryptBlob(Buffer.from('Subject: Hi\r\n\r\nHello\r\n'))
+  const missing = await blossomServer((_, response) => response.writeHead(404).end())
+  const wrong = await blossomServer((_, response) => response.writeHead(200).end('not the blob'))
+  const holder = await blossomServer((_, response) => response.writeHead(200).end(blob.bytes))
+
+  const bytes = await blossom.download([missing.url, wrong.url, holder.url], blob.sha256, 1024)
+
+  expect(bytes).toEqual(blob.bytes)
+  expect(holder.uploads.map(({ method, url }) => `${method} ${url}`)).toEqual([`GET /${blob.sha256}`])
+})
+
+test('download gives up on a blob above the limit or behind a redirect to a private host', async () => {
+  const blob = encryptBlob(Buffer.alloc(2048))
+  const holder = await blossomServer((_, response) => response.writeHead(200).end(blob.bytes))
+  const redirecting = await blossomServer((_, response) =>
+    response.writeHead(302, { location: `${holder.url}/${blob.sha256}` }).end(),
+  )
+
+  expect(await blossom.download([holder.url], blob.sha256, 1024)).toBeNull()
+  expect(await blossom.download([redirecting.url], blob.sha256, 4096)).toBeNull()
+  expect(holder.uploads).toHaveLength(1)
 })

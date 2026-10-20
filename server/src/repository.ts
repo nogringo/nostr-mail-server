@@ -1,5 +1,16 @@
+import type { NostrEvent } from 'nostr-tools/pure'
 import pg from 'pg'
-import type { Address, Domain, DomainChecks, DomainRepository, NewAddress, NewDomain } from './types.js'
+import type {
+  Address,
+  Domain,
+  DomainChecks,
+  DomainRepository,
+  NewAddress,
+  NewDomain,
+  NewOutboundMessage,
+  OutboundMessage,
+  RecipientOutcome,
+} from './types.js'
 
 const DOMAIN_COLUMNS = `
   domain, pubkey, verification_token, dkim_selector, dkim_public_key, dkim_private_key,
@@ -32,6 +43,14 @@ interface AddressRow {
   created_at: Date
 }
 
+interface OutboundMessageRow {
+  wrap_id: string
+  bridge_pubkey: string
+  wrap: NostrEvent
+  received_at: Date
+  recipients: { address: string; attempts: number }[]
+}
+
 export class PgDomainRepository implements DomainRepository {
   private readonly pool: pg.Pool
 
@@ -53,6 +72,21 @@ export class PgDomainRepository implements DomainRepository {
       [domain],
     )
     return result.rows[0] ? toDomain(result.rows[0]) : null
+  }
+
+  async findVerifiedDomainByBridgePubkey(bridgePubkey: string): Promise<Domain | null> {
+    const result = await this.pool.query<DomainRow>(
+      `select ${DOMAIN_COLUMNS} from domains where bridge_pubkey = $1 and verified_at is not null`,
+      [bridgePubkey],
+    )
+    return result.rows[0] ? toDomain(result.rows[0]) : null
+  }
+
+  async listVerifiedDomains(): Promise<Domain[]> {
+    const result = await this.pool.query<DomainRow>(
+      `select ${DOMAIN_COLUMNS} from domains where verified_at is not null order by domain asc`,
+    )
+    return result.rows.map(toDomain)
   }
 
   async listDomains(pubkey: string): Promise<Domain[]> {
@@ -94,10 +128,7 @@ export class PgDomainRepository implements DomainRepository {
   }
 
   async recordChecks(domain: string, pubkey: string, checks: DomainChecks, verified: boolean): Promise<Domain | null> {
-    const client = await this.pool.connect()
-
-    try {
-      await client.query('begin')
+    return this.transaction(async (client) => {
       if (verified) {
         await client.query('delete from domains where domain = $1 and pubkey <> $2', [domain, pubkey])
       }
@@ -112,14 +143,8 @@ export class PgDomainRepository implements DomainRepository {
         `,
         [domain, pubkey, JSON.stringify(checks), verified],
       )
-      await client.query('commit')
       return result.rows[0] ? toDomain(result.rows[0]) : null
-    } catch (error) {
-      await client.query('rollback')
-      throw error
-    } finally {
-      client.release()
-    }
+    })
   }
 
   async deleteDomain(domain: string, pubkey: string): Promise<boolean> {
@@ -165,8 +190,114 @@ export class PgDomainRepository implements DomainRepository {
     return (result.rowCount ?? 0) > 0
   }
 
+  async hasOutboundMessage(wrapId: string): Promise<boolean> {
+    const result = await this.pool.query('select 1 from outbound_messages where wrap_id = $1', [wrapId])
+    return (result.rowCount ?? 0) > 0
+  }
+
+  async addOutboundMessage(input: NewOutboundMessage): Promise<void> {
+    await this.transaction(async (client) => {
+      const queued = 'wrap' in input
+      const result = await client.query(
+        `
+          insert into outbound_messages (wrap_id, bridge_pubkey, wrap, refusal)
+          values ($1, $2, $3, $4)
+          on conflict (wrap_id) do nothing
+        `,
+        [input.wrapId, input.bridgePubkey, queued ? JSON.stringify(input.wrap) : null, queued ? null : input.refusal],
+      )
+      if (!queued || result.rowCount === 0) return
+
+      await client.query('insert into outbound_recipients (wrap_id, address) select $1, unnest($2::text[])', [
+        input.wrapId,
+        input.recipients,
+      ])
+    })
+  }
+
+  async listDueOutboundMessages(limit: number): Promise<OutboundMessage[]> {
+    const result = await this.pool.query<OutboundMessageRow>(
+      `
+        select m.wrap_id, m.bridge_pubkey, m.wrap, m.received_at,
+               json_agg(json_build_object('address', r.address, 'attempts', r.attempts) order by r.address) as recipients
+        from outbound_messages m
+        join outbound_recipients r on r.wrap_id = m.wrap_id
+        where r.status = 'pending' and r.next_attempt_at <= now() and m.wrap is not null
+        group by m.wrap_id
+        order by min(r.next_attempt_at)
+        limit $1
+      `,
+      [limit],
+    )
+    return result.rows.map((row) => ({
+      wrapId: row.wrap_id,
+      bridgePubkey: row.bridge_pubkey,
+      wrap: row.wrap,
+      receivedAt: row.received_at.toISOString(),
+      recipients: row.recipients,
+    }))
+  }
+
+  async recordOutcomes(wrapId: string, outcomes: Map<string, RecipientOutcome>): Promise<void> {
+    await this.transaction(async (client) => {
+      for (const [address, outcome] of outcomes) {
+        await client.query(
+          `
+            update outbound_recipients
+            set status = $3, response = $4, attempts = attempts + 1,
+                next_attempt_at = coalesce($5, next_attempt_at)
+            where wrap_id = $1 and address = $2
+          `,
+          [
+            wrapId,
+            address,
+            outcome.status,
+            outcome.response,
+            'nextAttemptAt' in outcome ? outcome.nextAttemptAt : null,
+          ],
+        )
+      }
+      await client.query(
+        `
+          update outbound_messages set wrap = null
+          where wrap_id = $1
+            and not exists (select 1 from outbound_recipients where wrap_id = $1 and status = 'pending')
+        `,
+        [wrapId],
+      )
+    })
+  }
+
+  async pruneOutboundMessages(before: Date): Promise<number> {
+    const result = await this.pool.query(
+      `
+        delete from outbound_messages m
+        where m.received_at < $1
+          and not exists (select 1 from outbound_recipients r where r.wrap_id = m.wrap_id and r.status = 'pending')
+      `,
+      [before],
+    )
+    return result.rowCount ?? 0
+  }
+
   async close(): Promise<void> {
     await this.pool.end()
+  }
+
+  private async transaction<T>(run: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect()
+
+    try {
+      await client.query('begin')
+      const result = await run(client)
+      await client.query('commit')
+      return result
+    } catch (error) {
+      await client.query('rollback')
+      throw error
+    } finally {
+      client.release()
+    }
   }
 }
 

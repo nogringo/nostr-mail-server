@@ -1,8 +1,8 @@
 import { type AuthenticateResult, authenticate, type DNSResolver } from 'mailauth'
+import { splitHeader } from './mime.js'
 
 // RFC 7208 4.6.4: an SPF evaluation may be cut off once it takes more than 20 seconds.
 const SPF_TIME_LIMIT_MS = 20_000
-const FIELD_START = /(?<=\n)(?![ \t])/
 const AUTHENTICATION_RESULTS = /^authentication-results[ \t]*:/i
 
 export interface DmarcRejection {
@@ -54,15 +54,11 @@ export function summarize({ spf, dkim, dmarc }: AuthenticateResult) {
 
 // RFC 8601 5: results that arrive with the message under this server's name are forged.
 export function removeForgedResults(message: Buffer, authservId: string): Buffer {
-  const text = message.toString('latin1')
-  // The leading newline lets a message without header fields end its header at 0.
-  const blankLine = `\n${text}`.search(/\n\r?\n/)
-  const headerEnd = blankLine === -1 ? text.length : blankLine
-  const fields = text.slice(0, headerEnd).split(FIELD_START)
+  const { fields, rest } = splitHeader(message)
   const kept = fields.filter((field) => authservIdOf(field) !== authservId)
   if (kept.length === fields.length) return message
 
-  return Buffer.from(kept.join('') + text.slice(headerEnd), 'latin1')
+  return Buffer.from(kept.join('') + rest, 'latin1')
 }
 
 function authservIdOf(field: string): string | null {

@@ -1,6 +1,7 @@
 import { Resolver } from 'node:dns/promises'
 import type { DNSResolver } from 'mailauth'
-import type { DnsLookup } from './types.js'
+import { normalizeHostname } from './domain.js'
+import type { DnsLookup, MxRecord } from './types.js'
 
 const NOT_FOUND_CODES = new Set(['ENOTFOUND', 'ENODATA'])
 
@@ -15,6 +16,32 @@ export function createDnsLookup(servers: string[] = []): DnsLookup {
       return [...ipv4, ...ipv6]
     },
   }
+}
+
+// A domain that cannot receive mail: it does not exist, or says so with a null MX.
+export class UndeliverableDomain extends Error {}
+
+export function createExchangerLookup(servers: string[] = []): (domain: string) => Promise<string[]> {
+  const resolver = createResolver(servers)
+  return (domain) => findExchangers(domain, (name) => resolver.resolveMx(name))
+}
+
+// RFC 5321 5.1: the MX hosts in order of preference, or the domain itself when
+// it has none. RFC 7505: a single empty exchange means the domain takes no mail.
+export async function findExchangers(
+  domain: string,
+  resolveMx: (name: string) => Promise<MxRecord[]>,
+): Promise<string[]> {
+  const records = await resolveMx(domain).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENODATA') return []
+    if (error.code === 'ENOTFOUND') throw new UndeliverableDomain(`${domain} does not exist`)
+    throw error
+  })
+  if (!records.length) return [domain]
+
+  const hosts = records.sort((a, b) => a.priority - b.priority).map((record) => normalizeHostname(record.exchange))
+  if (hosts.every((host) => !host)) throw new UndeliverableDomain(`${domain} does not accept mail`)
+  return hosts.filter(Boolean)
 }
 
 // mailauth expects the answers and errors of dns.promises.resolve, MX objects included.

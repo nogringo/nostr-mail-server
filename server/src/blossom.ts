@@ -1,10 +1,13 @@
-import { createCipheriv, createHash, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import { finalizeEvent } from 'nostr-tools/pure'
 import { isPublicHostname } from './domain.js'
 
 const AUTH_KIND = 24242
 const AUTH_TTL_SECONDS = 300
 const UPLOAD_TIMEOUT_MS = 60_000
+const DOWNLOAD_TIMEOUT_MS = 60_000
+const MAX_REDIRECTS = 3
+const AUTH_TAG_BYTES = 16
 
 export interface EncryptedBlob {
   bytes: Buffer<ArrayBuffer>
@@ -17,6 +20,8 @@ export interface EncryptedBlob {
 export interface BlobStore {
   // Returns the servers that stored the blob.
   upload(servers: string[], blob: EncryptedBlob, authKey: Uint8Array): Promise<string[]>
+  // The first copy found whose hash matches, or null.
+  download(servers: string[], sha256: string, maxBytes: number): Promise<Buffer | null>
 }
 
 export function normalizeBlossomUrl(value: string): string | null {
@@ -42,11 +47,59 @@ export function encryptBlob(data: Buffer): EncryptedBlob {
   }
 }
 
+export function decryptBlob(bytes: Buffer, key: string, nonce: string): Buffer {
+  const decipher = createDecipheriv('aes-256-gcm', Buffer.from(key, 'base64'), Buffer.from(nonce, 'base64'))
+  decipher.setAuthTag(bytes.subarray(-AUTH_TAG_BYTES))
+  return Buffer.concat([decipher.update(bytes.subarray(0, -AUTH_TAG_BYTES)), decipher.final()])
+}
+
 export const blossom: BlobStore = {
   async upload(servers, blob, authKey) {
     const stored = await Promise.all(servers.map((server) => uploadTo(server, blob, authKey).catch(() => false)))
     return servers.filter((_, index) => stored[index])
   },
+
+  async download(servers, sha256, maxBytes) {
+    for (const server of servers) {
+      const bytes = await downloadFrom(server, sha256, maxBytes).catch(() => null)
+      if (bytes) return bytes
+    }
+    return null
+  },
+}
+
+// BUD-01 retrieval. Servers often redirect to a CDN: only https hops to public
+// hosts are followed, since the server lists are written by any key.
+async function downloadFrom(server: string, sha256: string, maxBytes: number): Promise<Buffer | null> {
+  let url = `${server}/${sha256}`
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
+    const location = response.headers.get('location')
+    if (response.status >= 300 && response.status < 400 && location) {
+      const next = URL.parse(location, url)
+      if (next?.protocol !== 'https:' || !isPublicHostname(next.hostname)) return null
+      url = next.href
+      continue
+    }
+    if (!response.ok) return null
+
+    const bytes = await readLimited(response, maxBytes)
+    return bytes && createHash('sha256').update(bytes).digest('hex') === sha256 ? bytes : null
+  }
+  return null
+}
+
+async function readLimited(response: Response, maxBytes: number): Promise<Buffer | null> {
+  if (!response.body || Number(response.headers.get('content-length')) > maxBytes) return null
+
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for await (const chunk of response.body) {
+    size += chunk.length
+    if (size > maxBytes) return null
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks)
 }
 
 // BUD-02 upload, authorized by a BUD-11 token scoped to the server and the blob.

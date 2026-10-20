@@ -19,11 +19,17 @@ export interface Inbox {
   blossomServers: string[]
 }
 
+export interface Subscription {
+  close(): void
+}
+
 export interface RelayNetwork {
   // Lists the pubkey does not publish come back empty.
   findInbox(pubkey: string): Promise<Inbox>
   // Returns the relays that accepted the event. `authKey` answers NIP-42 challenges.
   publish(relays: string[], event: NostrEvent, authKey: Uint8Array): Promise<string[]>
+  // Events are verified, and may arrive more than once.
+  subscribe(relays: string[], filter: Filter, authKey: Uint8Array, onEvent: (event: NostrEvent) => void): Subscription
 }
 
 export class NostrRelayNetwork implements RelayNetwork {
@@ -63,6 +69,22 @@ export class NostrRelayNetwork implements RelayNetwork {
       }),
     )
     return relays.filter((_, index) => results[index].status === 'fulfilled')
+  }
+
+  // Each subscription gets its own connections: a DM relay may serve the gift
+  // wraps of only one authenticated key per connection.
+  subscribe(relays: string[], filter: Filter, authKey: Uint8Array, onEvent: (event: NostrEvent) => void): Subscription {
+    const pool = new SimplePool({ enablePing: true })
+    const subscription = pool.subscribe(relays, filter, {
+      onevent: onEvent,
+      onauth: async (template) => finalizeEvent(template, authKey),
+    })
+    return {
+      close: () => {
+        subscription.close()
+        pool.destroy()
+      },
+    }
   }
 
   close(): void {

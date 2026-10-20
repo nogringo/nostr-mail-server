@@ -1,13 +1,17 @@
 import type { Socket } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import type { DNSResolver } from 'mailauth'
+import type { Filter } from 'nostr-tools/filter'
+import { npubEncode } from 'nostr-tools/nip19'
 import { decrypt, getConversationKey } from 'nostr-tools/nip44'
+import { wrapEvent } from 'nostr-tools/nip59'
 import { finalizeEvent, generateSecretKey, getPublicKey, type NostrEvent } from 'nostr-tools/pure'
 import type { buildApp } from '../src/app.js'
 import type { BlobStore, EncryptedBlob } from '../src/blossom.js'
+import { generateDkimKeyPair } from '../src/dkim.js'
 import { NIP98_KIND } from '../src/nip98.js'
 import { generateKeyPair } from '../src/nostr.js'
-import type { Inbox, RelayNetwork } from '../src/relays.js'
+import type { Inbox, RelayNetwork, Subscription } from '../src/relays.js'
 import { readTls, type TlsCredentials } from '../src/tls.js'
 import type {
   Address,
@@ -19,6 +23,9 @@ import type {
   MxRecord,
   NewAddress,
   NewDomain,
+  NewOutboundMessage,
+  OutboundMessage,
+  RecipientOutcome,
   TlsFiles,
 } from '../src/types.js'
 
@@ -34,9 +41,25 @@ export const domainConfig: DomainConfig = {
   blossomServers: ['https://blossom.example.org'],
 }
 
+export interface StoredRecipient {
+  status: RecipientOutcome['status']
+  attempts: number
+  nextAttemptAt: Date
+  response: string | null
+}
+
+export interface StoredOutboundMessage {
+  bridgePubkey: string
+  wrap: NostrEvent | null
+  refusal: string | null
+  receivedAt: string
+  recipients: Map<string, StoredRecipient>
+}
+
 export class MemoryDomainRepository implements DomainRepository {
   readonly domains = new Map<string, Domain>()
   readonly addresses = new Map<string, Address>()
+  readonly outbound = new Map<string, StoredOutboundMessage>()
   fail = false
 
   async findDomain(domain: string, pubkey: string): Promise<Domain | null> {
@@ -47,6 +70,19 @@ export class MemoryDomainRepository implements DomainRepository {
   async findVerifiedDomain(domain: string): Promise<Domain | null> {
     this.assertAvailable()
     return [...this.domains.values()].find((claim) => claim.domain === domain && claim.verifiedAt !== null) ?? null
+  }
+
+  async findVerifiedDomainByBridgePubkey(bridgePubkey: string): Promise<Domain | null> {
+    this.assertAvailable()
+    return (
+      [...this.domains.values()].find((claim) => claim.bridgePubkey === bridgePubkey && claim.verifiedAt !== null) ??
+      null
+    )
+  }
+
+  async listVerifiedDomains(): Promise<Domain[]> {
+    this.assertAvailable()
+    return [...this.domains.values()].filter((claim) => claim.verifiedAt !== null)
   }
 
   async listDomains(pubkey: string): Promise<Domain[]> {
@@ -124,10 +160,89 @@ export class MemoryDomainRepository implements DomainRepository {
     return this.addresses.delete(key(domain, localPart))
   }
 
-  // Mirrors the foreign key: the addresses of a claim go away with it.
+  async hasOutboundMessage(wrapId: string): Promise<boolean> {
+    this.assertAvailable()
+    return this.outbound.has(wrapId)
+  }
+
+  async addOutboundMessage(input: NewOutboundMessage): Promise<void> {
+    this.assertAvailable()
+    if (this.outbound.has(input.wrapId)) return
+
+    const queued = 'wrap' in input
+    this.outbound.set(input.wrapId, {
+      bridgePubkey: input.bridgePubkey,
+      wrap: queued ? input.wrap : null,
+      refusal: queued ? null : input.refusal,
+      receivedAt: new Date().toISOString(),
+      recipients: new Map(
+        (queued ? input.recipients : []).map((address) => [
+          address,
+          { status: 'pending', attempts: 0, nextAttemptAt: new Date(), response: null },
+        ]),
+      ),
+    })
+  }
+
+  async listDueOutboundMessages(limit: number): Promise<OutboundMessage[]> {
+    this.assertAvailable()
+    const now = Date.now()
+    const due: OutboundMessage[] = []
+    for (const [wrapId, message] of this.outbound) {
+      const recipients = [...message.recipients]
+        .filter(([, recipient]) => recipient.status === 'pending' && recipient.nextAttemptAt.getTime() <= now)
+        .map(([address, { attempts }]) => ({ address, attempts }))
+        .sort((left, right) => left.address.localeCompare(right.address))
+      if (message.wrap && recipients.length) {
+        due.push({
+          wrapId,
+          bridgePubkey: message.bridgePubkey,
+          wrap: message.wrap,
+          receivedAt: message.receivedAt,
+          recipients,
+        })
+      }
+    }
+    return due.slice(0, limit)
+  }
+
+  async recordOutcomes(wrapId: string, outcomes: Map<string, RecipientOutcome>): Promise<void> {
+    this.assertAvailable()
+    const message = this.outbound.get(wrapId)
+    if (!message) return
+
+    for (const [address, outcome] of outcomes) {
+      const recipient = message.recipients.get(address)
+      if (!recipient) continue
+      recipient.status = outcome.status
+      recipient.response = outcome.response
+      recipient.attempts++
+      if ('nextAttemptAt' in outcome) recipient.nextAttemptAt = outcome.nextAttemptAt
+    }
+    if (![...message.recipients.values()].some((recipient) => recipient.status === 'pending')) message.wrap = null
+  }
+
+  async pruneOutboundMessages(before: Date): Promise<number> {
+    this.assertAvailable()
+    let pruned = 0
+    for (const [wrapId, message] of this.outbound) {
+      const pending = [...message.recipients.values()].some((recipient) => recipient.status === 'pending')
+      if (Date.parse(message.receivedAt) < before.getTime() && !pending) {
+        this.outbound.delete(wrapId)
+        pruned++
+      }
+    }
+    return pruned
+  }
+
+  // Mirrors the foreign keys: the addresses and the outbound mail of a claim go away with it.
   private dropClaim(domain: string, pubkey: string): boolean {
     for (const [addressKey, address] of this.addresses) {
       if (address.domain === domain && address.ownerPubkey === pubkey) this.addresses.delete(addressKey)
+    }
+    const claim = this.domains.get(key(domain, pubkey))
+    for (const [wrapId, message] of this.outbound) {
+      if (message.bridgePubkey === claim?.bridgePubkey) this.outbound.delete(wrapId)
     }
     return this.domains.delete(key(domain, pubkey))
   }
@@ -159,6 +274,41 @@ export function claim(domain: string, pubkey: string): NewDomain {
     bridgePrivateKey: bridge.privateKey,
     blossomServers: domainConfig.blossomServers,
   }
+}
+
+const SENDING: DomainChecks = {
+  ...OWNERSHIP_ONLY,
+  spf: { status: 'ok', found: [] },
+  dkim: { status: 'ok', found: [] },
+}
+
+// Stores a claim whose ownership, SPF and DKIM records were found, with a real DKIM key.
+export async function sendingDomain(repo: DomainRepository, domain: string, pubkey: string): Promise<Domain> {
+  const dkim = await generateDkimKeyPair()
+  await repo.createDomain({ ...claim(domain, pubkey), dkimPublicKey: dkim.publicKey, dkimPrivateKey: dkim.privateKey })
+  const sending = await repo.recordChecks(domain, pubkey, SENDING, true)
+  if (!sending) throw new Error(`The claim on ${domain} disappeared`)
+  return sending
+}
+
+interface OutboundOptions {
+  mailFrom?: string
+  rcptTo?: string[]
+  content?: string
+  tags?: string[][]
+}
+
+// A kind 1301 rumor gift wrapped to a domain key, as a Nostr Mail client sends mail for legacy recipients.
+export function outboundWrap(sender: Signer, bridgePubkey: string, options: OutboundOptions = {}): NostrEvent {
+  const mailFrom = options.mailFrom ?? `${npubEncode(sender.pubkey)}@example.com`
+  const tags = [
+    ['p', bridgePubkey],
+    ['mail-from', mailFrom],
+    ...(options.rcptTo ?? ['bob@remote.example']).map((address) => ['rcpt-to', address]),
+    ...(options.tags ?? []),
+  ]
+  const content = options.content ?? `From: Alice <${mailFrom}>\nTo: bob@remote.example\nSubject: Hi\n\nHello Bob\n`
+  return wrapEvent({ kind: 1301, tags, content }, sender.sk, bridgePubkey)
 }
 
 // Stores a claim whose ownership record was found, as a check would.
@@ -209,11 +359,20 @@ export class FakeAuthDns {
   }
 }
 
+export interface FakeSubscription {
+  relays: string[]
+  filter: Filter
+  authKey: Uint8Array
+  onEvent: (event: NostrEvent) => void
+  closed: boolean
+}
+
 export class FakeRelayNetwork implements RelayNetwork {
   readonly dmRelays = new Map<string, string[]>()
   readonly blossomServers = new Map<string, string[]>()
   readonly down = new Set<string>()
   readonly published: { relays: string[]; event: NostrEvent; authKey: Uint8Array }[] = []
+  readonly subscriptions: FakeSubscription[] = []
 
   async findInbox(pubkey: string): Promise<Inbox> {
     return { dmRelays: this.dmRelays.get(pubkey) ?? [], blossomServers: this.blossomServers.get(pubkey) ?? [] }
@@ -223,15 +382,45 @@ export class FakeRelayNetwork implements RelayNetwork {
     this.published.push({ relays, event, authKey })
     return relays.filter((relay) => !this.down.has(relay))
   }
+
+  subscribe(relays: string[], filter: Filter, authKey: Uint8Array, onEvent: (event: NostrEvent) => void): Subscription {
+    const subscription = { relays, filter, authKey, onEvent, closed: false }
+    this.subscriptions.push(subscription)
+    return {
+      close: () => {
+        subscription.closed = true
+      },
+    }
+  }
+
+  open(): FakeSubscription[] {
+    return this.subscriptions.filter((subscription) => !subscription.closed)
+  }
 }
 
 export class FakeBlobStore implements BlobStore {
   readonly down = new Set<string>()
   readonly uploads: { servers: string[]; blob: EncryptedBlob; authKey: Uint8Array }[] = []
+  // What each server holds, by hash.
+  readonly stored = new Map<string, Map<string, Buffer>>()
+  readonly downloads: string[][] = []
 
   async upload(servers: string[], blob: EncryptedBlob, authKey: Uint8Array): Promise<string[]> {
     this.uploads.push({ servers, blob, authKey })
     return servers.filter((server) => !this.down.has(server))
+  }
+
+  async download(servers: string[], sha256: string): Promise<Buffer | null> {
+    this.downloads.push(servers)
+    for (const server of servers) {
+      const bytes = this.stored.get(server)?.get(sha256)
+      if (bytes && !this.down.has(server)) return bytes
+    }
+    return null
+  }
+
+  store(server: string, blob: EncryptedBlob): void {
+    this.stored.set(server, new Map([...(this.stored.get(server) ?? []), [blob.sha256, blob.bytes]]))
   }
 }
 

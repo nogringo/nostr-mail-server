@@ -5,6 +5,7 @@ import { migrate } from '../src/migrations.js'
 import { generateKeyPair } from '../src/nostr.js'
 import { PgDomainRepository } from '../src/repository.js'
 import type { DomainChecks, NewDomain } from '../src/types.js'
+import { outboundWrap, signer } from './helpers.js'
 
 // Runs against a real Postgres when TEST_DATABASE_URL is set, inside a
 // throwaway schema.
@@ -69,6 +70,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '002_create_addresses.sql',
       '003_add_bridge_keys.sql',
       '004_add_blossom_servers.sql',
+      '005_create_outbound.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -179,5 +181,76 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
 
     expect(await repo.listAddresses('example.com')).toEqual([])
     expect((await repo.findVerifiedDomain('example.com'))?.pubkey).toBe(BOB)
+  })
+
+  test('finds the verified claims, also by their bridge key', async () => {
+    const owner = await repo.findVerifiedDomain('example.com')
+    const pending = await repo.createDomain(claim('pending.example', CAROL))
+
+    expect((await repo.listVerifiedDomains()).map((domain) => domain.domain)).toEqual(['example.com'])
+    expect(await repo.findVerifiedDomainByBridgePubkey(owner?.bridgePubkey ?? '')).toEqual(owner)
+    expect(await repo.findVerifiedDomainByBridgePubkey(pending.bridgePubkey)).toBeNull()
+  })
+
+  test('queues a wrap once and lists its recipients while they are due', async () => {
+    const bridgePubkey = (await repo.findVerifiedDomain('example.com'))?.bridgePubkey ?? ''
+    const wrap = outboundWrap(signer(), bridgePubkey)
+    const recipients = ['b@remote.example', 'a@remote.example']
+
+    await repo.addOutboundMessage({ wrapId: wrap.id, bridgePubkey, wrap, recipients })
+    await repo.addOutboundMessage({ wrapId: wrap.id, bridgePubkey, refusal: 'Seen again' })
+
+    expect(await repo.hasOutboundMessage(wrap.id)).toBe(true)
+    expect(await repo.listDueOutboundMessages(10)).toEqual([
+      {
+        wrapId: wrap.id,
+        bridgePubkey,
+        wrap: JSON.parse(JSON.stringify(wrap)),
+        receivedAt: expect.any(String),
+        recipients: [
+          { address: 'a@remote.example', attempts: 0 },
+          { address: 'b@remote.example', attempts: 0 },
+        ],
+      },
+    ])
+
+    await repo.recordOutcomes(
+      wrap.id,
+      new Map([
+        ['a@remote.example', { status: 'delivered', response: '250 OK' }],
+        [
+          'b@remote.example',
+          { status: 'pending', response: '451 Later', nextAttemptAt: new Date(Date.now() + 60_000) },
+        ],
+      ]),
+    )
+    expect(await repo.listDueOutboundMessages(10)).toEqual([])
+
+    await admin.query(`update ${schema}.outbound_recipients set next_attempt_at = now()`)
+    expect((await repo.listDueOutboundMessages(10)).map((message) => message.recipients)).toEqual([
+      [{ address: 'b@remote.example', attempts: 1 }],
+    ])
+
+    await repo.recordOutcomes(wrap.id, new Map([['b@remote.example', { status: 'failed', response: '550 No' }]]))
+    const stored = await admin.query(`select wrap from ${schema}.outbound_messages where wrap_id = $1`, [wrap.id])
+    expect(stored.rows).toEqual([{ wrap: null }])
+  })
+
+  test('prunes the old messages that wait for nothing', async () => {
+    const bridgePubkey = (await repo.findVerifiedDomain('example.com'))?.bridgePubkey ?? ''
+    const waiting = outboundWrap(signer(), bridgePubkey)
+    await repo.addOutboundMessage({ wrapId: 'refused', bridgePubkey, refusal: 'Not an address of the sender' })
+    await repo.addOutboundMessage({ wrapId: waiting.id, bridgePubkey, wrap: waiting, recipients: ['a@remote.example'] })
+
+    expect(await repo.pruneOutboundMessages(new Date(Date.now() - 60_000))).toBe(0)
+    expect(await repo.pruneOutboundMessages(new Date(Date.now() + 60_000))).toBe(2)
+    expect(await repo.hasOutboundMessage(waiting.id)).toBe(true)
+  })
+
+  test('the outbound mail of a claim goes away with it', async () => {
+    await repo.deleteDomain('example.com', BOB)
+
+    const remaining = await admin.query(`select count(*)::int as count from ${schema}.outbound_messages`)
+    expect(remaining.rows).toEqual([{ count: 0 }])
   })
 })
