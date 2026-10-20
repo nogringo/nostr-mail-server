@@ -1,4 +1,4 @@
-import { unpackEventFromToken } from 'nostr-tools/nip98'
+import { hashPayload, unpackEventFromToken } from 'nostr-tools/nip98'
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { expect, test } from 'vitest'
 import { createApi } from '../src/lib/api'
@@ -55,4 +55,19 @@ test('accepts the empty answer of a removal', async () => {
   await api.removeDomain('example.com')
 
   expect(requests[0].init.method).toBe('DELETE')
+})
+
+test('sends a body as JSON and signs its hash', async () => {
+  const address = { localPart: 'alice', address: 'alice@example.com', pubkey: 'ab'.repeat(32), createdAt: '' }
+  const { api, requests } = recordingApi(() => Response.json({ address }, { status: 201 }))
+
+  expect(await api.putAddress('example.com', 'alice', 'npub1alice')).toEqual(address)
+
+  const [{ url, init }] = requests
+  expect(url).toBe(`${ORIGIN}/domains/example.com/addresses/alice`)
+  expect(init.body).toBe('{"pubkey":"npub1alice"}')
+  const headers = init.headers as Record<string, string>
+  expect(headers['content-type']).toBe('application/json')
+  const event = await unpackEventFromToken(headers.authorization)
+  expect(event.tags).toContainEqual(['payload', hashPayload({ pubkey: 'npub1alice' })])
 })

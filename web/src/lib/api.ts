@@ -24,6 +24,13 @@ export interface Domain {
   records: DnsRecord[]
 }
 
+export interface Address {
+  localPart: string
+  address: string
+  pubkey: string
+  createdAt: string
+}
+
 export class ApiError extends Error {
   constructor(
     readonly code: string,
@@ -44,10 +51,20 @@ export function createApi(
   origin = window.location.origin,
   fetchImpl: Fetch = (url, init) => fetch(url, init),
 ) {
-  async function call(method: string, path: string) {
+  async function call(method: string, path: string, payload?: Record<string, unknown>) {
     const url = origin + path
-    const authorization = await getToken(url, method, (event) => signer.signEvent(event), true)
-    const response = await fetchImpl(url, { method, headers: { authorization } })
+    // With a payload, NIP-98 signs the hash of the exact JSON sent.
+    const authorization = await getToken(url, method, (event) => signer.signEvent(event), true, payload)
+    const response = await fetchImpl(
+      url,
+      payload
+        ? {
+            method,
+            headers: { authorization, 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          }
+        : { method, headers: { authorization } },
+    )
     const body = response.status === 204 ? null : await response.json().catch(() => null)
     if (!response.ok) throw new ApiError(body?.error ?? 'http_error', response.status)
 
@@ -55,6 +72,8 @@ export function createApi(
   }
 
   const domainPath = (name: string) => `/domains/${encodeURIComponent(name)}`
+  const addressPath = (name: string, localPart: string) =>
+    `${domainPath(name)}/addresses/${encodeURIComponent(localPart)}`
 
   return {
     listDomains: async (): Promise<Domain[]> => (await call('GET', '/domains')).domains,
@@ -62,6 +81,13 @@ export function createApi(
     checkDomain: async (name: string): Promise<Domain> => (await call('POST', `${domainPath(name)}/check`)).domain,
     removeDomain: async (name: string): Promise<void> => {
       await call('DELETE', domainPath(name))
+    },
+    listAddresses: async (name: string): Promise<Address[]> =>
+      (await call('GET', `${domainPath(name)}/addresses`)).addresses,
+    putAddress: async (name: string, localPart: string, pubkey: string): Promise<Address> =>
+      (await call('PUT', addressPath(name, localPart), { pubkey })).address,
+    removeAddress: async (name: string, localPart: string): Promise<void> => {
+      await call('DELETE', addressPath(name, localPart))
     },
   }
 }

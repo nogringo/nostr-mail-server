@@ -2,29 +2,34 @@ import { useState } from 'react'
 import type { Api, CheckStatus, DnsRecord, Domain, RecordId } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { timeAgo } from '../lib/format'
+import Addresses from './Addresses'
 import { Button, CopyButton, ErrorText } from './ui'
 
+// The records that let the domain receive. Sending will add SPF, DKIM and DMARC.
 const RECEIVE: RecordId[] = ['ownership', 'mx']
-const SEND: RecordId[] = ['spf', 'dkim', 'dmarc']
 
 const TONES = { ok: 'text-ok', wait: 'text-wait', bad: 'text-bad', none: 'text-muted' }
 
 interface Props {
   domain: Domain
-  npub: string
+  ownPubkey: string
   api: Api
   onChange: (domain: Domain) => void
   onRemove: (name: string) => void
 }
 
-export default function DomainSection({ domain, npub, api, onChange, onRemove }: Props) {
+// A domain that does not receive yet shows its DNS setup. Once it receives,
+// its addresses come first and the records stay one click away.
+export default function DomainSection({ domain, ownPubkey, api, onChange, onRemove }: Props) {
   const [busy, setBusy] = useState<'check' | 'remove' | null>(null)
   const [confirming, setConfirming] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [dnsShown, setDnsShown] = useState(false)
+  const [checkError, setCheckError] = useState<string | null>(null)
+  const [removeError, setRemoveError] = useState<string | null>(null)
   const status = domainStatus(domain)
-  const address = `${npub}@${domain.domain}`
+  const needsDns = status.tone !== 'ok'
 
-  async function run(action: 'check' | 'remove', task: () => Promise<void>) {
+  async function run(action: 'check' | 'remove', setError: (error: string | null) => void, task: () => Promise<void>) {
     setBusy(action)
     setError(null)
     try {
@@ -36,56 +41,57 @@ export default function DomainSection({ domain, npub, api, onChange, onRemove }:
     }
   }
 
-  const check = () => run('check', async () => onChange(await api.checkDomain(domain.domain)))
+  const check = () => run('check', setCheckError, async () => onChange(await api.checkDomain(domain.domain)))
   const remove = () =>
-    run('remove', async () => {
+    run('remove', setRemoveError, async () => {
       await api.removeDomain(domain.domain)
       onRemove(domain.domain)
     })
 
-  return (
-    <section className="border-rule border-t py-10" aria-labelledby={`domain-${domain.domain}`}>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 id={`domain-${domain.domain}`} className="font-semibold text-2xl tracking-tight">
-            {domain.domain}
-          </h2>
-          <p className="mt-1 text-sm">
-            <span className={TONES[status.tone]}>{status.text}</span>
-            {domain.checkedAt && <span className="text-muted">, checked {timeAgo(domain.checkedAt)}</span>}
-          </p>
-        </div>
-        <Button variant="secondary" onClick={check} disabled={busy !== null}>
-          {busy === 'check' ? 'Checking' : 'Check DNS'}
-        </Button>
-      </div>
-
-      {domain.verifiedAt && (
-        <div className="mt-6">
-          <p className="text-muted text-sm">Your address</p>
-          <div className="mt-1 flex items-start gap-2">
-            <p className="break-all font-mono">{address}</p>
-            <CopyButton text={address} label="address" />
-          </div>
-        </div>
-      )}
-
-      <ErrorText>{error}</ErrorText>
-
+  // What needs fixing comes before the addresses.
+  const dns = (
+    <div id={`dns-${domain.domain}`} className="mt-8">
       <RecordGroup
-        title="To receive mail"
+        title="DNS records"
         note="The MX record sends all mail for the domain here. Some DNS providers want only the part of the name before your domain, like _nostr-mail."
         records={pick(domain, RECEIVE)}
       />
-      <RecordGroup
-        title="To send mail"
-        note="Sending is not available yet. Leave these records for later."
-        records={pick(domain, SEND)}
-      />
+      <div className="mt-4 flex flex-wrap items-center gap-4">
+        <Button variant={needsDns ? 'primary' : 'secondary'} onClick={check} disabled={busy !== null}>
+          {busy === 'check' ? 'Checking' : 'Check DNS'}
+        </Button>
+        <ErrorText>{checkError}</ErrorText>
+      </div>
+    </div>
+  )
 
-      <div className="mt-8 flex flex-wrap items-center gap-4 text-sm">
+  return (
+    <section className="border-rule border-t py-10" aria-labelledby={`domain-${domain.domain}`}>
+      <h2 id={`domain-${domain.domain}`} className="font-semibold text-2xl tracking-tight">
+        {domain.domain}
+      </h2>
+      <p className="mt-1 text-sm">
+        <span className={TONES[status.tone]}>{status.text}</span>
+        {domain.checkedAt && <span className="text-muted">, checked {timeAgo(domain.checkedAt)}</span>}
+      </p>
+
+      {needsDns && dns}
+      {domain.verifiedAt && <Addresses domain={domain.domain} api={api} ownPubkey={ownPubkey} />}
+      {!needsDns && dnsShown && dns}
+
+      <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+        {!needsDns && (
+          <Button
+            variant="quiet"
+            aria-expanded={dnsShown}
+            aria-controls={`dns-${domain.domain}`}
+            onClick={() => setDnsShown((shown) => !shown)}
+          >
+            {dnsShown ? 'Hide DNS records' : 'Show DNS records'}
+          </Button>
+        )}
         {confirming ? (
-          <>
+          <span className="flex flex-wrap items-center gap-4">
             <span>Remove {domain.domain}? Mail sent to it will stop arriving.</span>
             <Button variant="quiet" className="text-bad" onClick={remove} disabled={busy !== null}>
               {busy === 'remove' ? 'Removing' : 'Remove'}
@@ -93,12 +99,13 @@ export default function DomainSection({ domain, npub, api, onChange, onRemove }:
             <Button variant="quiet" onClick={() => setConfirming(false)}>
               Cancel
             </Button>
-          </>
+          </span>
         ) : (
           <Button variant="quiet" onClick={() => setConfirming(true)}>
             Remove domain
           </Button>
         )}
+        <ErrorText>{removeError}</ErrorText>
       </div>
     </section>
   )
@@ -171,7 +178,5 @@ const CHECKS: Record<CheckStatus, { tone: Tone; text: string }> = {
 }
 
 function recordStatus(record: DnsRecord): { tone: Tone; text: string } {
-  if (!record.check) return { tone: 'none', text: 'Not checked' }
-  if (!record.required && record.check.status !== 'ok') return { tone: 'none', text: 'Optional' }
-  return CHECKS[record.check.status]
+  return record.check ? CHECKS[record.check.status] : { tone: 'none', text: 'Not checked' }
 }

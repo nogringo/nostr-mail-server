@@ -34,7 +34,14 @@ export default function Dashboard({ signer }: { signer: Signer }) {
       <Composer npub={npub} onConnect={connect} />
       <ErrorText>{loadError}</ErrorText>
       {domains?.map((domain) => (
-        <DomainSection key={domain.domain} domain={domain} npub={npub} api={api} onChange={replace} onRemove={remove} />
+        <DomainSection
+          key={domain.domain}
+          domain={domain}
+          ownPubkey={signer.pubkey}
+          api={api}
+          onChange={replace}
+          onRemove={remove}
+        />
       ))}
     </>
   )

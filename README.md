@@ -14,7 +14,7 @@ The project is built in small steps. What exists today:
 | Send mail with the domain's `_smtp` key and DKIM signing | later |
 | Website: sign in with Nostr, connect a domain, check its records | done |
 | Deploy on one machine: HTTPS site and API, SMTP on port 25 | done |
-| Website: manage named addresses | later |
+| Website: named addresses (`alice@domain` to any npub) | done |
 
 ## Layout
 
