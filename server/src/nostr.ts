@@ -1,5 +1,7 @@
+import { isIP } from 'node:net'
 import { decode } from 'nostr-tools/nip19'
 import { generateSecretKey, getPublicKey, type NostrEvent } from 'nostr-tools/pure'
+import { normalizeURL } from 'nostr-tools/utils'
 
 const HEX_PUBKEY = /^[0-9a-f]{64}$/
 
@@ -48,6 +50,22 @@ export function decodeNpub(value: string): string | null {
 export function generateKeyPair(): { pubkey: string; privateKey: string } {
   const secretKey = generateSecretKey()
   return { pubkey: getPublicKey(secretKey), privateKey: Buffer.from(secretKey).toString('hex') }
+}
+
+// Relay lists are written by whoever holds a key, so only public wss:// hosts
+// are kept: no IP literals, no single-label or localhost names.
+export function normalizeRelayUrl(value: string): string | null {
+  let url: URL
+  try {
+    url = new URL(value.trim())
+  } catch {
+    return null
+  }
+
+  const host = url.hostname.replace(/^\[|\]$/g, '')
+  if (url.protocol !== 'wss:' || !host.includes('.') || isIP(host) !== 0 || host.endsWith('.localhost')) return null
+
+  return normalizeURL(url.href)
 }
 
 function isStringArray(value: unknown): value is string[] {

@@ -1,10 +1,12 @@
 export interface AppConfig {
   port: number
+  smtpPort: number
   databaseUrl: string
   mxHost: string
   spfInclude: string
   dkimSelector: string
   dnsServers: string[]
+  indexerRelays: string[]
 }
 
 export type DomainConfig = Pick<AppConfig, 'mxHost' | 'spfInclude' | 'dkimSelector'>

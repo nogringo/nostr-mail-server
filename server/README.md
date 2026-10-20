@@ -2,6 +2,7 @@
 
 Lets a Nostr key claim a domain, tells it which DNS records to publish, checks
 them, then lets the owner declare addresses that the domain serves over NIP-05.
+Mail sent to those addresses over SMTP is delivered to their pubkeys over Nostr.
 
 ## Domains
 
@@ -125,6 +126,40 @@ An unknown name, or any name on a domain that is not verified, returns
 `{"names": {}}`. A missing `name` is `400 name_required`. There is no `relays`
 field: Nostr Mail finds relays through kind 10050.
 
+## Receiving mail
+
+The server also speaks SMTP on `SMTP_PORT`, where the `MX_HOST` of the
+connected domains points (port 25 in production). There is no queue: a message
+is published to Nostr before the server answers, and anything that fails is
+answered with a temporary error so the sending server retries.
+
+| Step | Answer |
+|------|--------|
+| `RCPT TO` on a domain that is not verified, or a local part that is neither a declared address nor an npub | `550 5.1.1` |
+| `RCPT TO` whose pubkey publishes no DM relay list (kind 10050) | `450 4.2.0` |
+| More than 50 recipients | `452 4.5.3` |
+| Message above 32 KB | `552 5.3.4` |
+| A recipient's relays all refuse the message, or the database fails | `451` |
+| Every recipient's wrap accepted by at least one of its relays | `250` |
+
+Each recipient gets its own gift wrap (NIP-59) of a kind 1301 rumor written by
+the `_smtp` key of the recipient's domain, as the Nostr Mail protocol describes
+for mail from a legacy sender:
+
+- `content` is the MIME, after the `Return-Path` and `Received` headers the
+  server adds on top.
+- `email-id` is the SHA-256 of the message as received, so a retried delivery
+  keeps the same id.
+- `mail-from` is the SMTP envelope sender.
+
+DM relays are looked up on `INDEXER_RELAYS`, then on the pubkey's NIP-65 write
+relays. A relay list is written by whoever holds the key, so only public
+`wss://` hosts are contacted, at most 8 per recipient. The server answers
+NIP-42 AUTH with the domain's key.
+
+Not done yet: messages above 32 KB (Blossom), STARTTLS (it needs the
+certificate the deployment will provide), SPF, DKIM and DMARC checks.
+
 ## Configuration
 
 ```sh
@@ -139,6 +174,8 @@ cp .env.example .env
 | `DKIM_SELECTOR` | no | `nostrmail` | Selector given to new claims; existing claims keep theirs |
 | `DNS_SERVERS` | no | system resolver | Comma-separated IP addresses used for the checks |
 | `PORT` | no | `3000` | HTTP port |
+| `SMTP_PORT` | no | `2525` | SMTP port that receives mail for the connected domains |
+| `INDEXER_RELAYS` | no | `wss://purplepag.es`, `wss://user.kindpag.es`, `wss://indexer.coracle.social` | Comma-separated `wss://` relays where relay lists (kinds 10002 and 10050) are looked up |
 
 The pending files of `migrations/` are applied at startup.
 

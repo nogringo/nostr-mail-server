@@ -1,6 +1,6 @@
 import { npubEncode } from 'nostr-tools/nip19'
 import { expect, test } from 'vitest'
-import { isReservedLocalPart, normalizeLocalPart } from '../src/address.js'
+import { isReservedLocalPart, normalizeLocalPart, parseEmailAddress } from '../src/address.js'
 
 const NPUB = npubEncode('a'.repeat(64))
 
@@ -27,3 +27,15 @@ test('_smtp and npub local parts are reserved', () => {
     expect(isReservedLocalPart(name), name).toBe(false)
   }
 })
+
+test('parseEmailAddress splits and normalizes an address', () => {
+  expect(parseEmailAddress('Bob@Example.COM')).toEqual({ localPart: 'bob', domain: 'example.com' })
+  expect(parseEmailAddress('bob@bücher.de')).toEqual({ localPart: 'bob', domain: 'xn--bcher-kva.de' })
+})
+
+test.each(['', 'bob', '@example.com', 'bob@', 'bob@localhost', 'a..b@example.com'])(
+  'parseEmailAddress rejects %j',
+  (value) => {
+    expect(parseEmailAddress(value)).toBeNull()
+  },
+)

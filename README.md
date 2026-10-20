@@ -9,8 +9,10 @@ The project is built in small steps. What exists today:
 |------|--------|
 | Claim a domain with a Nostr key, get its DNS records, check them live | done |
 | Addresses on the domain (`local part -> npub`, plus `npub...@domain`) and NIP-05 on the domain | done |
-| Receive mail (inbound decision for haraka-webhook) | next |
-| Send mail (outbound decision for bridge-nostr-smtp, DKIM signing) | later |
+| Receive mail over SMTP and deliver it over Nostr, up to 32 KB | done |
+| Receive larger mail through Blossom | next |
+| Check SPF, DKIM and DMARC on incoming mail | later |
+| Send mail with the domain's `_smtp` key and DKIM signing | later |
 | Website: sign in with Nostr, connect a domain, manage addresses | later |
 
 ## Layout
@@ -21,19 +23,17 @@ The project is built in small steps. What exists today:
 
 ## How mail flows
 
-The server is the policy and identity side. It plugs into the existing
-transport components:
+Each connected domain gets its own Nostr key, published as `_smtp@<domain>`.
 
-- Inbound: [haraka-webhook](https://github.com/nogringo/haraka-webhook)
-  receives SMTP on port 25 and hands the message to
-  [nostr-mail-inbound-webhook](https://github.com/nogringo/nostr-mail-inbound-webhook),
-  which gift wraps it to the recipient.
-- Outbound: [bridge-nostr-smtp](https://github.com/nogringo/bridge-nostr-smtp)
-  unwraps mail sent to the bridge key and relays it through an SMTP smarthost
-  such as [postfix-rspamd-docker](https://github.com/nogringo/postfix-rspamd-docker).
+- Inbound: the server receives SMTP for the connected domains, gift wraps each
+  message with the domain's key and publishes it to the recipient's DM relays.
+- Outbound (to come): Nostr Mail clients wrap the mail they send from the
+  domain to `_smtp@<domain>`, and the server sends it over SMTP, signed with
+  the domain's DKIM key.
 
-Both sides find addresses through NIP-05 on the address domain, which is why a
-connected domain has to serve `/.well-known/nostr.json` from this server.
+Clients find both the addresses and the `_smtp` key through NIP-05 on the
+address domain, which is why a connected domain has to serve
+`/.well-known/nostr.json` from this server.
 
 ## License
 

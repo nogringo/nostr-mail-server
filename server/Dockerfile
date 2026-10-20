@@ -23,5 +23,5 @@ COPY --from=build /app/dist ./dist
 COPY migrations ./migrations
 
 USER nostrmail
-EXPOSE 3000
+EXPOSE 3000 2525
 CMD ["node", "dist/server.js"]

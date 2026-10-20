@@ -1,7 +1,9 @@
-import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure'
+import { decrypt, getConversationKey } from 'nostr-tools/nip44'
+import { finalizeEvent, generateSecretKey, getPublicKey, type NostrEvent } from 'nostr-tools/pure'
 import type { buildApp } from '../src/app.js'
 import { NIP98_KIND } from '../src/nip98.js'
 import { generateKeyPair } from '../src/nostr.js'
+import type { RelayNetwork } from '../src/relays.js'
 import type {
   Address,
   DnsLookup,
@@ -173,6 +175,28 @@ export class FakeDns implements DnsLookup {
   private assertResolvable(name: string): void {
     if (this.failing.has(name)) throw Object.assign(new Error(`queryTxt ESERVFAIL ${name}`), { code: 'ESERVFAIL' })
   }
+}
+
+export class FakeRelayNetwork implements RelayNetwork {
+  readonly dmRelays = new Map<string, string[]>()
+  readonly down = new Set<string>()
+  readonly published: { relays: string[]; event: NostrEvent; authKey: Uint8Array }[] = []
+
+  async findDmRelays(pubkey: string): Promise<string[]> {
+    return this.dmRelays.get(pubkey) ?? []
+  }
+
+  async publish(relays: string[], event: NostrEvent, authKey: Uint8Array): Promise<string[]> {
+    this.published.push({ relays, event, authKey })
+    return relays.filter((relay) => !this.down.has(relay))
+  }
+}
+
+// Decrypts a gift wrap (NIP-59) down to its seal and rumor.
+export function openWrap(wrap: NostrEvent, secretKey: Uint8Array): { seal: NostrEvent; rumor: NostrEvent } {
+  const seal = JSON.parse(decrypt(wrap.content, getConversationKey(secretKey, wrap.pubkey)))
+  const rumor = JSON.parse(decrypt(seal.content, getConversationKey(secretKey, seal.pubkey)))
+  return { seal, rumor }
 }
 
 export interface Signer {
