@@ -1,0 +1,35 @@
+{
+  "name": "nostr-mail-server",
+  "version": "0.1.0",
+  "description": "Connect your own domain to Nostr Mail.",
+  "keywords": [
+    "nostr",
+    "email",
+    "custom-domain",
+    "dkim"
+  ],
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "node --env-file-if-exists=.env --import tsx --watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "fastify": "^5.12.7",
+    "nostr-tools": "^2.25.2",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
