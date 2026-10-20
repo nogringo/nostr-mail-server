@@ -1,8 +1,10 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { rememberAdmin } from '../lib/admins'
 import {
   type AdminDomain,
   type AdminOverview,
   type Api,
+  ApiError,
   type CheckStatus,
   createApi,
   type RecordCheck,
@@ -35,8 +37,17 @@ export default function Admin({ signer }: { signer: Signer }) {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    api.adminOverview().then(setOverview, (failure) => setError(describeError(failure)))
-  }, [api])
+    api.adminOverview().then(
+      (loaded) => {
+        rememberAdmin(signer.pubkey, true)
+        setOverview(loaded)
+      },
+      (failure) => {
+        if (failure instanceof ApiError && failure.code === 'not_admin') rememberAdmin(signer.pubkey, false)
+        setError(describeError(failure))
+      },
+    )
+  }, [api, signer.pubkey])
 
   return (
     <div className="pt-10 sm:pt-16">

@@ -22,6 +22,7 @@ The project is built in small steps. What exists today:
 | Website: a list of your domains, then one page per domain in tabs | done |
 | Website: a home page that explains the service before the sign-in | done |
 | Admin page: domains, suspensions, abuse reports and server DNS in tabs | done |
+| Website: a header linking your domains and, for an admin, the admin page | done |
 
 ## Layout
 
