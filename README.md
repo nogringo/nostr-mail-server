@@ -10,6 +10,7 @@ The project is built in small steps. What exists today:
 | Claim a domain with a Nostr key, get its DNS records, check them live | done |
 | Addresses on the domain (`local part -> npub`, plus `npub...@domain`) and NIP-05 on the domain | done |
 | Receive mail over SMTP and deliver it over Nostr, large mail through Blossom | done |
+| STARTTLS on incoming mail | done |
 | Check SPF, DKIM and DMARC on incoming mail | later |
 | Send mail with the domain's `_smtp` key and DKIM signing | later |
 | Website: sign in with Nostr, connect a domain, check its records | done |

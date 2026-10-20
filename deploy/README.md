@@ -14,7 +14,10 @@ request to the URL the browser signs. Caddy sends `/domains`, `/domains/*`,
 header.
 
 `SITE_HOST` is also the MX that connected domains point at, and for now the
-SPF include they are given.
+SPF include they are given. The SMTP server offers STARTTLS with the
+certificate Caddy obtains for it: the server mounts Caddy's data read-only,
+both images run as uid 10001 since Caddy keeps its keys readable by their owner
+only, and Caddy uses Let's Encrypt alone so the files stay at the same path.
 
 ## Setup
 
@@ -28,13 +31,15 @@ cp .env.example .env    # set SITE_HOST and POSTGRES_PASSWORD
 sudo docker compose up -d --build
 ```
 
-Caddy gets the certificate on the first request. To update, copy the new code
+Caddy gets the certificate when it starts. To update, copy the new code
 and run `sudo docker compose up -d --build` again. Logs:
 `sudo docker compose logs -f server`.
 
+The SMTP server waits for that certificate: on a first start it restarts until
+Caddy has it, which takes a few seconds once the A record resolves.
+
 Not done yet:
 
-- STARTTLS on port 25.
 - HTTPS on the connected domains, which serves their NIP-05 and is needed to
   send mail.
 - An SPF record for `SITE_HOST`, also needed to send mail.

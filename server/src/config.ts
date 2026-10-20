@@ -2,7 +2,7 @@ import { isIP } from 'node:net'
 import { normalizeBlossomUrl } from './blossom.js'
 import { normalizeHostname } from './domain.js'
 import { normalizeRelayUrl } from './nostr.js'
-import type { AppConfig } from './types.js'
+import type { AppConfig, TlsFiles } from './types.js'
 
 const DNS_NAME = /^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/
 const SELECTOR = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
@@ -40,7 +40,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     indexerRelays: parseUrls(env.INDEXER_RELAYS, 'INDEXER_RELAYS', normalizeRelayUrl, DEFAULT_INDEXER_RELAYS),
     domainRelays: parseUrls(env.DOMAIN_RELAYS, 'DOMAIN_RELAYS', normalizeRelayUrl, DEFAULT_DOMAIN_RELAYS),
     blossomServers: parseUrls(env.BLOSSOM_SERVERS, 'BLOSSOM_SERVERS', normalizeBlossomUrl, DEFAULT_BLOSSOM_SERVERS),
+    tls: parseTlsFiles(env.TLS_CERT_FILE, env.TLS_KEY_FILE),
   }
+}
+
+function parseTlsFiles(cert: string | undefined, key: string | undefined): TlsFiles | null {
+  const certFile = cert?.trim()
+  const keyFile = key?.trim()
+  if (!certFile && !keyFile) return null
+  if (!certFile || !keyFile) {
+    throw new Error('TLS_CERT_FILE and TLS_KEY_FILE must be set together')
+  }
+
+  return { certFile, keyFile }
 }
 
 function parsePort(value: string | undefined, name: string, fallback: number): number {

@@ -194,8 +194,16 @@ whoever holds the key, so only public `wss://` and `https://` hosts are
 contacted, at most 8 of each per recipient. The server answers
 NIP-42 AUTH with the domain's key.
 
-Not done yet: STARTTLS (it needs the certificate the deployment will
-provide), SPF, DKIM and DMARC checks.
+### STARTTLS
+
+With `TLS_CERT_FILE` and `TLS_KEY_FILE`, the server offers STARTTLS with that
+certificate, which should be valid for `MX_HOST`. It does not start when the
+files cannot be read. It reads them again every hour, so a renewed certificate
+applies to the next connections without a restart; a pair that does not match
+is logged and the previous one stays. Without these settings STARTTLS is not
+offered.
+
+Not done yet: SPF, DKIM and DMARC checks.
 
 ## Configuration
 
@@ -216,6 +224,8 @@ cp .env.example .env
 | `BLOSSOM_SERVERS` | no | `https://blossom.nmail.li`, `https://blossom.yakihonne.com`, `https://blossom.ditto.pub` | Comma-separated `https://` Blossom servers given to new claims for their large mail; existing claims keep theirs |
 | `DOMAIN_RELAYS` | no | `wss://relay.nmail.li`, `wss://relay.ditto.pub`, `wss://nos.lol`, `wss://relay.primal.net` | Comma-separated `wss://` relays the domain keys announce (kind 10002) and publish their lists on |
 | `INDEXER_RELAYS` | no | `wss://purplepag.es`, `wss://user.kindpag.es`, `wss://indexer.coracle.social` | Comma-separated `wss://` relays where relay lists (kinds 10002 and 10050) are looked up |
+| `TLS_CERT_FILE` | no | | PEM certificate for `MX_HOST` offered with STARTTLS, set together with `TLS_KEY_FILE` |
+| `TLS_KEY_FILE` | no | | PEM private key of that certificate |
 
 The pending files of `migrations/` are applied at startup.
 

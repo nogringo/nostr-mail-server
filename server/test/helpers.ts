@@ -1,3 +1,5 @@
+import type { Socket } from 'node:net'
+import { fileURLToPath } from 'node:url'
 import { decrypt, getConversationKey } from 'nostr-tools/nip44'
 import { finalizeEvent, generateSecretKey, getPublicKey, type NostrEvent } from 'nostr-tools/pure'
 import type { buildApp } from '../src/app.js'
@@ -5,6 +7,7 @@ import type { BlobStore, EncryptedBlob } from '../src/blossom.js'
 import { NIP98_KIND } from '../src/nip98.js'
 import { generateKeyPair } from '../src/nostr.js'
 import type { Inbox, RelayNetwork } from '../src/relays.js'
+import { readTls, type TlsCredentials } from '../src/tls.js'
 import type {
   Address,
   DnsLookup,
@@ -15,6 +18,7 @@ import type {
   MxRecord,
   NewAddress,
   NewDomain,
+  TlsFiles,
 } from '../src/types.js'
 
 export const API_HOST = 'app.example.org'
@@ -270,4 +274,40 @@ export function request(
 
 function key(domain: string, id: string): string {
   return `${domain}:${id}`
+}
+
+const FINAL_LINE = /^\d{3} .*\r\n/m
+
+// Returns a function that resolves with the next complete SMTP reply on the socket.
+export function replyReader(socket: Socket): () => Promise<string> {
+  let buffer = ''
+  let notify = () => {}
+  socket.setEncoding('utf8')
+  socket.on('data', (chunk: string) => {
+    buffer += chunk
+    notify()
+  })
+
+  return async () => {
+    let end = FINAL_LINE.exec(buffer)
+    while (!end) {
+      await new Promise<void>((resolve) => {
+        notify = resolve
+      })
+      end = FINAL_LINE.exec(buffer)
+    }
+    const text = buffer.slice(0, end.index + end[0].length)
+    buffer = buffer.slice(text.length)
+    return text
+  }
+}
+
+// Self-signed test certificates for mx.example.org: tls-a and tls-b.
+export function fixtureTlsFiles(name: 'a' | 'b'): TlsFiles {
+  const path = (extension: string) => fileURLToPath(new URL(`./fixtures/tls-${name}.${extension}`, import.meta.url))
+  return { certFile: path('crt'), keyFile: path('key') }
+}
+
+export function readFixtureTls(name: 'a' | 'b'): Promise<TlsCredentials> {
+  return readTls(fixtureTlsFiles(name))
 }

@@ -6,17 +6,23 @@ import { migrate } from './migrations.js'
 import { NostrRelayNetwork } from './relays.js'
 import { PgDomainRepository } from './repository.js'
 import { createSmtpServer } from './smtp.js'
+import { readTls, reloadTls } from './tls.js'
 
 const config = loadConfig()
 const migrations = await migrate(config.databaseUrl)
 const repo = new PgDomainRepository(config.databaseUrl)
 const relays = new NostrRelayNetwork(config.indexerRelays)
 const app = buildApp(repo, config, createDnsLookup(config.dnsServers), relays, { logger: true })
-const smtp = createSmtpServer(repo, relays, blossom, config, { logger: app.log.child({ component: 'smtp' }) })
+const smtpLogger = app.log.child({ component: 'smtp' })
+// Without the certificate files the server does not start: an orchestrator retries until they exist.
+const tls = config.tls ? await readTls(config.tls) : undefined
+const smtp = createSmtpServer(repo, relays, blossom, config, { logger: smtpLogger, tls })
+const tlsReload = config.tls && tls ? reloadTls(smtp, config.tls, tls, smtpLogger) : null
 
 if (migrations.length) app.log.info({ migrations }, 'applied database migrations')
 
 const shutdown = async () => {
+  tlsReload?.stop()
   await new Promise<void>((resolve) => smtp.close(resolve))
   await app.close()
   await repo.close()

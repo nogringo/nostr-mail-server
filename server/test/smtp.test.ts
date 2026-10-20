@@ -6,12 +6,15 @@ import type { NostrEvent } from 'nostr-tools/pure'
 import { afterEach, expect, test } from 'vitest'
 import { MAX_INLINE_MIME_BYTES } from '../src/inbound.js'
 import { createSmtpServer } from '../src/smtp.js'
+import type { TlsCredentials } from '../src/tls.js'
 import {
   claim,
   FakeBlobStore,
   FakeRelayNetwork,
   MemoryDomainRepository,
   openWrap,
+  readFixtureTls,
+  replyReader,
   signer,
   verifyDomain,
 } from './helpers.js'
@@ -35,14 +38,17 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
 })
 
-async function setup() {
+async function setup({ tls }: { tls?: TlsCredentials } = {}) {
   const repo = new MemoryDomainRepository()
   const network = new FakeRelayNetwork()
   const blobs = new FakeBlobStore()
-  const server = createSmtpServer(repo, network, blobs, {
-    mxHost: 'mx.example.org',
-    maxMessageBytes: MAX_MESSAGE_BYTES,
-  })
+  const server = createSmtpServer(
+    repo,
+    network,
+    blobs,
+    { mxHost: 'mx.example.org', maxMessageBytes: MAX_MESSAGE_BYTES },
+    { tls },
+  )
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const port = (server.server.address() as AddressInfo).port
   const transport = nodemailer.createTransport({ host: '127.0.0.1', port, secure: false, ignoreTLS: true })
@@ -253,6 +259,35 @@ test('a message over MAX_MESSAGE_BYTES is refused with 552 after DATA', async ()
   expect(blobs.uploads).toHaveLength(0)
 })
 
+test('STARTTLS is offered only with a certificate', async () => {
+  const plain = await setup()
+  const secured = await setup({ tls: await readFixtureTls('a') })
+
+  const [, plainEhlo] = await converse(plain.port, ['EHLO client.example', 'QUIT'])
+  const [, securedEhlo] = await converse(secured.port, ['EHLO client.example', 'QUIT'])
+
+  expect(plainEhlo).not.toMatch(/STARTTLS/)
+  expect(securedEhlo).toMatch(/^250[- ]STARTTLS\r$/m)
+})
+
+test('a message sent over STARTTLS is delivered and traced as ESMTPS', async () => {
+  const { network, bob, port } = await setup({ tls: await readFixtureTls('a') })
+  const transport = nodemailer.createTransport({
+    host: '127.0.0.1',
+    port,
+    secure: false,
+    requireTLS: true,
+    tls: { rejectUnauthorized: false },
+  })
+  cleanups.push(async () => transport.close())
+
+  await transport.sendMail({ envelope: { from: 'alice@sender.example', to: ['bob@example.com'] }, raw: MESSAGE })
+
+  const [{ event }] = network.published
+  const { rumor } = openWrap(event, bob.sk)
+  expect(rumor.content).toMatch(/\tby mx\.example\.org with ESMTPS id /)
+})
+
 function largeMessage(bytes: number): string {
   const line = 'y'.repeat(76)
   const lines = Array.from({ length: Math.ceil(bytes / line.length) }, () => line)
@@ -267,30 +302,10 @@ function decryptBlob(bytes: Buffer, rumor: NostrEvent): string {
   return Buffer.concat([decipher.update(bytes.subarray(0, -16)), decipher.final()]).toString('utf8')
 }
 
-const FINAL_LINE = /^\d{3} .*\r\n/m
-
 // Sends each command once the previous reply is complete and returns every reply, greeting first.
 async function converse(port: number, commands: string[]): Promise<string[]> {
-  const socket = connect(port, '127.0.0.1').setEncoding('utf8')
-  let buffer = ''
-  let notify = () => {}
-  socket.on('data', (chunk: string) => {
-    buffer += chunk
-    notify()
-  })
-
-  const reply = async (): Promise<string> => {
-    let end = FINAL_LINE.exec(buffer)
-    while (!end) {
-      await new Promise<void>((resolve) => {
-        notify = resolve
-      })
-      end = FINAL_LINE.exec(buffer)
-    }
-    const text = buffer.slice(0, end.index + end[0].length)
-    buffer = buffer.slice(text.length)
-    return text
-  }
+  const socket = connect(port, '127.0.0.1')
+  const reply = replyReader(socket)
 
   const replies = [await reply()]
   for (const command of commands) {

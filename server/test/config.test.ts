@@ -20,6 +20,7 @@ test('loadConfig applies the defaults', () => {
     indexerRelays: ['wss://purplepag.es', 'wss://user.kindpag.es', 'wss://indexer.coracle.social'],
     domainRelays: ['wss://relay.nmail.li', 'wss://relay.ditto.pub', 'wss://nos.lol', 'wss://relay.primal.net'],
     blossomServers: ['https://blossom.nmail.li', 'https://blossom.yakihonne.com', 'https://blossom.ditto.pub'],
+    tls: null,
   })
 })
 
@@ -34,6 +35,8 @@ test('loadConfig reads the optional settings', () => {
     MAX_MESSAGE_BYTES: '1048576',
     DKIM_SELECTOR: 'Mail2026',
     DNS_SERVERS: '1.1.1.1, 2606:4700::1111',
+    TLS_CERT_FILE: '/certs/mx.crt',
+    TLS_KEY_FILE: ' /certs/mx.key ',
   })
 
   expect(config.port).toBe(8080)
@@ -44,6 +47,7 @@ test('loadConfig reads the optional settings', () => {
   expect(config.domainRelays).toEqual(['wss://relay.example.com/'])
   expect(config.dkimSelector).toBe('mail2026')
   expect(config.dnsServers).toEqual(['1.1.1.1', '2606:4700::1111'])
+  expect(config.tls).toEqual({ certFile: '/certs/mx.crt', keyFile: '/certs/mx.key' })
 })
 
 test.each(Object.keys(required))('loadConfig requires %s', (name) => {
@@ -58,6 +62,7 @@ test('loadConfig rejects invalid values', () => {
   expect(() => loadConfig({ ...required, MAX_MESSAGE_BYTES: '1.5' })).toThrow(/MAX_MESSAGE_BYTES/)
   expect(() => loadConfig({ ...required, DOMAIN_RELAYS: 'wss://localhost' })).toThrow(/DOMAIN_RELAYS/)
   expect(() => loadConfig({ ...required, MX_HOST: 'localhost' })).toThrow(/MX_HOST/)
+  expect(() => loadConfig({ ...required, TLS_CERT_FILE: '/certs/mx.crt' })).toThrow(/TLS_KEY_FILE/)
   expect(() => loadConfig({ ...required, SPF_INCLUDE: 'include:_spf.example.org' })).toThrow(/SPF_INCLUDE/)
   expect(() => loadConfig({ ...required, DKIM_SELECTOR: 'a.b' })).toThrow(/DKIM_SELECTOR/)
   expect(() => loadConfig({ ...required, DNS_SERVERS: 'dns.google' })).toThrow(/DNS_SERVERS/)

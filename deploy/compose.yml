@@ -22,19 +22,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      web:
+        condition: service_started
     environment:
       DATABASE_URL: postgres://nostrmail:${POSTGRES_PASSWORD}@postgres:5432/nostrmail
       MX_HOST: ${SITE_HOST:?}
       SPF_INCLUDE: ${SITE_HOST}
       SMTP_PORT: 2525
+      TLS_CERT_FILE: /caddy/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${SITE_HOST}/${SITE_HOST}.crt
+      TLS_KEY_FILE: /caddy/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${SITE_HOST}/${SITE_HOST}.key
     ports:
       - "25:2525"
+    volumes:
+      - caddy-data:/caddy:ro
 
   web:
     build: ../web
     restart: unless-stopped
-    depends_on:
-      - server
     environment:
       SITE_HOST: ${SITE_HOST}
     ports:

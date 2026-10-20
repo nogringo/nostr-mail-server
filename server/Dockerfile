@@ -15,7 +15,8 @@ ENV NODE_ENV=production
 ENV PORT=3000
 WORKDIR /app
 
-RUN addgroup -S nostrmail && adduser -S nostrmail -G nostrmail
+# Fixed ids, shared with the web image whose Caddy writes the STARTTLS certificate.
+RUN addgroup -S -g 10001 nostrmail && adduser -S -u 10001 -G nostrmail nostrmail
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force

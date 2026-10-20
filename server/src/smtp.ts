@@ -10,6 +10,7 @@ import { findAddressPubkey, parseEmailAddress } from './address.js'
 import { type BlobStore, type EncryptedBlob, encryptBlob } from './blossom.js'
 import { emailIdOf, type InboundEmail, MAX_INLINE_MIME_BYTES, wrapInboundEmail } from './inbound.js'
 import type { Inbox, RelayNetwork } from './relays.js'
+import type { TlsCredentials } from './tls.js'
 import type { AppConfig, Domain, DomainRepository } from './types.js'
 
 const MAX_RECIPIENTS = 50
@@ -38,7 +39,7 @@ export function createSmtpServer(
   relays: RelayNetwork,
   blobs: BlobStore,
   { mxHost, maxMessageBytes }: Pick<AppConfig, 'mxHost' | 'maxMessageBytes'>,
-  { logger = silent }: { logger?: SmtpLogger } = {},
+  { logger = silent, tls }: { logger?: SmtpLogger; tls?: TlsCredentials } = {},
 ): SMTPServer {
   // Keyed by envelope, which the server replaces for every transaction.
   const recipients = new WeakMap<SMTPServerEnvelope, Recipient[]>()
@@ -130,8 +131,9 @@ export function createSmtpServer(
     name: mxHost,
     banner: 'Nostr Mail',
     size: maxMessageBytes,
-    // AUTH is for submission servers; STARTTLS needs the certificate the deployment provides.
-    disabledCommands: ['AUTH', 'STARTTLS'],
+    // AUTH is for submission servers, and STARTTLS is offered only with a certificate.
+    disabledCommands: tls ? ['AUTH'] : ['AUTH', 'STARTTLS'],
+    ...tls,
     socketTimeout: SOCKET_TIMEOUT_MS,
     logger: false,
     onRcptTo: (address, session, callback) => respond(session, acceptRecipient(address, session), callback),

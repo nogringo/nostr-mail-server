@@ -10,6 +10,13 @@ export interface AppConfig {
   indexerRelays: string[]
   domainRelays: string[]
   blossomServers: string[]
+  tls: TlsFiles | null
+}
+
+// PEM files of the certificate SMTP offers with STARTTLS.
+export interface TlsFiles {
+  certFile: string
+  keyFile: string
 }
 
 export type DomainConfig = Pick<
