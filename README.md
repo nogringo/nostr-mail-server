@@ -21,6 +21,7 @@ The project is built in small steps. What exists today:
 | Admin page: suspend a domain, which stops its mail and NIP-05 | done |
 | Website: a list of your domains, then one page per domain in tabs | done |
 | Website: a home page that explains the service before the sign-in | done |
+| Admin page: domains, suspensions, abuse reports and server DNS in tabs | done |
 
 ## Layout
 

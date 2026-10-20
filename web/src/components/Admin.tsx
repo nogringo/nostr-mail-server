@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   type AdminDomain,
   type AdminOverview,
+  type Api,
   type CheckStatus,
   createApi,
   type RecordCheck,
@@ -14,7 +15,10 @@ import { npubOf, plural, shortNpub, timeAgo } from '../lib/format'
 import type { Signer } from '../lib/signer'
 import AbuseReportRow from './AbuseReportRow'
 import RecordRow from './RecordRow'
+import { type TabLink, Tabs, useHash } from './Tabs'
 import { Button, CopyButton, ErrorText, TONES, type Tone } from './ui'
+
+type Tab = 'domains' | 'suspended' | 'abuse' | 'server'
 
 const RECORDS: [RecordId, string][] = [
   ['ownership', 'Ownership'],
@@ -34,27 +38,36 @@ export default function Admin({ signer }: { signer: Signer }) {
     api.adminOverview().then(setOverview, (failure) => setError(describeError(failure)))
   }, [api])
 
-  if (error) return <ErrorText>{error}</ErrorText>
-  if (!overview) return null
+  return (
+    <div className="pt-10 sm:pt-16">
+      <ErrorText>{error}</ErrorText>
+      {overview && <Overview initial={overview} api={api} />}
+    </div>
+  )
+}
+
+function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
+  const [overview, setOverview] = useState(initial)
+  // Picked once, like the tab of a domain's page.
+  const [opening] = useState<Tab>(() => (problemsIn(initial.serverRecords) > 0 ? 'server' : 'domains'))
+  const hash = useHash()
 
   async function suspend(name: string) {
     const suspension = await api.suspendDomain(name)
-    setOverview(
-      (current) =>
-        current && {
-          ...current,
-          suspensions: [...current.suspensions.filter((other) => other.domain !== name), suspension].sort(
-            (left, right) => left.domain.localeCompare(right.domain),
-          ),
-        },
-    )
+    setOverview((current) => ({
+      ...current,
+      suspensions: [...current.suspensions.filter((other) => other.domain !== name), suspension].sort((left, right) =>
+        left.domain.localeCompare(right.domain),
+      ),
+    }))
   }
 
   async function lift(name: string) {
     await api.liftSuspension(name)
-    setOverview(
-      (current) => current && { ...current, suspensions: current.suspensions.filter((other) => other.domain !== name) },
-    )
+    setOverview((current) => ({
+      ...current,
+      suspensions: current.suspensions.filter((other) => other.domain !== name),
+    }))
   }
 
   const { domains, suspensions, abuseReports, serverRecords } = overview
@@ -65,60 +78,98 @@ export default function Admin({ signer }: { signer: Signer }) {
   const sending = verified.filter((domain) => domainStatus(domain).tone === 'ok').length
   const addresses = verified.reduce((total, domain) => total + domain.addressCount, 0)
 
+  const tabs: TabLink<Tab>[] = [
+    { id: 'domains', label: 'Domains' },
+    { id: 'suspended', label: 'Suspended', count: suspensions.length },
+    { id: 'abuse', label: 'Abuse', count: abuseReports.length },
+    { id: 'server', label: 'Server', count: problemsIn(serverRecords), tone: 'bad' },
+  ]
+  const tab = tabs.find(({ id }) => id === hash)?.id ?? opening
+
+  const panels: Record<Tab, ReactNode> = {
+    domains:
+      served.length === 0 ? (
+        <p className="text-sm">No domain is connected yet.</p>
+      ) : (
+        <div className="space-y-10">
+          {verified.length > 0 && (
+            <Section title="Connected" count={verified.length}>
+              {verified.map((domain) => (
+                <DomainRow key={`${domain.domain} ${domain.pubkey}`} domain={domain} onSuspend={suspend} />
+              ))}
+            </Section>
+          )}
+          {pending.length > 0 && (
+            <Section
+              title="Not verified"
+              count={pending.length}
+              note="Claims whose ownership record was never found. The first key whose record is found owns the domain, the other claims are then dropped."
+            >
+              {pending.map((domain) => (
+                <DomainRow key={`${domain.domain} ${domain.pubkey}`} domain={domain} onSuspend={suspend} />
+              ))}
+            </Section>
+          )}
+        </div>
+      ),
+    suspended: (
+      <>
+        <p className="text-muted text-sm">
+          The server neither receives, sends nor serves NIP-05 for these domains, and no key can claim them. Their
+          abuse@ still reaches you, with the other abuse reports.
+        </p>
+        {suspensions.length === 0 ? (
+          <p className="mt-3 text-sm">No domain is suspended.</p>
+        ) : (
+          <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
+            {suspensions.map((suspension) => (
+              <SuspendedRow
+                key={suspension.domain}
+                suspension={suspension}
+                claims={domains.filter((domain) => domain.domain === suspension.domain)}
+                onLift={lift}
+              />
+            ))}
+          </ul>
+        )}
+      </>
+    ),
+    abuse: (
+      <>
+        <p className="text-muted text-sm">Mail sent to abuse@ of the domains, newest first. Their owners get it too.</p>
+        {abuseReports.length === 0 ? (
+          <p className="mt-3 text-sm">No report yet.</p>
+        ) : (
+          <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
+            {abuseReports.map((report) => (
+              <AbuseReportRow
+                key={report.id}
+                report={report}
+                load={() => api.adminAbuseMessage(report.id)}
+                showDomain
+              />
+            ))}
+          </ul>
+        )}
+      </>
+    ),
+    server: <ServerDns records={serverRecords} />,
+  }
+
   return (
     <>
-      <h1 className="font-semibold text-3xl tracking-tight">Domains on this server</h1>
+      <h1 className="break-all font-semibold text-3xl tracking-tight">{window.location.hostname}</h1>
       <p className="mt-2 text-muted">
         {domains.length === 0 && suspensions.length === 0
           ? 'No domain is connected yet.'
           : `${plural(verified.length, 'domain')} connected, ${sending} sending and receiving${suspensions.length ? `, ${suspensions.length} suspended` : ''}. ${plural(addresses, 'named address', 'named addresses')}.`}
       </p>
-      <ServerDns records={serverRecords} />
-      {verified.length > 0 && (
-        <Section title="Connected" count={verified.length}>
-          {verified.map((domain) => (
-            <DomainRow key={`${domain.domain} ${domain.pubkey}`} domain={domain} onSuspend={suspend} />
-          ))}
-        </Section>
-      )}
-      {pending.length > 0 && (
-        <Section
-          title="Not verified"
-          count={pending.length}
-          note="Claims whose ownership record was never found. The first key whose record is found owns the domain, the other claims are then dropped."
-        >
-          {pending.map((domain) => (
-            <DomainRow key={`${domain.domain} ${domain.pubkey}`} domain={domain} onSuspend={suspend} />
-          ))}
-        </Section>
-      )}
-      {suspensions.length > 0 && (
-        <Section
-          title="Suspended"
-          count={suspensions.length}
-          note="The server neither receives, sends nor serves NIP-05 for these domains, and no key can claim them. Their abuse@ still reaches you and is kept below."
-        >
-          {suspensions.map((suspension) => (
-            <SuspendedRow
-              key={suspension.domain}
-              suspension={suspension}
-              claims={domains.filter((domain) => domain.domain === suspension.domain)}
-              onLift={lift}
-            />
-          ))}
-        </Section>
-      )}
-      {abuseReports.length > 0 && (
-        <Section
-          title="Abuse reports"
-          count={abuseReports.length}
-          note="Mail sent to abuse@ of the domains, newest first. Their owners get it too."
-        >
-          {abuseReports.map((report) => (
-            <AbuseReportRow key={report.id} report={report} load={() => api.adminAbuseMessage(report.id)} showDomain />
-          ))}
-        </Section>
-      )}
+      <Tabs label="Sections of the admin" tabs={tabs} current={tab} />
+      {tabs.map(({ id, label }) => (
+        <section key={id} aria-label={label} hidden={id !== tab} className="mt-8">
+          {panels[id]}
+        </section>
+      ))}
     </>
   )
 }
@@ -135,7 +186,7 @@ function Section({
   children: ReactNode
 }) {
   return (
-    <section className="mt-10">
+    <section>
       <h2 className="font-medium">
         {title} <span className="font-normal text-muted">{count}</span>
       </h2>
@@ -145,47 +196,30 @@ function Section({
   )
 }
 
-// Open while a record needs fixing, one click away once every record is found.
 function ServerDns({ records }: { records: ServerRecord[] }) {
-  const problems = records.filter((record) => record.check.status !== 'ok').length
-  const [shown, setShown] = useState(problems > 0)
+  const problems = problemsIn(records)
 
   return (
-    <section className="mt-10">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h2 className="font-medium">DNS of this server</h2>
-        <p className={`text-sm ${problems ? 'text-bad' : 'text-ok'}`}>
-          {problems ? `${plural(problems, 'record')} to fix` : 'Every record found'}
-        </p>
-      </div>
-      {shown && (
-        <div id="server-dns">
-          <p className="mt-1 text-muted text-sm">
-            Checked when the page loads. Connected domains point their MX at the name of the A record and include the
-            name of the SPF record in their own. The PTR record is set at the hosting provider: receivers trust the mail
-            this server sends when its address names it back. The server works over IPv4, so its name should have no
-            AAAA record.
-          </p>
-          <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
-            {records.map((record) => (
-              <RecordRow key={record.id} record={record} />
-            ))}
-          </ul>
-        </div>
-      )}
-      {problems === 0 && (
-        <Button
-          variant="quiet"
-          className="mt-3 text-sm"
-          aria-expanded={shown}
-          aria-controls="server-dns"
-          onClick={() => setShown((current) => !current)}
-        >
-          {shown ? 'Hide records' : 'Show records'}
-        </Button>
-      )}
-    </section>
+    <>
+      <p className={`text-sm ${problems ? 'text-bad' : 'text-ok'}`}>
+        {problems ? `${plural(problems, 'record')} to fix` : 'Every record found'}
+      </p>
+      <p className="mt-1 text-muted text-sm">
+        Checked when the page loads. Connected domains point their MX at the name of the A record and include the name
+        of the SPF record in their own. The PTR record is set at the hosting provider: receivers trust the mail this
+        server sends when its address names it back. The server works over IPv4, so its name should have no AAAA record.
+      </p>
+      <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
+        {records.map((record) => (
+          <RecordRow key={record.id} record={record} />
+        ))}
+      </ul>
+    </>
   )
+}
+
+function problemsIn(records: ServerRecord[]): number {
+  return records.filter((record) => record.check.status !== 'ok').length
 }
 
 function DomainRow({ domain, onSuspend }: { domain: AdminDomain; onSuspend: (name: string) => Promise<void> }) {

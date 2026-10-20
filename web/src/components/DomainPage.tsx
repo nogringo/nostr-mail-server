@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { type Api, ApiError, createApi, type DnsRecord, type Domain, type RecordId } from '../lib/api'
 import { domainStatus } from '../lib/domain'
 import { describeError } from '../lib/errors'
@@ -7,6 +7,7 @@ import type { Signer } from '../lib/signer'
 import AbuseReportRow from './AbuseReportRow'
 import Addresses from './Addresses'
 import RecordRow from './RecordRow'
+import { type TabLink, Tabs, useHash } from './Tabs'
 import { BackLink, Button, ErrorText, TONES } from './ui'
 
 type Tab = 'addresses' | 'dns' | 'abuse' | 'settings'
@@ -54,11 +55,12 @@ function DomainView({ initial, api, ownPubkey }: { initial: Domain; api: Api; ow
   const [domain, setDomain] = useState(initial)
   // Picked once, so that a check of the DNS does not switch tabs under the user.
   const [opening] = useState(() => openingTab(initial))
-  const hash = useSyncExternalStore(subscribeToHash, () => window.location.hash.slice(1))
-  const tabs = (Object.keys(TABS) as Tab[]).filter((id) => TABS[id].shown(domain))
-  const tab = tabs.find((id) => id === hash) ?? opening
+  const hash = useHash()
+  const tabs: TabLink<Tab>[] = (Object.keys(TABS) as Tab[])
+    .filter((id) => TABS[id].shown(domain))
+    .map((id) => ({ id, label: TABS[id].label, count: id === 'abuse' ? domain.abuseReports.length : undefined }))
+  const tab = tabs.find(({ id }) => id === hash)?.id ?? opening
   const status = domainStatus(domain)
-  const reports = domain.abuseReports.length
 
   useEffect(() => {
     document.title = `${domain.domain} on Nostr Mail`
@@ -86,22 +88,9 @@ function DomainView({ initial, api, ownPubkey }: { initial: Domain; api: Api; ow
         </p>
       )}
 
-      <nav aria-label={`Sections of ${domain.domain}`} className="mt-8 flex flex-wrap gap-x-6 border-rule border-b">
-        {tabs.map((id) => (
-          <a
-            key={id}
-            href={`#${id}`}
-            aria-current={id === tab ? 'page' : undefined}
-            className={`-mb-px border-b-2 pb-2 font-medium text-sm ${id === tab ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink'}`}
-          >
-            {TABS[id].label}
-            {id === 'abuse' && reports > 0 && <span className="ml-1.5 font-normal text-muted">{reports}</span>}
-          </a>
-        ))}
-      </nav>
-
-      {tabs.map((id) => (
-        <section key={id} aria-label={TABS[id].label} hidden={id !== tab} className="mt-8">
+      <Tabs label={`Sections of ${domain.domain}`} tabs={tabs} current={tab} />
+      {tabs.map(({ id, label }) => (
+        <section key={id} aria-label={label} hidden={id !== tab} className="mt-8">
           {panels[id]}
         </section>
       ))}
@@ -234,9 +223,4 @@ function pick(domain: Domain, ids: RecordId[]): DnsRecord[] {
 function openingTab(domain: Domain): Tab {
   if (domain.suspendedAt) return domain.verifiedAt ? 'abuse' : 'settings'
   return domainStatus(domain).tone === 'ok' ? 'addresses' : 'dns'
-}
-
-function subscribeToHash(onChange: () => void): () => void {
-  window.addEventListener('hashchange', onChange)
-  return () => window.removeEventListener('hashchange', onChange)
 }

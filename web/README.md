@@ -18,12 +18,18 @@ connects a new domain and opens its page.
 The page opens on DNS until the domain sends and receives mail, then on
 Addresses. Each tab has its own URL fragment (`#dns`, `#abuse`, etc.).
 
-`/admin` lists every domain connected to the server, verified or not, with
-its owner, its named addresses and the records of its last check, and
-suspends a domain or lifts its suspension. It also lists the mail sent to
-`abuse@` of every domain, and checks the server's own DNS records (A, PTR and
-SPF) each time it loads. Only the keys of the server's `ADMIN_PUBKEYS` can
-open it.
+`/admin` sums up the server, then splits it in tabs:
+
+- Domains: every domain connected to the server, verified or not, with its
+  owner, its named addresses and the records of its last check. Each one can
+  be suspended.
+- Suspended: the suspended domains, and the lifting of a suspension.
+- Abuse: the mail sent to `abuse@` of every domain.
+- Server: the server's own DNS records (A, PTR and SPF), checked each time the
+  page loads. The page opens on this tab while a record needs fixing.
+
+`/admin/*` is the API, so the tabs are URL fragments (`/admin#abuse`). Only
+the keys of the server's `ADMIN_PUBKEYS` can open the page.
 
 Sign-in uses a NIP-07 extension or a NIP-46 bunker (`bunker://` link or
 `name@domain`). Every API call is signed with
