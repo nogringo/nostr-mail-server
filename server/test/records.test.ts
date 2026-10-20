@@ -12,6 +12,7 @@ const domain: Domain = {
   dkimPrivateKey: 'unused',
   bridgePubkey: 'b'.repeat(64),
   bridgePrivateKey: 'unused',
+  bridgeBunker: null,
   blossomServers: [],
   checks: null,
   checkedAt: null,

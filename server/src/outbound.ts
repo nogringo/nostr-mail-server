@@ -1,12 +1,11 @@
 import addressparser from 'nodemailer/lib/addressparser'
-import { unwrapEvent } from 'nostr-tools/nip59'
 import type { NostrEvent } from 'nostr-tools/pure'
-import { hexToBytes } from 'nostr-tools/utils'
 import { normalizeRecipient, ownsAddress } from './address.js'
 import { EMAIL_KIND, type EmailBody } from './inbound.js'
 import { fieldValues } from './mime.js'
 import { findTagValue } from './nostr.js'
 import { sendsMail } from './records.js'
+import { type KeySigner, SignerRefusal, SignerUnavailable, unwrapWith } from './signer.js'
 import type { Domain, DomainRepository } from './types.js'
 
 export const MAX_OUTBOUND_RECIPIENTS = 50
@@ -25,14 +24,17 @@ export interface OutboundEmail {
 
 // Nostr Mail core: a client sends mail for legacy recipients as a kind 1301
 // rumor gift wrapped to the _smtp key of its own domain, the SMTP envelope in
-// `mail-from` and `rcpt-to` tags. unwrapEvent checks that the seal's signer
-// wrote the rumor.
-export function openOutboundWrap(wrap: NostrEvent, bridgePrivateKey: string): OutboundEmail {
+// `mail-from` and `rcpt-to` tags. unwrapWith checks that the seal's signer
+// wrote the rumor. A bunker that does not answer now may answer later.
+export async function openOutboundWrap(wrap: NostrEvent, domainKey: KeySigner): Promise<OutboundEmail> {
   let rumor: NostrEvent
   try {
-    rumor = unwrapEvent(wrap, hexToBytes(bridgePrivateKey)) as NostrEvent
-  } catch {
-    throw new Refusal('The gift wrap cannot be opened with the domain key')
+    rumor = await unwrapWith(domainKey, wrap)
+  } catch (error) {
+    if (error instanceof SignerUnavailable) throw error
+    throw new Refusal(
+      error instanceof SignerRefusal ? error.message : 'The gift wrap cannot be opened with the domain key',
+    )
   }
   if (rumor.kind !== EMAIL_KIND || typeof rumor.content !== 'string' || !isTagList(rumor.tags)) {
     throw new Refusal('The gift wrap does not hold an email')

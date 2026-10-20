@@ -2,14 +2,17 @@ import { npubEncode } from 'nostr-tools/nip19'
 import type { NostrEvent } from 'nostr-tools/pure'
 import { expect, test } from 'vitest'
 import { encryptBlob } from '../src/blossom.js'
+import { DomainSigners } from '../src/bunker.js'
 import type { DeliveryResult, MailTransport } from '../src/delivery.js'
-import { generateKeyPair } from '../src/nostr.js'
 import { Outbox } from '../src/outbox.js'
+import { SignerUnavailable } from '../src/signer.js'
 import {
   claim,
   FakeBlobStore,
+  FakeBunker,
   FakeRelayNetwork,
   MemoryDomainRepository,
+  newBridgeKey,
   outboundWrap,
   sendingDomain,
   signer,
@@ -41,7 +44,7 @@ class FakeTransport implements MailTransport {
   }
 }
 
-async function setup() {
+async function setup(bunker = new FakeBunker()) {
   const repo = new MemoryDomainRepository()
   const network = new FakeRelayNetwork()
   const blobs = new FakeBlobStore()
@@ -55,6 +58,7 @@ async function setup() {
     transport,
     { domainRelays: [DOMAIN_RELAY], blossomServers: [DOMAIN_SERVER], maxMessageBytes: 1024 * 1024 },
     logger,
+    new DomainSigners({ open: bunker.open, timeoutMs: 50 }),
   )
   const domain = await sendingDomain(repo, 'example.com', signer().pubkey)
   const alice = signer()
@@ -81,7 +85,7 @@ test('each verified domain key gets its own subscription, closed once the domain
   expect(first.relays).toEqual([DOMAIN_RELAY])
   expect(first.filter.kinds).toEqual([1059])
   expect(first.filter.since).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) - 2 * 24 * 3600)
-  expect(Buffer.from(first.authKey).toString('hex')).toBe(domain.bridgePrivateKey)
+  expect(first.auth.pubkey).toBe(domain.bridgePubkey)
 
   await repo.deleteDomain('other.example', other.pubkey)
   await outbox.syncSubscriptions()
@@ -94,14 +98,60 @@ test('each verified domain key gets its own subscription, closed once the domain
 test('a replaced domain key is listened to instead of the old one', async () => {
   const { repo, network, outbox, domain } = await setup()
   await outbox.syncSubscriptions()
-  const replacement = generateKeyPair()
+  const replacement = newBridgeKey()
 
   await repo.replaceBridgeKey('example.com', domain.pubkey, replacement)
   await outbox.syncSubscriptions()
 
   const open = network.open()
-  expect(open.map((subscription) => subscription.filter['#p'])).toEqual([[replacement.pubkey]])
-  expect(Buffer.from(open[0].authKey).toString('hex')).toBe(replacement.privateKey)
+  expect(open.map((subscription) => subscription.filter['#p'])).toEqual([[replacement.bridgePubkey]])
+  expect(open[0].auth.pubkey).toBe(replacement.bridgePubkey)
+  await outbox.stop()
+})
+
+test('a domain key in a bunker listens, opens and sends through it', async () => {
+  const bunker = new FakeBunker()
+  const { repo, network, transport, outbox, alice, domain } = await setup(bunker)
+  await repo.replaceBridgeKey('example.com', domain.pubkey, bunker.bridgeKey())
+  const receive = async (wrap: NostrEvent) => {
+    await outbox.receive(wrap, bunker.key.pubkey)
+    await outbox.deliverDue()
+  }
+
+  await outbox.syncSubscriptions()
+  await receive(outboundWrap(alice, bunker.key.pubkey))
+  bunker.silent = true
+  const waiting = outboundWrap(alice, bunker.key.pubkey)
+  await expect(receive(waiting)).rejects.toThrow(SignerUnavailable)
+  bunker.silent = false
+  await receive(waiting)
+  bunker.refusing = 'unauthorized'
+  const refused = outboundWrap(alice, bunker.key.pubkey)
+  await receive(refused)
+
+  expect(network.open().map((subscription) => subscription.auth.pubkey)).toEqual([bunker.key.pubkey])
+  expect(transport.sent).toHaveLength(2)
+  expect(repo.outbound.get(refused.id)?.refusal).toMatch(/refused nip44_decrypt/)
+  await outbox.stop()
+})
+
+test('mail queued for a domain key in a bunker waits while the bunker is away', async () => {
+  const bunker = new FakeBunker()
+  const { repo, transport, outbox, alice, domain } = await setup(bunker)
+  await repo.replaceBridgeKey('example.com', domain.pubkey, bunker.bridgeKey())
+  transport.answers.set('bob@remote.example', { status: 'deferred', response: '451 4.7.1 Greylisted' })
+  const wrap = outboundWrap(alice, bunker.key.pubkey)
+  await outbox.receive(wrap, bunker.key.pubkey)
+  await outbox.deliverDue()
+
+  bunker.silent = true
+  transport.answers.delete('bob@remote.example')
+  const bob = repo.outbound.get(wrap.id)?.recipients.get('bob@remote.example')
+  if (bob) bob.nextAttemptAt = new Date(Date.now() - 1000)
+  await outbox.deliverDue()
+
+  expect(transport.sent).toHaveLength(1)
+  expect(bob).toMatchObject({ status: 'pending', attempts: 2, response: expect.stringMatching(/did not answer/) })
   await outbox.stop()
 })
 

@@ -1,5 +1,4 @@
 import type { DNSResolver } from 'mailauth'
-import { hexToBytes } from 'nostr-tools/utils'
 import {
   SMTPServer,
   type SMTPServerAddress,
@@ -10,9 +9,17 @@ import {
 import { ABUSE_LOCAL_PART, findAddressPubkey, parseEmailAddress } from './address.js'
 import { authenticateMessage, dmarcRejection, removeForgedResults, summarize } from './authentication.js'
 import { type BlobStore, type EncryptedBlob, encryptBlob } from './blossom.js'
-import { emailIdOf, type InboundEmail, MAX_INLINE_MIME_BYTES, wrapInboundEmail } from './inbound.js'
+import { DomainSigners } from './bunker.js'
+import {
+  emailIdOf,
+  type InboundEmail,
+  MAX_BUNKER_INLINE_MIME_BYTES,
+  MAX_INLINE_MIME_BYTES,
+  wrapInboundEmail,
+} from './inbound.js'
 import { decodedField } from './mime.js'
 import type { Inbox, RelayNetwork } from './relays.js'
+import { type KeySigner, localSigner, SignerRefusal, SignerUnavailable } from './signer.js'
 import type { TlsCredentials } from './tls.js'
 import type { AppConfig, Domain, DomainRepository } from './types.js'
 
@@ -25,8 +32,9 @@ const MAX_LISTED_CHARS = 300
 
 // The key that writes the mail to Nostr, and the Blossom servers it lists.
 interface Writer {
-  privateKey: string
+  signer: KeySigner
   blossomServers: string[]
+  maxInlineMimeBytes: number
 }
 
 interface Target {
@@ -58,12 +66,28 @@ export function createSmtpServer(
   blobs: BlobStore,
   resolver: DNSResolver,
   { mxHost, maxMessageBytes, adminPubkeys, blossomServers, serverPrivateKey }: SmtpConfig,
-  { logger = silent, tls }: { logger?: SmtpLogger; tls?: TlsCredentials } = {},
+  {
+    logger = silent,
+    tls,
+    signers = new DomainSigners(),
+  }: { logger?: SmtpLogger; tls?: TlsCredentials; signers?: DomainSigners } = {},
 ): SMTPServer {
   // Keyed by envelope, which the server replaces for every transaction.
   const recipients = new WeakMap<SMTPServerEnvelope, Recipient[]>()
   const abuseDomains = new WeakMap<SMTPServerEnvelope, Set<string>>()
-  const serverWriter: Writer = { privateKey: serverPrivateKey, blossomServers }
+  const serverWriter: Writer = {
+    signer: localSigner(serverPrivateKey),
+    blossomServers,
+    maxInlineMimeBytes: MAX_INLINE_MIME_BYTES,
+  }
+
+  function domainWriter(domain: Domain): Writer {
+    return {
+      signer: signers.forDomain(domain),
+      blossomServers: domain.blossomServers,
+      maxInlineMimeBytes: domain.bridgeBunker ? MAX_BUNKER_INLINE_MIME_BYTES : MAX_INLINE_MIME_BYTES,
+    }
+  }
 
   async function acceptRecipient(address: SMTPServerAddress, session: SMTPServerSession): Promise<void> {
     const accepted = recipients.get(session.envelope) ?? []
@@ -157,22 +181,27 @@ export function createSmtpServer(
     // Only a complaint can reach nobody over Nostr: the copy above is then all there is.
     if (!targets.length) return 'Kept on this server'
 
+    const maxInlineBytes = Math.min(...targets.map((target) => target.writer.maxInlineMimeBytes))
     const email: InboundEmail = {
       mailFrom,
       emailId,
-      body:
-        mime.length < MAX_INLINE_MIME_BYTES
-          ? { mime: mime.toString('utf8') }
-          : { blob: await storeBlob(mime, targets) },
+      body: mime.length < maxInlineBytes ? { mime: mime.toString('utf8') } : { blob: await storeBlob(mime, targets) },
     }
 
-    const delivered = await Promise.all(
-      targets.map(async ({ writer, pubkey, relays: inboxRelays }) => {
-        const wrap = wrapInboundEmail(email, writer.privateKey, pubkey)
-        const accepted = await relays.publish(inboxRelays, wrap, hexToBytes(writer.privateKey))
-        return accepted.length > 0
-      }),
-    )
+    let delivered: boolean[]
+    try {
+      delivered = await Promise.all(
+        targets.map(async ({ writer, pubkey, relays: inboxRelays }) => {
+          const wrap = await wrapInboundEmail(email, writer.signer, pubkey)
+          const accepted = await relays.publish(inboxRelays, wrap, writer.signer)
+          return accepted.length > 0
+        }),
+      )
+    } catch (error) {
+      if (!(error instanceof SignerUnavailable || error instanceof SignerRefusal)) throw error
+      logger.info({ session: session.id, reason: error.message }, 'The bunker of a domain key did not write an email')
+      throw smtpError(451, '4.4.0 The key of the recipient domain is not available, try again later')
+    }
 
     if (delivered.includes(false)) {
       throw smtpError(451, '4.4.0 The recipient relays did not take the message, try again later')
@@ -199,7 +228,7 @@ export function createSmtpServer(
       ...new Set(targets.flatMap((target) => [...target.writer.blossomServers, ...target.blossomServers])),
     ]
     // Any writing key can sign the upload: clients find the blob by its hash.
-    const stored = await blobs.upload(servers, blob, hexToBytes(targets[0].writer.privateKey))
+    const stored = await blobs.upload(servers, blob, targets[0].writer.signer)
     if (!stored.length) throw smtpError(451, '4.4.0 No Blossom server took the message, try again later')
 
     return blob
@@ -234,10 +263,6 @@ export function createSmtpServer(
     onRcptTo: (address, session, callback) => respond(session, acceptRecipient(address, session), callback),
     onData: (stream, session, callback) => respond(session, deliver(stream, session), callback),
   })
-}
-
-function domainWriter(domain: Domain): Writer {
-  return { privateKey: domain.bridgePrivateKey, blossomServers: domain.blossomServers }
 }
 
 // The whole message is read even past the limit, as the client sends it anyway.

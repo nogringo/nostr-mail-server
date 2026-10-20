@@ -5,8 +5,9 @@ import nodemailer from 'nodemailer'
 import { npubEncode } from 'nostr-tools/nip19'
 import type { NostrEvent } from 'nostr-tools/pure'
 import { afterEach, expect, test } from 'vitest'
+import { DomainSigners } from '../src/bunker.js'
 import { generateDkimKeyPair } from '../src/dkim.js'
-import { MAX_INLINE_MIME_BYTES } from '../src/inbound.js'
+import { MAX_BUNKER_INLINE_MIME_BYTES, MAX_INLINE_MIME_BYTES } from '../src/inbound.js'
 import { generateKeyPair } from '../src/nostr.js'
 import { createSmtpServer } from '../src/smtp.js'
 import type { TlsCredentials } from '../src/tls.js'
@@ -14,6 +15,7 @@ import {
   claim,
   FakeAuthDns,
   FakeBlobStore,
+  FakeBunker,
   FakeRelayNetwork,
   MemoryDomainRepository,
   openWrap,
@@ -43,7 +45,15 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup()
 })
 
-async function setup({ tls, adminPubkeys = [] }: { tls?: TlsCredentials; adminPubkeys?: string[] } = {}) {
+async function setup({
+  tls,
+  adminPubkeys = [],
+  bunker = new FakeBunker(),
+}: {
+  tls?: TlsCredentials
+  adminPubkeys?: string[]
+  bunker?: FakeBunker
+} = {}) {
   const repo = new MemoryDomainRepository()
   const network = new FakeRelayNetwork()
   const blobs = new FakeBlobStore()
@@ -61,7 +71,7 @@ async function setup({ tls, adminPubkeys = [] }: { tls?: TlsCredentials; adminPu
       blossomServers: [SERVER_BLOSSOM],
       serverPrivateKey: serverKey.privateKey,
     },
-    { tls },
+    { tls, signers: new DomainSigners({ open: bunker.open, timeoutMs: 50 }) },
   )
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const port = (server.server.address() as AddressInfo).port
@@ -90,11 +100,11 @@ test('a message to a declared address is gift wrapped to its pubkey and publishe
 
   expect(info.rejected).toEqual([])
   expect(network.published).toHaveLength(1)
-  const [{ relays, event, authKey }] = network.published
+  const [{ relays, event, auth }] = network.published
   expect(relays).toEqual(['wss://inbox.bob.example/'])
   expect(event.kind).toBe(1059)
   expect(event.tags).toEqual([['p', bob.pubkey]])
-  expect(Buffer.from(authKey).toString('hex')).toBe(domain.bridgePrivateKey)
+  expect(auth.pubkey).toBe(domain.bridgePubkey)
 
   const { seal, rumor } = openWrap(event, bob.sk)
   expect(seal.pubkey).toBe(domain.bridgePubkey)
@@ -176,9 +186,9 @@ test('abuse@ of a suspended domain nobody owns reaches the admins under the serv
 
   expect(network.published).toHaveLength(1)
   expect(openWrap(network.published[0].event, admin.sk).seal.pubkey).toBe(serverKey.pubkey)
-  expect(Buffer.from(network.published[0].authKey).toString('hex')).toBe(serverKey.privateKey)
+  expect(network.published[0].auth.pubkey).toBe(serverKey.pubkey)
   expect(blobs.uploads[0].servers).toContain(SERVER_BLOSSOM)
-  expect(Buffer.from(blobs.uploads[0].authKey).toString('hex')).toBe(serverKey.privateKey)
+  expect(blobs.uploads[0].auth.pubkey).toBe(serverKey.pubkey)
   expect(repo.abuseReports.map(({ report }) => report.domain)).toEqual(['spam.example'])
 })
 
@@ -231,6 +241,25 @@ test('the message is deferred with 451 when no relay takes it', async () => {
   network.down.add('wss://inbox.bob.example/')
 
   await expect(send(['bob@example.com'])).rejects.toMatchObject({ code: 'EMESSAGE', responseCode: 451 })
+})
+
+test('a domain key in a bunker seals through it, keeps less inline, and defers while the bunker is away', async () => {
+  const bunker = new FakeBunker()
+  const { repo, network, blobs, owner, bob, send } = await setup({ bunker })
+  await repo.replaceBridgeKey('example.com', owner.pubkey, bunker.bridgeKey())
+
+  await send(['bob@example.com'])
+  await send(['bob@example.com'], largeMessage(MAX_BUNKER_INLINE_MIME_BYTES))
+  bunker.silent = true
+  const away = send(['bob@example.com'])
+
+  await expect(away).rejects.toMatchObject({ code: 'EMESSAGE', responseCode: 451 })
+  const [small, large] = network.published
+  expect(openWrap(small.event, bob.sk).seal.pubkey).toBe(bunker.key.pubkey)
+  expect(small.auth.pubkey).toBe(bunker.key.pubkey)
+  expect(openWrap(large.event, bob.sk).rumor.content).toBe('')
+  expect(blobs.uploads.map((upload) => upload.auth.pubkey)).toEqual([bunker.key.pubkey])
+  expect(network.published).toHaveLength(2)
 })
 
 test('each recipient gets a wrap sealed by the key of its own domain', async () => {
@@ -361,10 +390,10 @@ test('a message above the inline limit is stored on Blossom and referenced from 
   await send(['bob@example.com'], raw)
 
   expect(blobs.uploads).toHaveLength(1)
-  const [{ servers, blob, authKey }] = blobs.uploads
+  const [{ servers, blob, auth }] = blobs.uploads
   expect(domain.blossomServers).toEqual([DOMAIN_SERVER])
   expect(servers).toEqual([DOMAIN_SERVER, 'https://blossom.bob.example'])
-  expect(Buffer.from(authKey).toString('hex')).toBe(domain.bridgePrivateKey)
+  expect(auth.pubkey).toBe(domain.bridgePubkey)
 
   const { rumor } = openWrap(network.published[0].event, bob.sk)
   expect(rumor.content).toBe('')

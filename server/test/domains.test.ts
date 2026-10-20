@@ -3,25 +3,30 @@ import { getPublicKey, verifyEvent } from 'nostr-tools/pure'
 import { bytesToHex, hexToBytes } from 'nostr-tools/utils'
 import { expect, test } from 'vitest'
 import { buildApp } from '../src/app.js'
+import { DomainSigners } from '../src/bunker.js'
 import {
   API_HOST,
   apiConfig,
   authorization,
+  BUNKER_RELAY,
   domainConfig,
+  FakeBunker,
   FakeDns,
   FakeRelayNetwork,
   MemoryDomainRepository,
   outboundWrap,
+  privateKeyOf,
   request,
   signer,
   verifyDomain,
 } from './helpers.js'
 
-function setup() {
+function setup(bunker = new FakeBunker()) {
   const repo = new MemoryDomainRepository()
   const dns = new FakeDns()
   const network = new FakeRelayNetwork()
-  const app = buildApp(repo, apiConfig, dns, network)
+  const signers = new DomainSigners({ open: bunker.open, timeoutMs: 50, connectTimeoutMs: 50 })
+  const app = buildApp(repo, apiConfig, dns, network, { signers })
   return { repo, dns, network, app }
 }
 
@@ -188,11 +193,11 @@ test('a check that finds the domain verified publishes the lists of its key', as
 
   const claim = await repo.findDomain('example.com', alice.pubkey)
   expect(network.published.map(({ event }) => event.kind)).toEqual([10002, 10050, 10063])
-  for (const { relays, event, authKey } of network.published) {
+  for (const { relays, event, auth } of network.published) {
     expect(relays).toEqual(['wss://relay.example.org/', 'wss://indexer.example.org/'])
     expect(event.pubkey).toBe(claim?.bridgePubkey)
     expect(verifyEvent(event)).toBe(true)
-    expect(Buffer.from(authKey).toString('hex')).toBe(claim?.bridgePrivateKey)
+    expect(auth.pubkey).toBe(claim?.bridgePubkey)
   }
   expect(network.published[0].event.tags).toEqual([['r', 'wss://relay.example.org/']])
   expect(network.published[1].event.tags).toEqual([['relay', 'wss://relay.example.org/']])
@@ -378,7 +383,7 @@ test('the domain key cannot become a bad nsec, the owner key or the key of anoth
     await put({ nsec: 'nsec1nope' }),
     await put({ nsec: npubEncode(alice.pubkey) }),
     await put({ nsec: nsecEncode(alice.sk) }),
-    await put({ nsec: nsecEncode(hexToBytes(other.bridgePrivateKey)) }),
+    await put({ nsec: nsecEncode(hexToBytes(privateKeyOf(other))) }),
   ]
 
   expect(answers.map((answer) => [answer.statusCode, answer.json().error])).toEqual([
@@ -398,7 +403,7 @@ test('giving the current key again changes nothing, a suspended domain keeps its
   const alice = signer()
   const verified = await verifyDomain(repo, 'example.com', alice.pubkey)
   await repo.addOutboundMessage({ wrapId: 'refused', bridgePubkey: verified.bridgePubkey, refusal: 'No' })
-  const current = { nsec: nsecEncode(hexToBytes(verified.bridgePrivateKey)) }
+  const current = { nsec: nsecEncode(hexToBytes(privateKeyOf(verified))) }
 
   const same = await request(app, alice, 'PUT', '/domains/example.com/key', current)
   await repo.suspendDomain('example.com')
@@ -415,6 +420,138 @@ test('giving the current key again changes nothing, a suspended domain keeps its
   expect(read.json()).toEqual(current)
   expect(unknown.statusCode).toBe(404)
   expect(await repo.findDomain('example.com', alice.pubkey)).toEqual(verified)
+
+  await app.close()
+})
+
+test('the owner hands the domain key to a bunker, which then signs its lists', async () => {
+  const bunker = new FakeBunker()
+  const { repo, network, app } = setup(bunker)
+  const alice = signer()
+  await verifyDomain(repo, 'example.com', alice.pubkey)
+
+  const response = await request(app, alice, 'PUT', '/domains/example.com/key', { bunker: bunker.url })
+  const read = await request(app, alice, 'GET', '/domains/example.com/key')
+
+  expect(response.statusCode).toBe(200)
+  expect(response.json().domain).toMatchObject({ bridgePubkey: bunker.key.pubkey, bridgeSigner: 'bunker' })
+  const stored = await repo.findDomain('example.com', alice.pubkey)
+  expect(stored).toMatchObject({
+    bridgePubkey: bunker.key.pubkey,
+    bridgePrivateKey: null,
+    bridgeBunker: { signerPubkey: bunker.signerKey.pubkey, relays: [BUNKER_RELAY] },
+  })
+  expect(response.body).not.toContain(stored?.bridgeBunker?.clientKey)
+  expect(bunker.methods()).toEqual([
+    'connect',
+    'get_public_key',
+    'nip44_encrypt',
+    'nip44_decrypt',
+    'sign_event',
+    'sign_event',
+    'sign_event',
+  ])
+  const clientPubkey = getPublicKey(hexToBytes(stored?.bridgeBunker?.clientKey ?? ''))
+  expect(bunker.requests.every((request) => request.clientPubkey === clientPubkey)).toBe(true)
+  expect(network.published.map(({ event }) => [event.kind, event.pubkey])).toEqual([
+    [10002, bunker.key.pubkey],
+    [10050, bunker.key.pubkey],
+    [10063, bunker.key.pubkey],
+  ])
+  expect(read.statusCode).toBe(409)
+  expect(read.json()).toEqual({ error: 'key_in_bunker' })
+
+  await app.close()
+})
+
+test.each([
+  ['a URL that is not a bunker', () => {}, 'nostrconnect://x', 400, 'invalid_bunker_url'],
+  [
+    'a bunker that does not answer',
+    (bunker: FakeBunker) => Object.assign(bunker, { silent: true }),
+    '',
+    504,
+    'bunker_timeout',
+  ],
+  [
+    'a bunker that refuses',
+    (bunker: FakeBunker) => Object.assign(bunker, { refusing: 'no' }),
+    '',
+    502,
+    'bunker_refused',
+  ],
+])('%s leaves the domain key where it was', async (_, prepare, url, status, error) => {
+  const bunker = new FakeBunker()
+  prepare(bunker)
+  const { repo, app } = setup(bunker)
+  const alice = signer()
+  const before = await verifyDomain(repo, 'example.com', alice.pubkey)
+
+  const response = await request(app, alice, 'PUT', '/domains/example.com/key', { bunker: url || bunker.url })
+
+  expect(response.statusCode).toBe(status)
+  expect(response.json()).toEqual({ error })
+  expect(await repo.findDomain('example.com', alice.pubkey)).toEqual(before)
+
+  await app.close()
+})
+
+test('a bunker holding the owner key or the key of another domain is refused', async () => {
+  const alice = signer()
+  const ownBunker = setup(new FakeBunker(alice))
+  await verifyDomain(ownBunker.repo, 'example.com', alice.pubkey)
+  const own = await request(ownBunker.app, alice, 'PUT', '/domains/example.com/key', {
+    bunker: new FakeBunker(alice).url,
+  })
+
+  const taken = signer()
+  const takenBunker = setup(new FakeBunker(taken))
+  await verifyDomain(takenBunker.repo, 'example.com', alice.pubkey)
+  const other = await verifyDomain(takenBunker.repo, 'other.example', signer().pubkey)
+  await takenBunker.repo.replaceBridgeKey('other.example', other.pubkey, {
+    bridgePubkey: taken.pubkey,
+    bridgePrivateKey: bytesToHex(taken.sk),
+    bridgeBunker: null,
+  })
+  const inUse = await request(takenBunker.app, alice, 'PUT', '/domains/example.com/key', {
+    bunker: new FakeBunker(taken).url,
+  })
+
+  expect([own.statusCode, own.json().error]).toEqual([400, 'owner_key'])
+  expect([inUse.statusCode, inUse.json().error]).toEqual([409, 'key_in_use'])
+
+  await ownBunker.app.close()
+  await takenBunker.app.close()
+})
+
+test('the domain key moves into a bunker and back with its queued mail', async () => {
+  const domainKey = signer()
+  const { repo, app } = setup(new FakeBunker(domainKey))
+  const alice = signer()
+  await verifyDomain(repo, 'example.com', alice.pubkey)
+  const nsec = { nsec: nsecEncode(domainKey.sk) }
+  await request(app, alice, 'PUT', '/domains/example.com/key', nsec)
+  await repo.addOutboundMessage({
+    wrapId: 'queued',
+    bridgePubkey: domainKey.pubkey,
+    wrap: outboundWrap(signer(), domainKey.pubkey),
+    recipients: ['bob@remote.example'],
+  })
+
+  const moved = await request(app, alice, 'PUT', '/domains/example.com/key', {
+    bunker: new FakeBunker(domainKey).url,
+  })
+  const inBunker = await repo.findDomain('example.com', alice.pubkey)
+  const back = await request(app, alice, 'PUT', '/domains/example.com/key', nsec)
+
+  expect(moved.json().domain).toMatchObject({ bridgePubkey: domainKey.pubkey, bridgeSigner: 'bunker' })
+  expect(inBunker?.bridgePrivateKey).toBeNull()
+  expect(back.json().domain).toMatchObject({ bridgePubkey: domainKey.pubkey, bridgeSigner: 'server' })
+  expect(await repo.findDomain('example.com', alice.pubkey)).toMatchObject({
+    bridgePrivateKey: bytesToHex(domainKey.sk),
+    bridgeBunker: null,
+  })
+  expect(repo.outbound.has('queued')).toBe(true)
 
   await app.close()
 })

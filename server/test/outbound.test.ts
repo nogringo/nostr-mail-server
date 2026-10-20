@@ -2,7 +2,7 @@ import { npubEncode } from 'nostr-tools/nip19'
 import { createRumor, createSeal, createWrap, wrapEvent } from 'nostr-tools/nip59'
 import { expect, test } from 'vitest'
 import { checkAuthor, checkSender, MAX_OUTBOUND_RECIPIENTS, openOutboundWrap, Refusal } from '../src/outbound.js'
-import { MemoryDomainRepository, outboundWrap, signer, verifyDomain } from './helpers.js'
+import { heldKey, MemoryDomainRepository, outboundWrap, signer, verifyDomain } from './helpers.js'
 
 async function setup() {
   const repo = new MemoryDomainRepository()
@@ -21,7 +21,7 @@ test('a client wrap gives the sender, the envelope and the MIME', async () => {
     rcptTo: ['bob@Remote.Example', 'BOB@remote.example', 'carol+news@other.example'],
   })
 
-  const email = openOutboundWrap(wrap, domain.bridgePrivateKey)
+  const email = await openOutboundWrap(wrap, heldKey(domain))
 
   expect(email.senderPubkey).toBe(alice.pubkey)
   expect(email.mailFrom).toBe(aliceAddress)
@@ -42,7 +42,7 @@ test('a large email points to its blob', async () => {
     ],
   })
 
-  expect(openOutboundWrap(wrap, domain.bridgePrivateKey).body).toEqual({
+  expect((await openOutboundWrap(wrap, heldKey(domain))).body).toEqual({
     blob: { sha256, key: 'a2V5', nonce: 'bm9uY2U=' },
   })
 })
@@ -61,7 +61,7 @@ test.each([
 ])('a wrap with %s is refused', async (_, options) => {
   const { domain, alice } = await setup()
 
-  expect(() => openOutboundWrap(outboundWrap(alice, domain.bridgePubkey, options), domain.bridgePrivateKey)).toThrow(
+  await expect(openOutboundWrap(outboundWrap(alice, domain.bridgePubkey, options), heldKey(domain))).rejects.toThrow(
     Refusal,
   )
 })
@@ -79,7 +79,7 @@ test('a wrap without mail-from, of another kind or for another key is refused', 
     outboundWrap(alice, signer().pubkey),
   ]
 
-  for (const wrap of wraps) expect(() => openOutboundWrap(wrap, domain.bridgePrivateKey)).toThrow(Refusal)
+  for (const wrap of wraps) await expect(openOutboundWrap(wrap, heldKey(domain))).rejects.toThrow(Refusal)
 })
 
 test('a rumor claiming another author than its seal is refused', async () => {
@@ -91,7 +91,7 @@ test('a rumor claiming another author than its seal is refused', async () => {
   }
   const wrap = createWrap(createSeal(rumor, alice.sk, domain.bridgePubkey), domain.bridgePubkey)
 
-  expect(() => openOutboundWrap(wrap, domain.bridgePrivateKey)).toThrow(Refusal)
+  await expect(openOutboundWrap(wrap, heldKey(domain))).rejects.toThrow(Refusal)
 })
 
 test('a sender writes from its npub address and from the names declared for it', async () => {

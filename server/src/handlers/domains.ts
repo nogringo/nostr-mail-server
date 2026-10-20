@@ -2,13 +2,14 @@ import { randomBytes } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { nsecEncode } from 'nostr-tools/nip19'
 import { hexToBytes } from 'nostr-tools/utils'
+import { BunkerError, type DomainSigners, parseBunkerUrl } from '../bunker.js'
 import { generateDkimKeyPair } from '../dkim.js'
 import { normalizeDomain } from '../domain.js'
 import { publishDomainLists } from '../lists.js'
 import { generateKeyPair, parseNsec } from '../nostr.js'
 import { checkRecords, expectedRecords } from '../records.js'
 import type { RelayNetwork } from '../relays.js'
-import type { AbuseReport, DnsLookup, Domain, DomainConfig, DomainRepository, Suspension } from '../types.js'
+import type { AbuseReport, BridgeKey, DnsLookup, Domain, DomainConfig, DomainRepository, Suspension } from '../types.js'
 import { listOwnReports } from './abuse.js'
 import { authenticate } from './auth.js'
 
@@ -18,7 +19,7 @@ interface DomainParams {
 
 type DomainRequest = FastifyRequest<{ Params: DomainParams }>
 
-type KeyRequest = FastifyRequest<{ Params: DomainParams; Body: { nsec?: unknown } | undefined }>
+type KeyRequest = FastifyRequest<{ Params: DomainParams; Body: { nsec?: unknown; bunker?: unknown } | undefined }>
 
 // Domain lifecycle, authenticated with NIP-98: the signing pubkey owns the
 // claims it makes, and a claim becomes the domain's owner once its ownership
@@ -26,8 +27,16 @@ type KeyRequest = FastifyRequest<{ Params: DomainParams; Body: { nsec?: unknown 
 export function registerDomainRoutes(
   app: FastifyInstance,
   repo: DomainRepository,
-  { config, dns, relays }: { config: DomainConfig; dns: DnsLookup; relays: RelayNetwork },
+  {
+    config,
+    dns,
+    relays,
+    signers,
+  }: { config: DomainConfig; dns: DnsLookup; relays: RelayNetwork; signers: DomainSigners },
 ): void {
+  const publishLists = (domain: Domain) =>
+    publishDomainLists(relays, signers.forDomain(domain), domain.blossomServers, config)
+
   app.get('/domains', async (request, reply) => {
     const pubkey = authenticate(request, reply)
     if (pubkey === null) return reply
@@ -98,7 +107,7 @@ export function registerDomainRoutes(
 
     // Every check of a verified domain republishes its lists, so checking again
     // is how a failed publication is retried.
-    if (updated.verifiedAt && !(await publishDomainLists(relays, updated, config))) {
+    if (updated.verifiedAt && !(await publishLists(updated))) {
       request.log.warn({ domain: updated.domain }, 'The lists of the domain key were not all published')
     }
 
@@ -111,6 +120,7 @@ export function registerDomainRoutes(
 
     const domain = await findOwnDomain(repo, request, pubkey)
     if (!domain) return reply.code(404).send({ error: 'domain_not_found' })
+    if (domain.bridgePrivateKey === null) return reply.code(409).send({ error: 'key_in_bunker' })
 
     return reply.header('cache-control', 'no-store').send({ nsec: nsecEncode(hexToBytes(domain.bridgePrivateKey)) })
   })
@@ -123,19 +133,35 @@ export function registerDomainRoutes(
     if (!domain) return reply.code(404).send({ error: 'domain_not_found' })
     if (await repo.findSuspension(domain.domain)) return reply.code(403).send({ error: 'domain_suspended' })
 
-    const bridgeKey = parseNsec(request.body?.nsec)
-    if (!bridgeKey) return reply.code(400).send({ error: 'invalid_nsec' })
-    // The server reads every gift wrap sent to the domain key and replaces its lists.
-    if (bridgeKey.pubkey === pubkey) return reply.code(400).send({ error: 'owner_key' })
+    let bridgeKey: BridgeKey
+    if (request.body?.bunker !== undefined) {
+      const pointer = parseBunkerUrl(request.body.bunker)
+      if (!pointer) return reply.code(400).send({ error: 'invalid_bunker_url' })
+      try {
+        const connected = await signers.connect(pointer)
+        bridgeKey = { bridgePubkey: connected.pubkey, bridgePrivateKey: null, bridgeBunker: connected.bunker }
+      } catch (error) {
+        if (!(error instanceof BunkerError)) throw error
+        return reply.code(error.code === 'bunker_timeout' ? 504 : 502).send({ error: error.code })
+      }
+    } else {
+      const key = parseNsec(request.body?.nsec)
+      if (!key) return reply.code(400).send({ error: 'invalid_nsec' })
+      bridgeKey = { bridgePubkey: key.pubkey, bridgePrivateKey: key.privateKey, bridgeBunker: null }
+    }
 
-    if (bridgeKey.pubkey === domain.bridgePubkey) {
+    // The server reads every gift wrap sent to the domain key and replaces its lists.
+    if (bridgeKey.bridgePubkey === pubkey) return reply.code(400).send({ error: 'owner_key' })
+    if (bridgeKey.bridgePubkey !== domain.bridgePubkey && (await repo.hasBridgeKey(bridgeKey.bridgePubkey))) {
+      return reply.code(409).send({ error: 'key_in_use' })
+    }
+    if (bridgeKey.bridgePrivateKey !== null && bridgeKey.bridgePrivateKey === domain.bridgePrivateKey) {
       return reply.send({ domain: present(domain, config, null, await listOwnReports(repo, domain)) })
     }
-    if (await repo.hasBridgeKey(bridgeKey.pubkey)) return reply.code(409).send({ error: 'key_in_use' })
 
     const updated = await repo.replaceBridgeKey(domain.domain, pubkey, bridgeKey)
     if (!updated) return reply.code(404).send({ error: 'domain_not_found' })
-    if (updated.verifiedAt && !(await publishDomainLists(relays, updated, config))) {
+    if (updated.verifiedAt && !(await publishLists(updated))) {
       request.log.warn({ domain: updated.domain }, 'The lists of the domain key were not all published')
     }
 
@@ -163,6 +189,7 @@ function present(domain: Domain, config: DomainConfig, suspension: Suspension | 
   return {
     domain: domain.domain,
     bridgePubkey: domain.bridgePubkey,
+    bridgeSigner: domain.bridgeBunker ? 'bunker' : 'server',
     verifiedAt: domain.verifiedAt,
     suspendedAt: suspension?.suspendedAt ?? null,
     checkedAt: domain.checkedAt,

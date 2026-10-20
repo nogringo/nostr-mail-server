@@ -1,8 +1,9 @@
 import type { Filter } from 'nostr-tools/filter'
 import { SimplePool } from 'nostr-tools/pool'
-import { finalizeEvent, type NostrEvent } from 'nostr-tools/pure'
+import type { NostrEvent } from 'nostr-tools/pure'
 import { normalizeBlossomUrl } from './blossom.js'
 import { normalizeRelayUrl } from './nostr.js'
+import type { KeySigner } from './signer.js'
 
 export const RELAY_LIST_KIND = 10002
 export const DM_RELAY_LIST_KIND = 10050
@@ -27,10 +28,10 @@ export interface Subscription {
 export interface RelayNetwork {
   // Lists the pubkey does not publish come back empty.
   findInbox(pubkey: string): Promise<Inbox>
-  // Returns the relays that accepted the event. `authKey` answers NIP-42 challenges.
-  publish(relays: string[], event: NostrEvent, authKey: Uint8Array): Promise<string[]>
+  // Returns the relays that accepted the event. `auth` answers NIP-42 challenges.
+  publish(relays: string[], event: NostrEvent, auth: KeySigner): Promise<string[]>
   // Events are verified, and may arrive more than once.
-  subscribe(relays: string[], filter: Filter, authKey: Uint8Array, onEvent: (event: NostrEvent) => void): Subscription
+  subscribe(relays: string[], filter: Filter, auth: KeySigner, onEvent: (event: NostrEvent) => void): Subscription
 }
 
 export class NostrRelayNetwork implements RelayNetwork {
@@ -57,23 +58,20 @@ export class NostrRelayNetwork implements RelayNetwork {
     return inboxOf(lists, pubkey)
   }
 
-  async publish(relays: string[], event: NostrEvent, authKey: Uint8Array): Promise<string[]> {
+  async publish(relays: string[], event: NostrEvent, auth: KeySigner): Promise<string[]> {
     const results = await Promise.allSettled(
-      this.pool.publish(relays, event, {
-        maxWait: PUBLISH_TIMEOUT_MS,
-        onauth: async (template) => finalizeEvent(template, authKey),
-      }),
+      this.pool.publish(relays, event, { maxWait: PUBLISH_TIMEOUT_MS, onauth: (template) => auth.signEvent(template) }),
     )
     return relays.filter((_, index) => results[index].status === 'fulfilled')
   }
 
   // Each subscription gets its own connections: a DM relay may serve the gift
   // wraps of only one authenticated key per connection.
-  subscribe(relays: string[], filter: Filter, authKey: Uint8Array, onEvent: (event: NostrEvent) => void): Subscription {
+  subscribe(relays: string[], filter: Filter, auth: KeySigner, onEvent: (event: NostrEvent) => void): Subscription {
     const pool = new SimplePool({ enablePing: true })
     const subscription = pool.subscribe(relays, filter, {
       onevent: onEvent,
-      onauth: async (template) => finalizeEvent(template, authKey),
+      onauth: (template) => auth.signEvent(template),
     })
     return {
       close: () => {

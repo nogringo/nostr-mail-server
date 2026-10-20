@@ -68,9 +68,11 @@ export interface Domain {
   dkimSelector: string
   dkimPublicKey: string
   dkimPrivateKey: string
-  // The domain's own key, served as _smtp@<domain>.
+  // The domain's own key, served as _smtp@<domain>. The server holds its
+  // private key, or the owner's bunker does.
   bridgePubkey: string
-  bridgePrivateKey: string
+  bridgePrivateKey: string | null
+  bridgeBunker: BunkerKey | null
   // Where the domain's large mail is stored, published as the kind 10063 of its key.
   blossomServers: string[]
   checks: DomainChecks | null
@@ -89,6 +91,18 @@ export interface Suspension {
   suspendedAt: string
 }
 
+// A NIP-46 remote signer that holds a domain key.
+export interface BunkerKey {
+  // The bunker's own key, which answers the requests.
+  signerPubkey: string
+  relays: string[]
+  // The key this server connects with, which the bunker authorized.
+  clientKey: string
+}
+
+export type BridgeKey = Pick<Domain, 'bridgePubkey' | 'bridgePrivateKey' | 'bridgeBunker'>
+
+// A claim starts with a key the server holds.
 export type NewDomain = Pick<
   Domain,
   | 'domain'
@@ -98,9 +112,8 @@ export type NewDomain = Pick<
   | 'dkimPublicKey'
   | 'dkimPrivateKey'
   | 'bridgePubkey'
-  | 'bridgePrivateKey'
   | 'blossomServers'
->
+> & { bridgePrivateKey: string }
 
 export interface Address {
   domain: string
@@ -176,8 +189,9 @@ export interface DomainRepository {
   deleteDomain(domain: string, pubkey: string): Promise<boolean>
   // Whether a claim on any domain has this key.
   hasBridgeKey(bridgePubkey: string): Promise<boolean>
-  // Gives the claim another key. The outbound mail wrapped to the old one goes, since nothing opens it any more.
-  replaceBridgeKey(domain: string, pubkey: string, bridgeKey: KeyPair): Promise<Domain | null>
+  // Gives the claim another key, or moves its key between the server and a bunker. The outbound mail wrapped
+  // to a replaced key goes, since nothing opens it any more.
+  replaceBridgeKey(domain: string, pubkey: string, bridgeKey: BridgeKey): Promise<Domain | null>
   listSuspensions(): Promise<Suspension[]>
   findSuspension(domain: string): Promise<Suspension | null>
   // Returns the existing suspension when the domain is already suspended.

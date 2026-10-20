@@ -18,8 +18,8 @@ the host and path of the request. The signing pubkey owns the claims it makes.
 | `PUT` | `/domains/{domain}` | Claim a domain: `201` when created, `200` when the caller already claimed it, `400 invalid_domain`, `403 domain_suspended` for a new claim on a suspended domain |
 | `GET` | `/domains/{domain}` | One claim, `404 domain_not_found` if the caller has none |
 | `POST` | `/domains/{domain}/check` | Look the records up now and store the result, `403 domain_suspended` on a suspended domain |
-| `GET` | `/domains/{domain}/key` | `{"nsec": "nsec1..."}`, the secret of the [domain key](#domain-key) |
-| `PUT` | `/domains/{domain}/key` | Body `{"nsec": "nsec1..."}`: the domain key becomes this one, see [Domain key](#domain-key) |
+| `GET` | `/domains/{domain}/key` | `{"nsec": "nsec1..."}`, the secret of the [domain key](#domain-key), `409 key_in_bunker` when a bunker holds it |
+| `PUT` | `/domains/{domain}/key` | Body `{"nsec": "nsec1..."}` or `{"bunker": "bunker://..."}`: the domain key becomes this one, see [Domain key](#domain-key) |
 | `DELETE` | `/domains/{domain}` | Release the claim: `204`, or `404 domain_not_found` |
 
 A domain is returned as:
@@ -28,6 +28,7 @@ A domain is returned as:
 {
   "domain": "example.com",
   "bridgePubkey": "<hex of the domain key>",
+  "bridgeSigner": "server",
   "verifiedAt": null,
   "suspendedAt": null,
   "checkedAt": "2026-10-20T12:00:00.000Z",
@@ -77,15 +78,46 @@ The owner of a claim, verified or not, reads the nsec of its domain key with
 `GET /domains/{domain}/key`, answered with `Cache-Control: no-store`, also
 while the domain is suspended.
 
-`PUT /domains/{domain}/key` replaces it with the key of the given nsec, and
-answers the domain. The old key is gone for good, and so is the mail clients
-wrapped to it that waits to be sent, since only that key opens it. When the
-claim is verified, the [lists](#lists-of-the-domain-key) of the new key are
-published at once, and the outbox listens to it within 30 seconds. Giving the
-current key again changes nothing. It answers `400 invalid_nsec`,
-`400 owner_key` for the key that owns the claim (the server opens every gift
-wrap sent to the domain key and replaces its lists), `409 key_in_use` for the
-key of another claim, `403 domain_suspended` and `404 domain_not_found`.
+`PUT /domains/{domain}/key` replaces it with the key of the given nsec, or with
+the key a NIP-46 bunker holds, and answers the domain. A replaced key is gone
+for good, and so is the mail clients wrapped to it that waits to be sent, since
+only that key opens it. The same key moved between the server and a bunker
+keeps that mail. When the claim is verified, the
+[lists](#lists-of-the-domain-key) of the new key are published at once, and the
+outbox listens to it within 30 seconds. Giving the nsec the server already
+holds changes nothing. It answers `400 invalid_nsec`, `400 owner_key` for the
+key that owns the claim (the server opens every gift wrap sent to the domain
+key and replaces its lists), `409 key_in_use` for the key of another claim,
+`403 domain_suspended` and `404 domain_not_found`.
+
+`bridgeSigner` tells who holds the private key: `server` or `bunker`.
+
+#### Bunker
+
+The bunker URL needs at least one public `wss://` relay. The server connects
+with a client key of its own, sends the secret of the URL, asks for
+`nip44_encrypt`, `nip44_decrypt` and `sign_event` of kinds 13 (seals), 22242
+(NIP-42), 24242 (Blossom uploads), 10002, 10050 and 10063 (the lists), then
+checks NIP-44 both ways. It then keeps the client key and the bunker's pubkey
+and relays, not the secret. It answers `400 invalid_bunker_url`,
+`504 bunker_timeout` after 60 seconds, `502 bunker_refused`, and
+`502 bunker_auth_url` when the bunker wants its owner to approve in a browser,
+which a server cannot do: a `bunker://` URL with its secret avoids it.
+
+Every use of the key then goes through the bunker, each request given 30
+seconds. A bunker that does not answer delays the mail rather than loses it:
+
+- Incoming mail is answered `451`, and the sender tries again.
+- A wrap to the domain key is read again with the next subscription, and a
+  queued email waits for its next attempt.
+
+What the bunker refuses is final: the wrap is refused. NIP-46 encrypts each
+request once more and relays commonly cap events at 64 KiB, so a request stays
+under 40 KiB. Incoming mail over 16 KiB therefore goes to Blossom, and an
+email a client wraps inline above about 19 KiB of MIME cannot be opened: it is
+refused. Clients move mail to Blossom above 32 KiB, which a bunker opens.
+Some public relays also limit how fast a key publishes, which NIP-46 traffic
+can hit: a relay made for bunkers suits it better.
 
 ### Lists of the domain key
 

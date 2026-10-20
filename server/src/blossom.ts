@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
-import { finalizeEvent } from 'nostr-tools/pure'
 import { isPublicHostname } from './domain.js'
+import type { KeySigner } from './signer.js'
 
 const AUTH_KIND = 24242
 const AUTH_TTL_SECONDS = 300
@@ -19,7 +19,7 @@ export interface EncryptedBlob {
 
 export interface BlobStore {
   // Returns the servers that stored the blob.
-  upload(servers: string[], blob: EncryptedBlob, authKey: Uint8Array): Promise<string[]>
+  upload(servers: string[], blob: EncryptedBlob, auth: KeySigner): Promise<string[]>
   // The first copy found whose hash matches, or null.
   download(servers: string[], sha256: string, maxBytes: number): Promise<Buffer | null>
 }
@@ -54,8 +54,8 @@ export function decryptBlob(bytes: Buffer, key: string, nonce: string): Buffer {
 }
 
 export const blossom: BlobStore = {
-  async upload(servers, blob, authKey) {
-    const stored = await Promise.all(servers.map((server) => uploadTo(server, blob, authKey).catch(() => false)))
+  async upload(servers, blob, auth) {
+    const stored = await Promise.all(servers.map((server) => uploadTo(server, blob, auth).catch(() => false)))
     return servers.filter((_, index) => stored[index])
   },
 
@@ -103,22 +103,19 @@ async function readLimited(response: Response, maxBytes: number): Promise<Buffer
 }
 
 // BUD-02 upload, authorized by a BUD-11 token scoped to the server and the blob.
-async function uploadTo(server: string, blob: EncryptedBlob, authKey: Uint8Array): Promise<boolean> {
+async function uploadTo(server: string, blob: EncryptedBlob, auth: KeySigner): Promise<boolean> {
   const now = Math.floor(Date.now() / 1000)
-  const token = finalizeEvent(
-    {
-      kind: AUTH_KIND,
-      created_at: now,
-      content: 'Upload an email',
-      tags: [
-        ['t', 'upload'],
-        ['x', blob.sha256],
-        ['server', new URL(server).hostname],
-        ['expiration', String(now + AUTH_TTL_SECONDS)],
-      ],
-    },
-    authKey,
-  )
+  const token = await auth.signEvent({
+    kind: AUTH_KIND,
+    created_at: now,
+    content: 'Upload an email',
+    tags: [
+      ['t', 'upload'],
+      ['x', blob.sha256],
+      ['server', new URL(server).hostname],
+      ['expiration', String(now + AUTH_TTL_SECONDS)],
+    ],
+  })
 
   const response = await fetch(`${server}/upload`, {
     method: 'PUT',

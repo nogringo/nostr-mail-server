@@ -5,7 +5,7 @@ import { migrate } from '../src/migrations.js'
 import { generateKeyPair } from '../src/nostr.js'
 import { PgDomainRepository } from '../src/repository.js'
 import type { DomainChecks, NewDomain } from '../src/types.js'
-import { outboundWrap, signer } from './helpers.js'
+import { newBridgeKey, outboundWrap, signer } from './helpers.js'
 
 // Runs against a real Postgres when TEST_DATABASE_URL is set, inside a
 // throwaway schema.
@@ -75,6 +75,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '007_create_abuse_reports.sql',
       '008_create_served_domains.sql',
       '009_create_server_key.sql',
+      '010_add_bridge_bunker.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -293,16 +294,16 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     const wrap = outboundWrap(signer(), created.bridgePubkey)
     const recipients = ['a@remote.example']
     await repo.addOutboundMessage({ wrapId: wrap.id, bridgePubkey: created.bridgePubkey, wrap, recipients })
-    const replacement = generateKeyPair()
+    const replacement = newBridgeKey()
 
     const replaced = await repo.replaceBridgeKey('rekeyed.example', CAROL, replacement)
 
-    expect(replaced).toEqual({ ...created, bridgePubkey: replacement.pubkey, bridgePrivateKey: replacement.privateKey })
+    expect(replaced).toEqual({ ...created, ...replacement })
     expect(await repo.findDomain('rekeyed.example', CAROL)).toEqual(replaced)
     expect(await repo.hasOutboundMessage(wrap.id)).toBe(false)
-    expect(await repo.hasBridgeKey(replacement.pubkey)).toBe(true)
+    expect(await repo.hasBridgeKey(replacement.bridgePubkey)).toBe(true)
     expect(await repo.hasBridgeKey(created.bridgePubkey)).toBe(false)
-    expect(await repo.replaceBridgeKey('rekeyed.example', ALICE, generateKeyPair())).toBeNull()
+    expect(await repo.replaceBridgeKey('rekeyed.example', ALICE, newBridgeKey())).toBeNull()
     await expect(repo.replaceBridgeKey('other.example', CAROL, replacement)).rejects.toThrow(
       /domains_bridge_pubkey_unique/,
     )
@@ -310,6 +311,27 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
 
     await repo.deleteDomain('rekeyed.example', CAROL)
     await repo.deleteDomain('other.example', CAROL)
+  })
+
+  test('a domain key moves into a bunker and back with its outbound mail', async () => {
+    const created = await repo.createDomain(claim('bunker.example', CAROL))
+    const wrap = outboundWrap(signer(), created.bridgePubkey)
+    const recipients = ['a@remote.example']
+    await repo.addOutboundMessage({ wrapId: wrap.id, bridgePubkey: created.bridgePubkey, wrap, recipients })
+    const bridgeBunker = { signerPubkey: BOB, relays: ['wss://bunker.example.org/'], clientKey: ALICE }
+    const inBunker = { bridgePubkey: created.bridgePubkey, bridgePrivateKey: null, bridgeBunker }
+
+    const moved = await repo.replaceBridgeKey('bunker.example', CAROL, inBunker)
+
+    expect(moved).toEqual({ ...created, ...inBunker })
+    expect(await repo.findDomain('bunker.example', CAROL)).toEqual(moved)
+    expect(await repo.hasOutboundMessage(wrap.id)).toBe(true)
+    await expect(
+      repo.replaceBridgeKey('bunker.example', CAROL, { ...inBunker, bridgePrivateKey: created.bridgePrivateKey }),
+    ).rejects.toThrow(/domains_bridge_key_held/)
+    expect(await repo.replaceBridgeKey('bunker.example', CAROL, { ...created, bridgeBunker: null })).toEqual(created)
+
+    await repo.deleteDomain('bunker.example', CAROL)
   })
 
   test('keeps an abuse report once per domain and message, and lists the newest first', async () => {

@@ -8,6 +8,7 @@ function domainWith(found: RecordId[], fields: Partial<Domain> = {}): Domain {
   return {
     domain: 'example.com',
     bridgePubkey: 'ab'.repeat(32),
+    bridgeSigner: 'server',
     verifiedAt: '2026-10-20T10:00:00Z',
     suspendedAt: null,
     checkedAt: '2026-10-20T10:00:00Z',

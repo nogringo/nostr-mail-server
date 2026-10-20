@@ -1,5 +1,6 @@
 import { buildApp } from './app.js'
 import { blossom } from './blossom.js'
+import { DomainSigners } from './bunker.js'
 import { loadConfig } from './config.js'
 import { createSmtpTransport } from './delivery.js'
 import { createAuthResolver, createDnsLookup, createExchangerLookup } from './dns.js'
@@ -16,7 +17,9 @@ const migrations = await migrate(config.databaseUrl)
 const repo = new PgDomainRepository(config.databaseUrl)
 const serverKey = await repo.findOrCreateServerKey(generateKeyPair())
 const relays = new NostrRelayNetwork(config.indexerRelays)
-const app = buildApp(repo, config, createDnsLookup(config.dnsServers), relays, { logger: true })
+// One registry for the API, SMTP and the outbox, so that each bunker gets one connection.
+const signers = new DomainSigners({ logger: { info: (details, message) => app.log.info(details, message) } })
+const app = buildApp(repo, config, createDnsLookup(config.dnsServers), relays, { logger: true, signers })
 const smtpLogger = app.log.child({ component: 'smtp' })
 // Without the certificate files the server does not start: an orchestrator retries until they exist.
 const tls = config.tls ? await readTls(config.tls) : undefined
@@ -26,7 +29,7 @@ const smtp = createSmtpServer(
   blossom,
   createAuthResolver(config.dnsServers),
   { ...config, serverPrivateKey: serverKey.privateKey },
-  { logger: smtpLogger, tls },
+  { logger: smtpLogger, tls, signers },
 )
 const tlsReload = config.tls && tls ? reloadTls(smtp, config.tls, tls, smtpLogger) : null
 // The address of this server should resolve back to MX_HOST, the name it greets with.
@@ -34,7 +37,7 @@ const transport = createSmtpTransport({
   heloName: config.mxHost,
   findExchangers: createExchangerLookup(config.dnsServers),
 })
-const outbox = new Outbox(repo, relays, blossom, transport, config, app.log.child({ component: 'outbox' }))
+const outbox = new Outbox(repo, relays, blossom, transport, config, app.log.child({ component: 'outbox' }), signers)
 
 if (migrations.length) app.log.info({ migrations }, 'applied database migrations')
 
@@ -44,6 +47,7 @@ const shutdown = async () => {
   await new Promise<void>((resolve) => smtp.close(resolve))
   await app.close()
   await repo.close()
+  await signers.close()
   relays.close()
 }
 

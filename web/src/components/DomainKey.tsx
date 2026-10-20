@@ -45,30 +45,40 @@ export default function DomainKey({ domain, api, onChange }: Props) {
           </div>
           <CopyButton text={npub} label="the public key" />
         </li>
-        <li className="flex items-start justify-between gap-3 px-4 py-3">
-          <div className="min-w-0">
-            {nsec ? (
-              <p className="break-all font-mono text-sm leading-6">{nsec}</p>
-            ) : (
-              <p className="text-muted text-sm leading-6">Hidden</p>
-            )}
-            <p className="text-muted text-sm">Secret key. Whoever has it can read the mail sent from the domain.</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {nsec ? (
-              <>
-                <CopyButton text={nsec} label="the secret key" />
-                <button type="button" onClick={() => setNsec(null)} className={ROW_BUTTON}>
-                  Hide
+        {domain.bridgeSigner === 'bunker' ? (
+          <li className="px-4 py-3">
+            <p className="text-sm leading-6">Secret key in your bunker</p>
+            <p className="max-w-xl text-muted text-sm">
+              The server asks it to seal, sign and open the mail of the domain. While it does not answer, mail to the
+              domain waits and mail from it is not sent.
+            </p>
+          </li>
+        ) : (
+          <li className="flex items-start justify-between gap-3 px-4 py-3">
+            <div className="min-w-0">
+              {nsec ? (
+                <p className="break-all font-mono text-sm leading-6">{nsec}</p>
+              ) : (
+                <p className="text-muted text-sm leading-6">Hidden</p>
+              )}
+              <p className="text-muted text-sm">Secret key. Whoever has it can read the mail sent from the domain.</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              {nsec ? (
+                <>
+                  <CopyButton text={nsec} label="the secret key" />
+                  <button type="button" onClick={() => setNsec(null)} className={ROW_BUTTON}>
+                    Hide
+                  </button>
+                </>
+              ) : (
+                <button type="button" onClick={reveal} disabled={busy} className={ROW_BUTTON}>
+                  {busy ? 'Loading' : 'Show'}
                 </button>
-              </>
-            ) : (
-              <button type="button" onClick={reveal} disabled={busy} className={ROW_BUTTON}>
-                {busy ? 'Loading' : 'Show'}
-              </button>
-            )}
-          </div>
-        </li>
+              )}
+            </div>
+          </li>
+        )}
       </ul>
       <ErrorText>{error}</ErrorText>
       {!domain.suspendedAt && <KeyForm domain={domain} api={api} onChange={onChange} />}
@@ -81,15 +91,17 @@ function KeyForm({ domain, api, onChange }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const id = `domain-key-${domain.domain}`
+  const key = value.trim()
+  const bunker = key.startsWith('bunker://')
 
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!value.trim()) return
+    if (!key) return
 
     setBusy(true)
     setError(null)
     try {
-      onChange(await api.replaceDomainKey(domain.domain, value.trim()))
+      onChange(await api.replaceDomainKey(domain.domain, bunker ? { bunker: key } : { nsec: key }))
       setValue('')
     } catch (failure) {
       setError(describeError(failure))
@@ -105,8 +117,14 @@ function KeyForm({ domain, api, onChange }: Props) {
           Use your own key
         </label>
         <p className="mt-1 max-w-xl text-muted text-sm">
-          Paste the nsec of a key made for this domain only: the server opens every message sent to it and replaces its
-          relay lists. The current key stops working for {domain.domain}, so save its nsec first if you need it.
+          Paste the nsec of a key made for this domain only, or the bunker:// link of a bunker that holds it. The server
+          opens every message sent to the key and replaces its relay lists.{' '}
+          {domain.bridgeSigner === 'server'
+            ? `Another key replaces the current one for ${domain.domain}, so save its nsec first if you need it.`
+            : `Another key replaces the one in your bunker for ${domain.domain}.`}
+        </p>
+        <p className="mt-1 max-w-xl text-muted text-sm">
+          A bunker must stay online and answer this server without asking you each time.
         </p>
         <input
           id={id}
@@ -114,15 +132,15 @@ function KeyForm({ domain, api, onChange }: Props) {
           autoCapitalize="none"
           autoComplete="off"
           spellCheck={false}
-          placeholder="nsec1..."
+          placeholder="nsec1... or bunker://..."
           value={value}
           onChange={(event) => setValue(event.target.value)}
           className="mt-2 w-full rounded-md border border-rule bg-surface px-3 py-2 font-mono text-sm"
         />
       </div>
       <div className="flex flex-wrap items-center gap-4">
-        <Button type="submit" variant="secondary" disabled={!value.trim() || busy}>
-          {busy ? 'Replacing' : 'Use this key'}
+        <Button type="submit" variant="secondary" disabled={!key || busy}>
+          {busy ? (bunker ? 'Waiting for your bunker' : 'Replacing') : 'Use this key'}
         </Button>
         <ErrorText>{error}</ErrorText>
       </div>

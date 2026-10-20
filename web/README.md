@@ -13,8 +13,9 @@ connects a new domain and opens its page.
 - DNS: the records to publish, and their check.
 - Abuse reports: the mail sent to `abuse@<domain>` since the owner verified
   it, each message shown or downloaded as `.eml`.
-- Settings: the domain key (`_smtp@<domain>`), whose nsec the owner can show
-  or replace with one of their own, and removing the domain.
+- Settings: the domain key (`_smtp@<domain>`), whose nsec the owner can show,
+  replace with one of their own or hand to their bunker with a `bunker://`
+  link, and removing the domain.
 
 The page opens on DNS until the domain sends and receives mail, then on
 Addresses. Each tab has its own URL fragment (`#dns`, `#abuse`, etc.).

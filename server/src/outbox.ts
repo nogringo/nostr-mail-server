@@ -1,10 +1,11 @@
 import type { NostrEvent } from 'nostr-tools/pure'
-import { hexToBytes } from 'nostr-tools/utils'
 import { type BlobStore, decryptBlob } from './blossom.js'
+import { DomainSigners } from './bunker.js'
 import type { DeliveryResult, MailTransport } from './delivery.js'
 import { signMessage } from './dkim.js'
 import { checkAuthor, checkSender, type OutboundEmail, openOutboundWrap, Refusal } from './outbound.js'
 import type { RelayNetwork, Subscription } from './relays.js'
+import type { KeySigner } from './signer.js'
 import type { AppConfig, Domain, DomainRepository, OutboundMessage, RecipientOutcome } from './types.js'
 
 const GIFT_WRAP_KIND = 1059
@@ -34,7 +35,8 @@ type OutboxConfig = Pick<AppConfig, 'domainRelays' | 'blossomServers' | 'maxMess
 // queued as it arrives, then delivered over SMTP and retried while the
 // recipient's server defers it.
 export class Outbox {
-  private readonly subscriptions = new Map<string, Subscription>()
+  // By domain key, with the signer that answers NIP-42 for it.
+  private readonly subscriptions = new Map<string, { subscription: Subscription; signer: KeySigner }>()
   // Wraps handled by this process, with their date, to skip them when relays send them again.
   private readonly seen = new Map<string, number>()
   private timer: NodeJS.Timeout | undefined
@@ -50,6 +52,7 @@ export class Outbox {
     private readonly transport: MailTransport,
     private readonly config: OutboxConfig,
     private readonly logger: OutboxLogger,
+    private readonly signers = new DomainSigners(),
   ) {}
 
   start(): void {
@@ -59,7 +62,7 @@ export class Outbox {
 
   async stop(): Promise<void> {
     clearInterval(this.timer)
-    for (const subscription of this.subscriptions.values()) subscription.close()
+    for (const { subscription } of this.subscriptions.values()) subscription.close()
     this.subscriptions.clear()
     await this.draining
   }
@@ -77,20 +80,24 @@ export class Outbox {
     }
   }
 
-  // One subscription per verified domain key, authenticated as that key.
+  // One subscription per verified domain key, authenticated as that key. A key
+  // that moves between the server and a bunker gets a new one.
   async syncSubscriptions(): Promise<void> {
-    const domains = new Map((await this.repo.listVerifiedDomains()).map((domain) => [domain.bridgePubkey, domain]))
+    const signers = new Map(
+      (await this.repo.listVerifiedDomains()).map((domain) => [domain.bridgePubkey, this.signers.forDomain(domain)]),
+    )
     const renew = Date.now() - this.renewedAt >= RENEW_SUBSCRIPTIONS_MS
     if (renew) this.renewedAt = Date.now()
 
-    for (const [pubkey, subscription] of this.subscriptions) {
-      if (renew || !domains.has(pubkey)) {
+    for (const [pubkey, { subscription, signer }] of this.subscriptions) {
+      if (renew || signers.get(pubkey) !== signer) {
         subscription.close()
         this.subscriptions.delete(pubkey)
       }
     }
-    for (const [pubkey, domain] of domains) {
-      if (!this.subscriptions.has(pubkey)) this.subscriptions.set(pubkey, this.subscribe(domain))
+    for (const [pubkey, signer] of signers) {
+      if (!this.subscriptions.has(pubkey))
+        this.subscriptions.set(pubkey, { subscription: this.subscribe(signer), signer })
     }
 
     const oldest = now() - LOOKBACK_SECONDS
@@ -134,13 +141,13 @@ export class Outbox {
     return this.draining
   }
 
-  private subscribe(domain: Domain): Subscription {
+  private subscribe(signer: KeySigner): Subscription {
     return this.relays.subscribe(
       this.config.domainRelays,
-      { kinds: [GIFT_WRAP_KIND], '#p': [domain.bridgePubkey], since: now() - LOOKBACK_SECONDS },
-      hexToBytes(domain.bridgePrivateKey),
+      { kinds: [GIFT_WRAP_KIND], '#p': [signer.pubkey], since: now() - LOOKBACK_SECONDS },
+      signer,
       (wrap) => {
-        this.receive(wrap, domain.bridgePubkey).catch((error) => {
+        this.receive(wrap, signer.pubkey).catch((error) => {
           this.logger.error({ wrapId: wrap.id, error }, 'A gift wrap could not be queued')
         })
       },
@@ -154,7 +161,7 @@ export class Outbox {
 
     let email: OutboundEmail
     try {
-      email = openOutboundWrap(wrap, domain.bridgePrivateKey)
+      email = await openOutboundWrap(wrap, this.signers.forDomain(domain))
       await checkSender(this.repo, domain, email)
     } catch (error) {
       if (!(error instanceof Refusal)) throw error
@@ -176,7 +183,7 @@ export class Outbox {
     let results: Map<string, DeliveryResult>
     try {
       if (!domain) throw new Refusal('The domain is no longer connected')
-      const email = openOutboundWrap(message.wrap, domain.bridgePrivateKey)
+      const email = await openOutboundWrap(message.wrap, this.signers.forDomain(domain))
       const mime = await this.loadMime(domain, email)
       await checkAuthor(this.repo, domain, email.senderPubkey, mime)
       results = await this.send(email.mailFrom, addresses, await signMessage(mime, domain))

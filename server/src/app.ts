@@ -1,4 +1,5 @@
 import Fastify, { type FastifyError } from 'fastify'
+import { DomainSigners } from './bunker.js'
 import { registerAbuseRoutes } from './handlers/abuse.js'
 import { registerAddressRoutes } from './handlers/addresses.js'
 import { registerAdminRoutes } from './handlers/admin.js'
@@ -13,7 +14,7 @@ export function buildApp(
   config: ApiConfig,
   dns: DnsLookup,
   relays: RelayNetwork,
-  { logger = false }: { logger?: boolean } = {},
+  { logger = false, signers = new DomainSigners() }: { logger?: boolean; signers?: DomainSigners } = {},
 ) {
   const app = Fastify({ logger })
 
@@ -25,7 +26,7 @@ export function buildApp(
   })
 
   app.get('/healthz', async () => 'ok')
-  registerDomainRoutes(app, repo, { config, dns, relays })
+  registerDomainRoutes(app, repo, { config, dns, relays, signers })
   registerAddressRoutes(app, repo)
   registerNip05Routes(app, repo)
   registerCertificateRoutes(app, repo)

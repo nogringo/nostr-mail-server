@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { type NostrEvent, verifyEvent } from 'nostr-tools/pure'
 import { afterEach, expect, test } from 'vitest'
 import { blossom, decryptBlob, encryptBlob, normalizeBlossomUrl } from '../src/blossom.js'
-import { signer } from './helpers.js'
+import { keySigner, signer } from './helpers.js'
 
 const servers: Server[] = []
 
@@ -74,7 +74,7 @@ test('upload PUTs the blob with a BUD-11 token scoped to the server and the blob
   const uploader = signer()
   const blob = encryptBlob(Buffer.from('a large email'))
 
-  const stored = await blossom.upload([server.url], blob, uploader.sk)
+  const stored = await blossom.upload([server.url], blob, keySigner(uploader))
 
   expect(stored).toEqual([server.url])
   const [upload] = server.uploads
@@ -108,7 +108,7 @@ test('upload returns only the servers that stored the blob', async () => {
   const stored = await blossom.upload(
     [refusing.url, good.url, lying.url, closed.url],
     encryptBlob(Buffer.from('mail')),
-    signer().sk,
+    keySigner(signer()),
   )
 
   expect(stored).toEqual([good.url])

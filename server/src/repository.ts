@@ -3,6 +3,8 @@ import pg from 'pg'
 import type {
   AbuseReport,
   Address,
+  BridgeKey,
+  BunkerKey,
   Domain,
   DomainChecks,
   DomainRepository,
@@ -19,7 +21,7 @@ import type {
 
 const DOMAIN_COLUMNS = `
   domain, pubkey, verification_token, dkim_selector, dkim_public_key, dkim_private_key,
-  bridge_pubkey, bridge_private_key, blossom_servers, checks, checked_at, verified_at, created_at
+  bridge_pubkey, bridge_private_key, bridge_bunker, blossom_servers, checks, checked_at, verified_at, created_at
 `
 
 const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, created_at'
@@ -36,7 +38,8 @@ interface DomainRow {
   dkim_public_key: string
   dkim_private_key: string
   bridge_pubkey: string
-  bridge_private_key: string
+  bridge_private_key: string | null
+  bridge_bunker: BunkerKey | null
   blossom_servers: string[]
   checks: DomainChecks | null
   checked_at: Date | null
@@ -210,22 +213,29 @@ export class PgDomainRepository implements DomainRepository {
     return (result.rowCount ?? 0) > 0
   }
 
-  async replaceBridgeKey(domain: string, pubkey: string, bridgeKey: KeyPair): Promise<Domain | null> {
+  async replaceBridgeKey(domain: string, pubkey: string, bridgeKey: BridgeKey): Promise<Domain | null> {
     return this.transaction(async (client) => {
       await client.query(
         `
           delete from outbound_messages
           where bridge_pubkey = (select bridge_pubkey from domains where domain = $1 and pubkey = $2)
+            and bridge_pubkey <> $3
         `,
-        [domain, pubkey],
+        [domain, pubkey, bridgeKey.bridgePubkey],
       )
       const result = await client.query<DomainRow>(
         `
-          update domains set bridge_pubkey = $3, bridge_private_key = $4
+          update domains set bridge_pubkey = $3, bridge_private_key = $4, bridge_bunker = $5
           where domain = $1 and pubkey = $2
           returning ${DOMAIN_COLUMNS}
         `,
-        [domain, pubkey, bridgeKey.pubkey, bridgeKey.privateKey],
+        [
+          domain,
+          pubkey,
+          bridgeKey.bridgePubkey,
+          bridgeKey.bridgePrivateKey,
+          bridgeKey.bridgeBunker ? JSON.stringify(bridgeKey.bridgeBunker) : null,
+        ],
       )
       return result.rows[0] ? toDomain(result.rows[0]) : null
     })
@@ -466,6 +476,7 @@ function toDomain(row: DomainRow): Domain {
     dkimPrivateKey: row.dkim_private_key,
     bridgePubkey: row.bridge_pubkey,
     bridgePrivateKey: row.bridge_private_key,
+    bridgeBunker: row.bridge_bunker,
     blossomServers: row.blossom_servers,
     checks: row.checks,
     checkedAt: row.checked_at?.toISOString() ?? null,

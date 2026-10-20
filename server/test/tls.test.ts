@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { connect as connectTls } from 'node:tls'
 import { afterEach, expect, test } from 'vitest'
+import { generateKeyPair } from '../src/nostr.js'
 import { createSmtpServer } from '../src/smtp.js'
 import { readTls, reloadTls } from '../src/tls.js'
 import {
@@ -39,7 +40,13 @@ async function setup() {
     new FakeRelayNetwork(),
     new FakeBlobStore(),
     new FakeAuthDns().resolve,
-    { mxHost: 'mx.example.org', maxMessageBytes: 1024, adminPubkeys: [], blossomServers: [], serverPrivateKey: '' },
+    {
+      mxHost: 'mx.example.org',
+      maxMessageBytes: 1024,
+      adminPubkeys: [],
+      blossomServers: [],
+      serverPrivateKey: generateKeyPair().privateKey,
+    },
     { tls: loaded },
   )
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))

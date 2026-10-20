@@ -81,17 +81,19 @@ test('sends a body as JSON and signs its hash', async () => {
   expect(event.tags).toContainEqual(['payload', hashPayload({ pubkey: 'npub1alice' })])
 })
 
-test('reads the nsec of the domain key and replaces it', async () => {
+test('reads the nsec of the domain key and replaces it with an nsec or a bunker', async () => {
   const { api, requests } = recordingApi(() =>
     requests.length === 1 ? Response.json({ nsec: 'nsec1old' }) : Response.json({ domain: { domain: 'example.com' } }),
   )
 
   expect(await api.domainKey('example.com')).toBe('nsec1old')
-  expect(await api.replaceDomainKey('example.com', 'nsec1new')).toEqual({ domain: 'example.com' })
+  expect(await api.replaceDomainKey('example.com', { nsec: 'nsec1new' })).toEqual({ domain: 'example.com' })
+  await api.replaceDomainKey('example.com', { bunker: 'bunker://abc' })
 
   expect(requests.map(({ url, init }) => [init.method, url, init.body])).toEqual([
     ['GET', `${ORIGIN}/domains/example.com/key`, undefined],
     ['PUT', `${ORIGIN}/domains/example.com/key`, '{"nsec":"nsec1new"}'],
+    ['PUT', `${ORIGIN}/domains/example.com/key`, '{"bunker":"bunker://abc"}'],
   ])
 })
 

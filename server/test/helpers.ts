@@ -3,20 +3,24 @@ import { fileURLToPath } from 'node:url'
 import type { DNSResolver } from 'mailauth'
 import type { Filter } from 'nostr-tools/filter'
 import { npubEncode } from 'nostr-tools/nip19'
-import { decrypt, getConversationKey } from 'nostr-tools/nip44'
+import { decrypt, encrypt, getConversationKey } from 'nostr-tools/nip44'
+import type { BunkerPointer } from 'nostr-tools/nip46'
 import { wrapEvent } from 'nostr-tools/nip59'
 import { finalizeEvent, generateSecretKey, getPublicKey, type NostrEvent } from 'nostr-tools/pure'
 import type { buildApp } from '../src/app.js'
 import type { BlobStore, EncryptedBlob } from '../src/blossom.js'
+import type { BunkerConnection, OpenBunker } from '../src/bunker.js'
 import { generateDkimKeyPair } from '../src/dkim.js'
 import { NIP98_KIND } from '../src/nip98.js'
 import { generateKeyPair } from '../src/nostr.js'
 import type { Inbox, RelayNetwork, Subscription } from '../src/relays.js'
+import { type KeySigner, localSigner } from '../src/signer.js'
 import { readTls, type TlsCredentials } from '../src/tls.js'
 import type {
   AbuseReport,
   Address,
   ApiConfig,
+  BridgeKey,
   DnsLookup,
   Domain,
   DomainChecks,
@@ -132,6 +136,7 @@ export class MemoryDomainRepository implements DomainRepository {
 
     const domain: Domain = {
       ...input,
+      bridgeBunker: null,
       checks: null,
       checkedAt: null,
       verifiedAt: null,
@@ -174,15 +179,17 @@ export class MemoryDomainRepository implements DomainRepository {
     return [...this.domains.values()].some((claim) => claim.bridgePubkey === bridgePubkey)
   }
 
-  async replaceBridgeKey(domain: string, pubkey: string, bridgeKey: KeyPair): Promise<Domain | null> {
+  async replaceBridgeKey(domain: string, pubkey: string, bridgeKey: BridgeKey): Promise<Domain | null> {
     this.assertAvailable()
     const current = this.domains.get(key(domain, pubkey))
     if (!current) return null
 
     for (const [wrapId, message] of this.outbound) {
-      if (message.bridgePubkey === current.bridgePubkey) this.outbound.delete(wrapId)
+      if (message.bridgePubkey === current.bridgePubkey && current.bridgePubkey !== bridgeKey.bridgePubkey) {
+        this.outbound.delete(wrapId)
+      }
     }
-    const next = { ...current, bridgePubkey: bridgeKey.pubkey, bridgePrivateKey: bridgeKey.privateKey }
+    const next = { ...current, ...bridgeKey }
     this.domains.set(key(domain, pubkey), next)
     return next
   }
@@ -495,7 +502,7 @@ export class FakeAuthDns {
 export interface FakeSubscription {
   relays: string[]
   filter: Filter
-  authKey: Uint8Array
+  auth: KeySigner
   onEvent: (event: NostrEvent) => void
   closed: boolean
 }
@@ -504,20 +511,20 @@ export class FakeRelayNetwork implements RelayNetwork {
   readonly inboxRelays = new Map<string, string[]>()
   readonly blossomServers = new Map<string, string[]>()
   readonly down = new Set<string>()
-  readonly published: { relays: string[]; event: NostrEvent; authKey: Uint8Array }[] = []
+  readonly published: { relays: string[]; event: NostrEvent; auth: KeySigner }[] = []
   readonly subscriptions: FakeSubscription[] = []
 
   async findInbox(pubkey: string): Promise<Inbox> {
     return { relays: this.inboxRelays.get(pubkey) ?? [], blossomServers: this.blossomServers.get(pubkey) ?? [] }
   }
 
-  async publish(relays: string[], event: NostrEvent, authKey: Uint8Array): Promise<string[]> {
-    this.published.push({ relays, event, authKey })
+  async publish(relays: string[], event: NostrEvent, auth: KeySigner): Promise<string[]> {
+    this.published.push({ relays, event, auth })
     return relays.filter((relay) => !this.down.has(relay))
   }
 
-  subscribe(relays: string[], filter: Filter, authKey: Uint8Array, onEvent: (event: NostrEvent) => void): Subscription {
-    const subscription = { relays, filter, authKey, onEvent, closed: false }
+  subscribe(relays: string[], filter: Filter, auth: KeySigner, onEvent: (event: NostrEvent) => void): Subscription {
+    const subscription = { relays, filter, auth, onEvent, closed: false }
     this.subscriptions.push(subscription)
     return {
       close: () => {
@@ -533,13 +540,13 @@ export class FakeRelayNetwork implements RelayNetwork {
 
 export class FakeBlobStore implements BlobStore {
   readonly down = new Set<string>()
-  readonly uploads: { servers: string[]; blob: EncryptedBlob; authKey: Uint8Array }[] = []
+  readonly uploads: { servers: string[]; blob: EncryptedBlob; auth: KeySigner }[] = []
   // What each server holds, by hash.
   readonly stored = new Map<string, Map<string, Buffer>>()
   readonly downloads: string[][] = []
 
-  async upload(servers: string[], blob: EncryptedBlob, authKey: Uint8Array): Promise<string[]> {
-    this.uploads.push({ servers, blob, authKey })
+  async upload(servers: string[], blob: EncryptedBlob, auth: KeySigner): Promise<string[]> {
+    this.uploads.push({ servers, blob, auth })
     return servers.filter((server) => !this.down.has(server))
   }
 
@@ -557,6 +564,76 @@ export class FakeBlobStore implements BlobStore {
   }
 }
 
+export const BUNKER_RELAY = 'wss://bunker.example.org/'
+
+// A NIP-46 remote signer answering from a local key, as BunkerSigner of
+// nostr-tools hands its answers over: an error comes as a plain string.
+export class FakeBunker {
+  readonly signerKey = signer()
+  // What the server stored when it connected.
+  readonly clientKey = Buffer.from(generateSecretKey()).toString('hex')
+  readonly requests: { clientPubkey: string; pointer: BunkerPointer; method: string; params: string[] }[] = []
+  readonly opened: BunkerPointer[] = []
+  // Never answers, like a bunker that is offline.
+  silent = false
+  refusing: string | null = null
+  authUrl: string | null = null
+  closed = 0
+
+  constructor(readonly key: Signer = signer()) {}
+
+  get url(): string {
+    return `bunker://${this.signerKey.pubkey}?relay=wss%3A%2F%2Fbunker.example.org&secret=s3cret`
+  }
+
+  readonly open: OpenBunker = (clientKey, pointer, onauth): BunkerConnection => {
+    this.opened.push(pointer)
+    return {
+      sendRequest: async (method, params) => {
+        this.requests.push({ clientPubkey: getPublicKey(clientKey), pointer, method, params })
+        if (this.authUrl) onauth(this.authUrl)
+        if (this.silent || this.authUrl) return new Promise<string>(() => {})
+        if (this.refusing) throw this.refusing
+        return this.answer(method, params)
+      },
+      close: async () => {
+        this.closed++
+      },
+    }
+  }
+
+  // The domain key, as stored once the bunker is connected.
+  bridgeKey(): BridgeKey {
+    return {
+      bridgePubkey: this.key.pubkey,
+      bridgePrivateKey: null,
+      bridgeBunker: { signerPubkey: this.signerKey.pubkey, relays: [BUNKER_RELAY], clientKey: this.clientKey },
+    }
+  }
+
+  methods(): string[] {
+    return this.requests.map((request) => request.method)
+  }
+
+  private answer(method: string, params: string[]): string {
+    const conversation = (pubkey: string) => getConversationKey(this.key.sk, pubkey)
+    switch (method) {
+      case 'connect':
+        return 'ack'
+      case 'get_public_key':
+        return this.key.pubkey
+      case 'sign_event':
+        return JSON.stringify(finalizeEvent(JSON.parse(params[0]), this.key.sk))
+      case 'nip44_encrypt':
+        return encrypt(params[1], conversation(params[0]))
+      case 'nip44_decrypt':
+        return decrypt(params[1], conversation(params[0]))
+      default:
+        throw `unknown method ${method}`
+    }
+  }
+}
+
 // Decrypts a gift wrap (NIP-59) down to its seal and rumor.
 export function openWrap(wrap: NostrEvent, secretKey: Uint8Array): { seal: NostrEvent; rumor: NostrEvent } {
   const seal = JSON.parse(decrypt(wrap.content, getConversationKey(secretKey, wrap.pubkey)))
@@ -567,6 +644,26 @@ export function openWrap(wrap: NostrEvent, secretKey: Uint8Array): { seal: Nostr
 export interface Signer {
   sk: Uint8Array
   pubkey: string
+}
+
+export function keySigner(user: Signer): KeySigner {
+  return localSigner(Buffer.from(user.sk).toString('hex'))
+}
+
+export function privateKeyOf(domain: BridgeKey): string {
+  if (domain.bridgePrivateKey === null) throw new Error(`The key of ${domain.bridgePubkey} is in a bunker`)
+  return domain.bridgePrivateKey
+}
+
+// A new key the server holds.
+export function newBridgeKey(): BridgeKey {
+  const { pubkey, privateKey } = generateKeyPair()
+  return { bridgePubkey: pubkey, bridgePrivateKey: privateKey, bridgeBunker: null }
+}
+
+// The signer of a domain key the server holds.
+export function heldKey(domain: BridgeKey): KeySigner {
+  return localSigner(privateKeyOf(domain))
 }
 
 export function signer(): Signer {
