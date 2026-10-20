@@ -137,6 +137,7 @@ export function createApi(
 
   return {
     listDomains: async (): Promise<Domain[]> => (await call('GET', '/domains')).domains,
+    getDomain: async (name: string): Promise<Domain> => (await call('GET', domainPath(name))).domain,
     connectDomain: async (name: string): Promise<Domain> => (await call('PUT', domainPath(name))).domain,
     checkDomain: async (name: string): Promise<Domain> => (await call('POST', `${domainPath(name)}/check`)).domain,
     removeDomain: async (name: string): Promise<void> => {

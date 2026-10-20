@@ -41,9 +41,8 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
   const deliveredTo = (pubkey: string) => (pubkey === ownPubkey ? 'your key' : shortNpub(npubOf(pubkey)))
 
   return (
-    <div className="mt-8">
-      <h3 className="font-medium">Addresses</h3>
-      <p className="mt-1 text-muted text-sm">Mail sent to an address reaches the Nostr key it points at.</p>
+    <div>
+      <p className="text-muted text-sm">Mail sent to an address reaches the Nostr key it points at.</p>
       <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
         <AddressRow address={`${ownNpub}@${domain}`} deliveredTo="your key, always available" />
         {addresses.map((address) => (

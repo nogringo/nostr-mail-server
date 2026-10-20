@@ -1,23 +1,36 @@
-import { useEffect, useState } from 'react'
+import { type ComponentType, type ReactNode, useEffect, useState } from 'react'
 import { npubOf, shortNpub } from '../lib/format'
 import { restoreSession, type Signer, signOut } from '../lib/signer'
 import Admin from './Admin'
+import Connect from './Connect'
 import Dashboard from './Dashboard'
+import DomainPage from './DomainPage'
 import SignIn from './SignIn'
 import { Button } from './ui'
 
-const VIEWS = {
-  dashboard: {
-    subtitle: 'for your domain',
-    Page: Dashboard,
-    title: 'Email at your own domain, delivered over Nostr.',
-    intro: (
-      <>
-        Sign in with your Nostr key, connect a domain you own and publish its DNS records. Mail sent to{' '}
-        <span className="font-mono text-base text-ink">npub...@yourdomain.com</span> then reaches you in Nostr Mail.
-      </>
-    ),
-  },
+interface View {
+  subtitle: string
+  Page: ComponentType<{ signer: Signer }>
+  title: string
+  intro: ReactNode
+}
+
+const OWNER = {
+  subtitle: 'for your domain',
+  title: 'Email at your own domain, delivered over Nostr.',
+  intro: (
+    <>
+      Sign in with your Nostr key, connect a domain you own and publish its DNS records. Mail sent to{' '}
+      <span className="font-mono text-base text-ink">npub...@yourdomain.com</span> then reaches you in Nostr Mail.
+    </>
+  ),
+}
+
+const VIEWS: Record<'home' | 'dashboard' | 'connect' | 'domain' | 'admin', View> = {
+  home: { ...OWNER, Page: Home },
+  dashboard: { ...OWNER, Page: Dashboard },
+  connect: { ...OWNER, Page: Connect },
+  domain: { ...OWNER, Page: DomainPage },
   admin: {
     subtitle: 'admin',
     Page: Admin,
@@ -26,7 +39,7 @@ const VIEWS = {
   },
 }
 
-export default function App({ view = 'dashboard' }: { view?: keyof typeof VIEWS }) {
+export default function App({ view = 'home' }: { view?: keyof typeof VIEWS }) {
   const [signer, setSigner] = useState<Signer | null>(null)
   const [restoring, setRestoring] = useState(true)
   const { subtitle, Page, title, intro } = VIEWS[view]
@@ -68,4 +81,12 @@ export default function App({ view = 'dashboard' }: { view?: keyof typeof VIEWS 
       </main>
     </div>
   )
+}
+
+// Signed in, the home page leads to the domains.
+function Home() {
+  useEffect(() => {
+    window.location.replace('/dashboard')
+  }, [])
+  return null
 }

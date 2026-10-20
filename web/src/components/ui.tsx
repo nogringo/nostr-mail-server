@@ -1,4 +1,4 @@
-import { type ButtonHTMLAttributes, useEffect, useState } from 'react'
+import { type AnchorHTMLAttributes, type ButtonHTMLAttributes, useEffect, useState } from 'react'
 
 export const TONES = { ok: 'text-ok', wait: 'text-wait', bad: 'text-bad', none: 'text-muted' }
 
@@ -19,6 +19,21 @@ export function Button({ variant = 'primary', className = '', type = 'button', .
       className={`cursor-pointer transition-colors disabled:cursor-default disabled:opacity-50 ${VARIANTS[variant]} ${className}`}
       {...props}
     />
+  )
+}
+
+type ButtonLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: keyof typeof VARIANTS }
+
+export function ButtonLink({ variant = 'primary', className = '', ...props }: ButtonLinkProps) {
+  return <a className={`inline-block transition-colors ${VARIANTS[variant]} ${className}`} {...props} />
+}
+
+export function BackLink({ href, children }: { href: string; children: string }) {
+  return (
+    <a href={href} className="text-muted text-sm hover:text-ink">
+      <span aria-hidden="true">← </span>
+      {children}
+    </a>
   )
 }
 

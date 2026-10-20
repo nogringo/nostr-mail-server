@@ -19,6 +19,7 @@ The project is built in small steps. What exists today:
 | NIP-05 over HTTPS on the connected domains (A record, certificate on demand) | done |
 | Admin page: every connected domain, its owner, addresses and records | done |
 | Admin page: suspend a domain, which stops its mail and NIP-05 | done |
+| Website: a list of your domains, then one page per domain in tabs | done |
 
 ## Layout
 

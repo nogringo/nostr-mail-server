@@ -57,6 +57,15 @@ test('accepts the empty answer of a removal', async () => {
   expect(requests[0].init.method).toBe('DELETE')
 })
 
+test('loads one domain by its name', async () => {
+  const { api, requests } = recordingApi(() => Response.json({ domain: { domain: 'example.com' } }))
+
+  expect(await api.getDomain('example.com')).toEqual({ domain: 'example.com' })
+
+  expect(requests[0].url).toBe(`${ORIGIN}/domains/example.com`)
+  expect(requests[0].init.method).toBe('GET')
+})
+
 test('sends a body as JSON and signs its hash', async () => {
   const address = { localPart: 'alice', address: 'alice@example.com', pubkey: 'ab'.repeat(32), createdAt: '' }
   const { api, requests } = recordingApi(() => Response.json({ address }, { status: 201 }))

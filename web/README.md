@@ -1,10 +1,21 @@
 # nostr-mail-server website
 
-Sign in with a Nostr key, connect a domain, publish the DNS records it shows
-and check them. Once the domain is verified, the page lists its addresses:
-`npub...@<domain>`, always available, and the named ones the owner adds, each
-pointing at an npub or a hex public key, then the mail sent to `abuse@<domain>`
-since the owner verified it, each message shown or downloaded as `.eml`.
+Sign in with a Nostr key. `/` leads a signed in key to `/dashboard`, the list
+of its domains with the state of each. `/connect` connects a new domain and
+opens its page.
+
+`/domain?name=<domain>` is the page of one domain, in tabs:
+
+- Addresses, once the domain is verified: `npub...@<domain>`, always
+  available, and the named ones the owner adds, each pointing at an npub or a
+  hex public key.
+- DNS: the records to publish, and their check.
+- Abuse reports: the mail sent to `abuse@<domain>` since the owner verified
+  it, each message shown or downloaded as `.eml`.
+- Settings: removing the domain.
+
+The page opens on DNS until the domain sends and receives mail, then on
+Addresses. Each tab has its own URL fragment (`#dns`, `#abuse`, etc.).
 
 `/admin` lists every domain connected to the server, verified or not, with
 its owner, its named addresses and the records of its last check, and
@@ -18,7 +29,8 @@ Sign-in uses a NIP-07 extension or a NIP-46 bunker (`bunker://` link or
 [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) for the
 page's own origin, so the site and the API must be served on the same origin.
 
-Astro builds a static site with a single React page.
+Astro builds a static site, one `<name>.html` per page, each mounting the same
+React app on its own view.
 
 ## Development
 

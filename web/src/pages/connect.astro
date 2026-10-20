@@ -1,0 +1,8 @@
+---
+import App from '../components/App'
+import Base from '../layouts/Base.astro'
+---
+
+<Base title="Connect a domain to Nostr Mail" description="Connect a domain you own and receive its email in Nostr Mail.">
+  <App client:only="react" view="connect" />
+</Base>
