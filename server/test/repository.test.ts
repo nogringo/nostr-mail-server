@@ -17,6 +17,7 @@ const CAROL = 'c'.repeat(64)
 const checks: DomainChecks = {
   ownership: { status: 'ok', found: ['nostr-mail-verification=t'] },
   mx: { status: 'missing', found: [] },
+  https: { status: 'missing', found: [] },
   spf: { status: 'missing', found: [] },
   dkim: { status: 'missing', found: [] },
   dmarc: { status: 'missing', found: [] },

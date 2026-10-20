@@ -10,6 +10,10 @@ export function createDnsLookup(servers: string[] = []): DnsLookup {
   return {
     txt: async (name) => (await orEmpty(resolver.resolveTxt(name))).map((chunks) => chunks.join('')),
     mx: (name) => orEmpty(resolver.resolveMx(name)),
+    addresses: async (name) => {
+      const [ipv4, ipv6] = await Promise.all([orEmpty(resolver.resolve4(name)), orEmpty(resolver.resolve6(name))])
+      return [...ipv4, ...ipv6]
+    },
   }
 }
 

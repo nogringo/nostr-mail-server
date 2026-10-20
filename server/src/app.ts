@@ -1,5 +1,6 @@
 import Fastify, { type FastifyError } from 'fastify'
 import { registerAddressRoutes } from './handlers/addresses.js'
+import { registerCertificateRoutes } from './handlers/certificates.js'
 import { registerDomainRoutes } from './handlers/domains.js'
 import { registerNip05Routes } from './handlers/nip05.js'
 import type { RelayNetwork } from './relays.js'
@@ -25,6 +26,7 @@ export function buildApp(
   registerDomainRoutes(app, repo, { config, dns, relays })
   registerAddressRoutes(app, repo)
   registerNip05Routes(app, repo)
+  registerCertificateRoutes(app, repo)
 
   return app
 }

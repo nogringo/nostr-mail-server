@@ -51,6 +51,7 @@ so a client can show what is wrong.
 |----|------|------|-------|-------------|
 | `ownership` | TXT | `_nostr-mail.<domain>` | `nostr-mail-verification=<token>` | The claim's token is among the values |
 | `mx` | MX | `<domain>` | `MX_HOST`, priority 10 | Every MX is `MX_HOST` |
+| `https` | A | `<domain>` | `PUBLIC_IPV4` | Every A record is `PUBLIC_IPV4`, and there is no AAAA record |
 | `spf` | TXT | `<domain>` | `v=spf1 include:<SPF_INCLUDE> ~all` | One SPF record, which includes `SPF_INCLUDE` |
 | `dkim` | TXT | `<selector>._domainkey.<domain>` | `v=DKIM1; k=rsa; p=<key>` | Its `p=` is the claim's public key |
 | `dmarc` | TXT | `_dmarc.<domain>` | `v=DMARC1; p=none` | One DMARC record, any policy (recommended, not required) |
@@ -141,6 +142,12 @@ On a verified domain, `name` resolves to:
 An unknown name, or any name on a domain that is not verified, returns
 `{"names": {}}`. A missing `name` is `400 name_required`. There is no `relays`
 field: Nostr Mail finds relays through kind 10050.
+
+The domain's `https` record points it at `PUBLIC_IPV4`, where the reverse proxy
+gets its certificate on demand. Before that, it asks
+`GET /certificates/allowed?domain=<domain>`, which answers `200` for a verified
+domain and `404` otherwise, so pointing any name at the server does not make it
+request certificates. The proxy should not expose this route.
 
 ## Receiving mail
 
@@ -250,6 +257,7 @@ cp .env.example .env
 | `DATABASE_URL` | yes | | Postgres connection string |
 | `MX_HOST` | yes | | Inbound SMTP host that connected domains point their MX at |
 | `SPF_INCLUDE` | yes | | Domain whose SPF record lists the outbound SMTP servers |
+| `PUBLIC_IPV4` | yes | | IPv4 address that connected domains point their A record at, so that their HTTPS reaches this server |
 | `DKIM_SELECTOR` | no | `nostrmail` | Selector given to new claims; existing claims keep theirs |
 | `DNS_SERVERS` | no | system resolver | Comma-separated IP addresses used for the record checks and for SPF, DKIM and DMARC |
 | `PORT` | no | `3000` | HTTP port |

@@ -13,6 +13,10 @@ request to the URL the browser signs. Caddy sends `/domains`, `/domains/*`,
 `/.well-known/nostr.json` and `/healthz` to the server and keeps the `Host`
 header.
 
+The connected domains point their A record at `PUBLIC_IPV4`, this machine. For
+any other host name, Caddy gets a certificate on demand once the server says
+the domain is verified, and serves only `/.well-known/nostr.json` there.
+
 `SITE_HOST` is also the MX that connected domains point at, and for now the
 SPF include they are given. The SMTP server offers STARTTLS with the
 certificate Caddy obtains for it: the server mounts Caddy's data read-only,
@@ -27,7 +31,7 @@ only, and Caddy uses Let's Encrypt alone so the files stay at the same path.
 
 ```sh
 cd deploy
-cp .env.example .env    # set SITE_HOST and POSTGRES_PASSWORD
+cp .env.example .env    # set SITE_HOST, PUBLIC_IPV4 and POSTGRES_PASSWORD
 sudo docker compose up -d --build
 ```
 
@@ -38,8 +42,4 @@ and run `sudo docker compose up -d --build` again. Logs:
 The SMTP server waits for that certificate: on a first start it restarts until
 Caddy has it, which takes a few seconds once the A record resolves.
 
-Not done yet:
-
-- HTTPS on the connected domains, which serves their NIP-05 and is needed to
-  send mail.
-- An SPF record for `SITE_HOST`, also needed to send mail.
+Not done yet: an SPF record for `SITE_HOST`, needed to send mail.

@@ -35,6 +35,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databaseUrl,
     mxHost: parseDnsName(env.MX_HOST, 'MX_HOST'),
     spfInclude: parseDnsName(env.SPF_INCLUDE, 'SPF_INCLUDE'),
+    publicIpv4: parsePublicIpv4(env.PUBLIC_IPV4),
     dkimSelector: parseSelector(env.DKIM_SELECTOR),
     dnsServers: parseDnsServers(env.DNS_SERVERS),
     indexerRelays: parseUrls(env.INDEXER_RELAYS, 'INDEXER_RELAYS', normalizeRelayUrl, DEFAULT_INDEXER_RELAYS),
@@ -76,6 +77,18 @@ function parseDnsName(value: string | undefined, name: string): string {
   }
 
   return hostname
+}
+
+function parsePublicIpv4(value: string | undefined): string {
+  const address = value?.trim()
+  if (!address) {
+    throw new Error('PUBLIC_IPV4 is required')
+  }
+  if (isIP(address) !== 4) {
+    throw new Error('PUBLIC_IPV4 must be an IPv4 address')
+  }
+
+  return address
 }
 
 function parseSelector(value: string | undefined): string {

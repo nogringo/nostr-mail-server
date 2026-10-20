@@ -1,13 +1,13 @@
 import { getToken } from 'nostr-tools/nip98'
 import type { Signer } from './signer'
 
-export type RecordId = 'ownership' | 'mx' | 'spf' | 'dkim' | 'dmarc'
+export type RecordId = 'ownership' | 'mx' | 'https' | 'spf' | 'dkim' | 'dmarc'
 
 export type CheckStatus = 'ok' | 'missing' | 'mismatch' | 'error'
 
 export interface DnsRecord {
   id: RecordId
-  type: 'MX' | 'TXT'
+  type: 'MX' | 'TXT' | 'A'
   name: string
   value: string
   priority?: number

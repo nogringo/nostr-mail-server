@@ -24,6 +24,8 @@ function configuredDns(): FakeDns {
   for (const record of expectedRecords(domain, domainConfig)) {
     if (record.type === 'MX') {
       dns.mxRecords.set(record.name, [{ exchange: record.value, priority: record.priority ?? 10 }])
+    } else if (record.type === 'A') {
+      dns.addressRecords.set(record.name, [record.value])
     } else {
       dns.txtRecords.set(record.name, [...(dns.txtRecords.get(record.name) ?? []), record.value])
     }
@@ -31,7 +33,7 @@ function configuredDns(): FakeDns {
   return dns
 }
 
-test('expectedRecords lists the five records with their names and values', () => {
+test('expectedRecords lists the six records with their names and values', () => {
   const records = expectedRecords(domain, domainConfig)
 
   expect(records.map(({ id, type, name, value, required }) => ({ id, type, name, value, required }))).toEqual([
@@ -43,6 +45,7 @@ test('expectedRecords lists the five records with their names and values', () =>
       required: true,
     },
     { id: 'mx', type: 'MX', name: 'example.com', value: 'mx.example.org', required: true },
+    { id: 'https', type: 'A', name: 'example.com', value: '192.0.2.10', required: true },
     { id: 'spf', type: 'TXT', name: 'example.com', value: 'v=spf1 include:_spf.example.org ~all', required: true },
     {
       id: 'dkim',
@@ -60,6 +63,7 @@ test('checkRecords passes every record published as instructed', async () => {
 
   for (const [id, check] of Object.entries(checks)) expect(check.status, id).toBe('ok')
   expect(checks.mx.found).toEqual(['10 mx.example.org'])
+  expect(checks.https.found).toEqual(['192.0.2.10'])
   expect(checks.spf.found).toEqual(['v=spf1 include:_spf.example.org ~all'])
 })
 
@@ -105,6 +109,19 @@ test('MX matches regardless of case and trailing dot', async () => {
 
   const checks = await checkRecords(domain, domainConfig, dns)
   expect(checks.mx.status).toBe('ok')
+})
+
+test('A is a mismatch while another address or an AAAA record remains', async () => {
+  const otherHost = new FakeDns()
+  otherHost.addressRecords.set('example.com', ['192.0.2.10', '198.51.100.7'])
+  expect((await checkRecords(domain, domainConfig, otherHost)).https).toEqual({
+    status: 'mismatch',
+    found: ['192.0.2.10', '198.51.100.7'],
+  })
+
+  const ipv6 = new FakeDns()
+  ipv6.addressRecords.set('example.com', ['192.0.2.10', '2001:db8::1'])
+  expect((await checkRecords(domain, domainConfig, ipv6)).https.status).toBe('mismatch')
 })
 
 test('SPF ignores unrelated TXT records and accepts other mechanisms', async () => {

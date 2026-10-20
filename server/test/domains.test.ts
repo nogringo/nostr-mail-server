@@ -41,8 +41,15 @@ test('PUT claims a domain and returns the records to publish', async () => {
   expect(domain.domain).toBe('example.com')
   expect(domain.verifiedAt).toBeNull()
   expect(domain.blossomServers).toEqual(domainConfig.blossomServers)
-  expect(domain.records.map((record: { id: string }) => record.id)).toEqual(['ownership', 'mx', 'spf', 'dkim', 'dmarc'])
-  expect(domain.records.map((record: { check: unknown }) => record.check)).toEqual([null, null, null, null, null])
+  expect(domain.records.map((record: { id: string }) => record.id)).toEqual([
+    'ownership',
+    'mx',
+    'https',
+    'spf',
+    'dkim',
+    'dmarc',
+  ])
+  expect(domain.records.map((record: { check: unknown }) => record.check)).toEqual([null, null, null, null, null, null])
   expect(ownershipValue(response.json())).toMatch(/^nostr-mail-verification=[0-9a-f]{32}$/)
 
   const stored = await repo.findDomain('example.com', alice.pubkey)

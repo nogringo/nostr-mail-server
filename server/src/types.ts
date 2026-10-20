@@ -5,6 +5,7 @@ export interface AppConfig {
   databaseUrl: string
   mxHost: string
   spfInclude: string
+  publicIpv4: string
   dkimSelector: string
   dnsServers: string[]
   indexerRelays: string[]
@@ -21,10 +22,10 @@ export interface TlsFiles {
 
 export type DomainConfig = Pick<
   AppConfig,
-  'mxHost' | 'spfInclude' | 'dkimSelector' | 'indexerRelays' | 'domainRelays' | 'blossomServers'
+  'mxHost' | 'spfInclude' | 'publicIpv4' | 'dkimSelector' | 'indexerRelays' | 'domainRelays' | 'blossomServers'
 >
 
-export type RecordId = 'ownership' | 'mx' | 'spf' | 'dkim' | 'dmarc'
+export type RecordId = 'ownership' | 'mx' | 'https' | 'spf' | 'dkim' | 'dmarc'
 
 export type CheckStatus = 'ok' | 'missing' | 'mismatch' | 'error'
 
@@ -37,7 +38,7 @@ export type DomainChecks = Record<RecordId, RecordCheck>
 
 export interface DnsRecord {
   id: RecordId
-  type: 'MX' | 'TXT'
+  type: 'MX' | 'TXT' | 'A'
   name: string
   value: string
   priority?: number
@@ -112,4 +113,6 @@ export interface DnsLookup {
   // Each TXT record has its character strings joined. A missing name or type yields [].
   txt(name: string): Promise<string[]>
   mx(name: string): Promise<MxRecord[]>
+  // The A and AAAA records.
+  addresses(name: string): Promise<string[]>
 }

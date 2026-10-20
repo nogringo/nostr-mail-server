@@ -4,10 +4,11 @@ import type { DnsLookup, DnsRecord, Domain, DomainChecks, DomainConfig, RecordCh
 export const OWNERSHIP_LABEL = '_nostr-mail'
 export const OWNERSHIP_PREFIX = 'nostr-mail-verification='
 
-type RecordsConfig = Pick<DomainConfig, 'mxHost' | 'spfInclude'>
+type RecordsConfig = Pick<DomainConfig, 'mxHost' | 'spfInclude' | 'publicIpv4'>
 
-// The records a domain needs: ownership proves the claim, MX receives mail,
-// SPF and DKIM let it send. DMARC is recommended rather than required.
+// The records a domain needs: ownership proves the claim, MX receives mail, A
+// brings its HTTPS (NIP-05) here, SPF and DKIM let it send. DMARC is
+// recommended rather than required.
 export function expectedRecords(domain: Domain, config: RecordsConfig): DnsRecord[] {
   const name = domain.domain
   return [
@@ -19,6 +20,7 @@ export function expectedRecords(domain: Domain, config: RecordsConfig): DnsRecor
       required: true,
     },
     { id: 'mx', type: 'MX', name, value: config.mxHost, priority: 10, required: true },
+    { id: 'https', type: 'A', name, value: config.publicIpv4, required: true },
     { id: 'spf', type: 'TXT', name, value: `v=spf1 include:${config.spfInclude} ~all`, required: true },
     {
       id: 'dkim',
@@ -34,7 +36,7 @@ export function expectedRecords(domain: Domain, config: RecordsConfig): DnsRecor
 export async function checkRecords(domain: Domain, config: RecordsConfig, dns: DnsLookup): Promise<DomainChecks> {
   const name = domain.domain
 
-  const [ownership, mx, spf, dkim, dmarc] = await Promise.all([
+  const [ownership, mx, https, spf, dkim, dmarc] = await Promise.all([
     settle(async () => {
       const found = await dns.txt(`${OWNERSHIP_LABEL}.${name}`)
       const expected = OWNERSHIP_PREFIX + domain.verificationToken
@@ -49,6 +51,14 @@ export async function checkRecords(domain: Domain, config: RecordsConfig, dns: D
       return verdict(
         found,
         records.every((record) => normalizeHostname(record.exchange) === config.mxHost),
+      )
+    }),
+    settle(async () => {
+      // HTTPS is served on IPv4 only: an AAAA record sends IPv6 clients elsewhere.
+      const found = await dns.addresses(name)
+      return verdict(
+        found,
+        found.every((address) => address === config.publicIpv4),
       )
     }),
     settle(async () => {
@@ -69,7 +79,7 @@ export async function checkRecords(domain: Domain, config: RecordsConfig, dns: D
     }),
   ])
 
-  return { ownership, mx, spf, dkim, dmarc }
+  return { ownership, mx, https, spf, dkim, dmarc }
 }
 
 async function settle(run: () => Promise<RecordCheck>): Promise<RecordCheck> {

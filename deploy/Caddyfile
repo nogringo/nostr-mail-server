@@ -1,6 +1,10 @@
 {
 	# A single issuer keeps the certificate where the SMTP server reads it.
 	cert_issuer acme
+
+	on_demand_tls {
+		ask http://server:3000/certificates/allowed
+	}
 }
 
 {$SITE_HOST} {
@@ -14,5 +18,20 @@
 	handle {
 		root * /srv
 		file_server
+	}
+}
+
+# The connected domains, whose A record points here, only serve their NIP-05.
+https:// {
+	tls {
+		on_demand
+	}
+
+	handle /.well-known/nostr.json {
+		reverse_proxy server:3000
+	}
+
+	handle {
+		respond 404
 	}
 }

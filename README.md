@@ -16,6 +16,7 @@ The project is built in small steps. What exists today:
 | Website: sign in with Nostr, connect a domain, check its records | done |
 | Deploy on one machine: HTTPS site and API, SMTP on port 25 | done |
 | Website: named addresses (`alice@domain` to any npub) | done |
+| NIP-05 over HTTPS on the connected domains (A record, certificate on demand) | done |
 
 ## Layout
 
@@ -36,8 +37,8 @@ Each connected domain gets its own Nostr key, published as `_smtp@<domain>`.
   the domain's DKIM key.
 
 Clients find both the addresses and the `_smtp` key through NIP-05 on the
-address domain, which is why a connected domain has to serve
-`/.well-known/nostr.json` from this server.
+address domain, so a connected domain points its A record at this server,
+which serves its `/.well-known/nostr.json` over HTTPS.
 
 ## License
 

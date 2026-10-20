@@ -5,6 +5,7 @@ const required = {
   DATABASE_URL: 'postgres://localhost/nostrmail',
   MX_HOST: 'MX.Example.org.',
   SPF_INCLUDE: '_spf.example.org',
+  PUBLIC_IPV4: ' 192.0.2.10 ',
 }
 
 test('loadConfig applies the defaults', () => {
@@ -15,6 +16,7 @@ test('loadConfig applies the defaults', () => {
     databaseUrl: 'postgres://localhost/nostrmail',
     mxHost: 'mx.example.org',
     spfInclude: '_spf.example.org',
+    publicIpv4: '192.0.2.10',
     dkimSelector: 'nostrmail',
     dnsServers: [],
     indexerRelays: ['wss://purplepag.es', 'wss://user.kindpag.es', 'wss://indexer.coracle.social'],
@@ -66,4 +68,5 @@ test('loadConfig rejects invalid values', () => {
   expect(() => loadConfig({ ...required, SPF_INCLUDE: 'include:_spf.example.org' })).toThrow(/SPF_INCLUDE/)
   expect(() => loadConfig({ ...required, DKIM_SELECTOR: 'a.b' })).toThrow(/DKIM_SELECTOR/)
   expect(() => loadConfig({ ...required, DNS_SERVERS: 'dns.google' })).toThrow(/DNS_SERVERS/)
+  expect(() => loadConfig({ ...required, PUBLIC_IPV4: '2001:db8::1' })).toThrow(/PUBLIC_IPV4/)
 })

@@ -27,6 +27,7 @@ export const API_HOST = 'app.example.org'
 export const domainConfig: DomainConfig = {
   mxHost: 'mx.example.org',
   spfInclude: '_spf.example.org',
+  publicIpv4: '192.0.2.10',
   dkimSelector: 'nostrmail',
   indexerRelays: ['wss://indexer.example.org/'],
   domainRelays: ['wss://relay.example.org/'],
@@ -139,6 +140,7 @@ export class MemoryDomainRepository implements DomainRepository {
 const OWNERSHIP_ONLY: DomainChecks = {
   ownership: { status: 'ok', found: [] },
   mx: { status: 'missing', found: [] },
+  https: { status: 'missing', found: [] },
   spf: { status: 'missing', found: [] },
   dkim: { status: 'missing', found: [] },
   dmarc: { status: 'missing', found: [] },
@@ -170,6 +172,7 @@ export async function verifyDomain(repo: DomainRepository, domain: string, pubke
 export class FakeDns implements DnsLookup {
   readonly txtRecords = new Map<string, string[]>()
   readonly mxRecords = new Map<string, MxRecord[]>()
+  readonly addressRecords = new Map<string, string[]>()
   readonly failing = new Set<string>()
 
   async txt(name: string): Promise<string[]> {
@@ -180,6 +183,11 @@ export class FakeDns implements DnsLookup {
   async mx(name: string): Promise<MxRecord[]> {
     this.assertResolvable(name)
     return this.mxRecords.get(name) ?? []
+  }
+
+  async addresses(name: string): Promise<string[]> {
+    this.assertResolvable(name)
+    return this.addressRecords.get(name) ?? []
   }
 
   private assertResolvable(name: string): void {

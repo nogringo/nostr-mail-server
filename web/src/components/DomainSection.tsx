@@ -5,8 +5,9 @@ import { timeAgo } from '../lib/format'
 import Addresses from './Addresses'
 import { Button, CopyButton, ErrorText } from './ui'
 
-// The records that let the domain receive. Sending will add SPF, DKIM and DMARC.
-const RECEIVE: RecordId[] = ['ownership', 'mx']
+// The records that let the domain receive and serve its addresses. Sending will
+// add SPF, DKIM and DMARC.
+const RECEIVE: RecordId[] = ['ownership', 'mx', 'https']
 
 const TONES = { ok: 'text-ok', wait: 'text-wait', bad: 'text-bad', none: 'text-muted' }
 
@@ -53,7 +54,7 @@ export default function DomainSection({ domain, ownPubkey, api, onChange, onRemo
     <div id={`dns-${domain.domain}`} className="mt-8">
       <RecordGroup
         title="DNS records"
-        note="The MX record sends all mail for the domain here. Some DNS providers want only the part of the name before your domain, like _nostr-mail."
+        note="The MX record sends all mail for the domain here, the A record lets apps find its addresses. Some DNS providers want only the part of the name before your domain, like _nostr-mail, and nothing for the domain itself."
         records={pick(domain, RECEIVE)}
       />
       <div className="mt-4 flex flex-wrap items-center gap-4">
@@ -163,10 +164,11 @@ function pick(domain: Domain, ids: RecordId[]): DnsRecord[] {
 type Tone = keyof typeof TONES
 
 function domainStatus(domain: Domain): { tone: Tone; text: string } {
-  const mx = domain.records.find((record) => record.id === 'mx')?.check?.status
+  const found = (id: RecordId) => domain.records.find((record) => record.id === id)?.check?.status === 'ok'
   if (!domain.checkedAt) return { tone: 'wait', text: 'Publish the records below, then check DNS' }
   if (!domain.verifiedAt) return { tone: 'wait', text: 'Waiting for the ownership record' }
-  if (mx !== 'ok') return { tone: 'wait', text: 'Verified, waiting for the MX record' }
+  if (!found('mx')) return { tone: 'wait', text: 'Verified, waiting for the MX record' }
+  if (!found('https')) return { tone: 'wait', text: 'Receiving mail, waiting for the A record' }
   return { tone: 'ok', text: 'Receiving mail' }
 }
 
