@@ -28,6 +28,7 @@ import type {
   NewOutboundMessage,
   OutboundMessage,
   RecipientOutcome,
+  Suspension,
   TlsFiles,
 } from '../src/types.js'
 
@@ -64,6 +65,7 @@ export class MemoryDomainRepository implements DomainRepository {
   readonly domains = new Map<string, Domain>()
   readonly addresses = new Map<string, Address>()
   readonly outbound = new Map<string, StoredOutboundMessage>()
+  readonly suspensions = new Map<string, Suspension>()
   fail = false
 
   async findDomain(domain: string, pubkey: string): Promise<Domain | null> {
@@ -73,20 +75,19 @@ export class MemoryDomainRepository implements DomainRepository {
 
   async findVerifiedDomain(domain: string): Promise<Domain | null> {
     this.assertAvailable()
-    return [...this.domains.values()].find((claim) => claim.domain === domain && claim.verifiedAt !== null) ?? null
+    return [...this.domains.values()].find((claim) => claim.domain === domain && this.inService(claim)) ?? null
   }
 
   async findVerifiedDomainByBridgePubkey(bridgePubkey: string): Promise<Domain | null> {
     this.assertAvailable()
     return (
-      [...this.domains.values()].find((claim) => claim.bridgePubkey === bridgePubkey && claim.verifiedAt !== null) ??
-      null
+      [...this.domains.values()].find((claim) => claim.bridgePubkey === bridgePubkey && this.inService(claim)) ?? null
     )
   }
 
   async listVerifiedDomains(): Promise<Domain[]> {
     this.assertAvailable()
-    return [...this.domains.values()].filter((claim) => claim.verifiedAt !== null)
+    return [...this.domains.values()].filter((claim) => this.inService(claim))
   }
 
   async listDomains(pubkey: string): Promise<Domain[]> {
@@ -149,6 +150,28 @@ export class MemoryDomainRepository implements DomainRepository {
   async deleteDomain(domain: string, pubkey: string): Promise<boolean> {
     this.assertAvailable()
     return this.dropClaim(domain, pubkey)
+  }
+
+  async listSuspensions(): Promise<Suspension[]> {
+    this.assertAvailable()
+    return [...this.suspensions.values()].sort((left, right) => left.domain.localeCompare(right.domain))
+  }
+
+  async findSuspension(domain: string): Promise<Suspension | null> {
+    this.assertAvailable()
+    return this.suspensions.get(domain) ?? null
+  }
+
+  async suspendDomain(domain: string): Promise<Suspension> {
+    this.assertAvailable()
+    const suspension = this.suspensions.get(domain) ?? { domain, suspendedAt: new Date().toISOString() }
+    this.suspensions.set(domain, suspension)
+    return suspension
+  }
+
+  async unsuspendDomain(domain: string): Promise<boolean> {
+    this.assertAvailable()
+    return this.suspensions.delete(domain)
   }
 
   async listAddresses(domain: string): Promise<Address[]> {
@@ -261,6 +284,10 @@ export class MemoryDomainRepository implements DomainRepository {
       if (message.bridgePubkey === claim?.bridgePubkey) this.outbound.delete(wrapId)
     }
     return this.domains.delete(key(domain, pubkey))
+  }
+
+  private inService(claim: Domain): boolean {
+    return claim.verifiedAt !== null && !this.suspensions.has(claim.domain)
   }
 
   private assertAvailable(): void {

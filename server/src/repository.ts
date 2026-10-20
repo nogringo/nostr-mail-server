@@ -11,6 +11,7 @@ import type {
   NewOutboundMessage,
   OutboundMessage,
   RecipientOutcome,
+  Suspension,
 } from './types.js'
 
 const DOMAIN_COLUMNS = `
@@ -19,6 +20,8 @@ const DOMAIN_COLUMNS = `
 `
 
 const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, created_at'
+
+const IN_SERVICE = 'verified_at is not null and domain not in (select domain from suspended_domains)'
 
 interface DomainRow {
   domain: string
@@ -42,6 +45,11 @@ interface AddressRow {
   pubkey: string
   owner_pubkey: string
   created_at: Date
+}
+
+interface SuspensionRow {
+  domain: string
+  suspended_at: Date
 }
 
 interface OutboundMessageRow {
@@ -69,7 +77,7 @@ export class PgDomainRepository implements DomainRepository {
 
   async findVerifiedDomain(domain: string): Promise<Domain | null> {
     const result = await this.pool.query<DomainRow>(
-      `select ${DOMAIN_COLUMNS} from domains where domain = $1 and verified_at is not null`,
+      `select ${DOMAIN_COLUMNS} from domains where domain = $1 and ${IN_SERVICE}`,
       [domain],
     )
     return result.rows[0] ? toDomain(result.rows[0]) : null
@@ -77,7 +85,7 @@ export class PgDomainRepository implements DomainRepository {
 
   async findVerifiedDomainByBridgePubkey(bridgePubkey: string): Promise<Domain | null> {
     const result = await this.pool.query<DomainRow>(
-      `select ${DOMAIN_COLUMNS} from domains where bridge_pubkey = $1 and verified_at is not null`,
+      `select ${DOMAIN_COLUMNS} from domains where bridge_pubkey = $1 and ${IN_SERVICE}`,
       [bridgePubkey],
     )
     return result.rows[0] ? toDomain(result.rows[0]) : null
@@ -85,7 +93,7 @@ export class PgDomainRepository implements DomainRepository {
 
   async listVerifiedDomains(): Promise<Domain[]> {
     const result = await this.pool.query<DomainRow>(
-      `select ${DOMAIN_COLUMNS} from domains where verified_at is not null order by domain asc`,
+      `select ${DOMAIN_COLUMNS} from domains where ${IN_SERVICE} order by domain asc`,
     )
     return result.rows.map(toDomain)
   }
@@ -163,6 +171,35 @@ export class PgDomainRepository implements DomainRepository {
 
   async deleteDomain(domain: string, pubkey: string): Promise<boolean> {
     const result = await this.pool.query('delete from domains where domain = $1 and pubkey = $2', [domain, pubkey])
+    return (result.rowCount ?? 0) > 0
+  }
+
+  async listSuspensions(): Promise<Suspension[]> {
+    const result = await this.pool.query<SuspensionRow>(
+      'select domain, suspended_at from suspended_domains order by domain asc',
+    )
+    return result.rows.map(toSuspension)
+  }
+
+  async findSuspension(domain: string): Promise<Suspension | null> {
+    const result = await this.pool.query<SuspensionRow>(
+      'select domain, suspended_at from suspended_domains where domain = $1',
+      [domain],
+    )
+    return result.rows[0] ? toSuspension(result.rows[0]) : null
+  }
+
+  async suspendDomain(domain: string): Promise<Suspension> {
+    await this.pool.query('insert into suspended_domains (domain) values ($1) on conflict (domain) do nothing', [
+      domain,
+    ])
+    const suspension = await this.findSuspension(domain)
+    if (!suspension) throw new Error(`The suspension of ${domain} disappeared while being created`)
+    return suspension
+  }
+
+  async unsuspendDomain(domain: string): Promise<boolean> {
+    const result = await this.pool.query('delete from suspended_domains where domain = $1', [domain])
     return (result.rowCount ?? 0) > 0
   }
 
@@ -331,6 +368,10 @@ function toDomain(row: DomainRow): Domain {
     verifiedAt: row.verified_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
   }
+}
+
+function toSuspension(row: SuspensionRow): Suspension {
+  return { domain: row.domain, suspendedAt: row.suspended_at.toISOString() }
 }
 
 function toAddress(row: AddressRow): Address {

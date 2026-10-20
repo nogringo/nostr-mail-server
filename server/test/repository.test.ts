@@ -71,6 +71,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '003_add_bridge_keys.sql',
       '004_add_blossom_servers.sql',
       '005_create_outbound.sql',
+      '006_create_suspended_domains.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -200,6 +201,24 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect((await repo.listVerifiedDomains()).map((domain) => domain.domain)).toEqual(['example.com'])
     expect(await repo.findVerifiedDomainByBridgePubkey(owner?.bridgePubkey ?? '')).toEqual(owner)
     expect(await repo.findVerifiedDomainByBridgePubkey(pending.bridgePubkey)).toBeNull()
+  })
+
+  test('a suspended domain is left out of the verified lookups until lifted', async () => {
+    const owner = await repo.findVerifiedDomain('example.com')
+
+    const suspension = await repo.suspendDomain('example.com')
+    expect(await repo.suspendDomain('example.com')).toEqual(suspension)
+    expect(suspension).toEqual({ domain: 'example.com', suspendedAt: expect.any(String) })
+    expect(await repo.listSuspensions()).toEqual([suspension])
+    expect(await repo.findVerifiedDomain('example.com')).toBeNull()
+    expect(await repo.findVerifiedDomainByBridgePubkey(owner?.bridgePubkey ?? '')).toBeNull()
+    expect(await repo.listVerifiedDomains()).toEqual([])
+    expect(await repo.findDomain('example.com', BOB)).toEqual(owner)
+
+    expect(await repo.unsuspendDomain('example.com')).toBe(true)
+    expect(await repo.unsuspendDomain('example.com')).toBe(false)
+    expect(await repo.findSuspension('example.com')).toBeNull()
+    expect(await repo.findVerifiedDomain('example.com')).toEqual(owner)
   })
 
   test('queues a wrap once and lists its recipients while they are due', async () => {

@@ -23,6 +23,8 @@ export interface DnsRecord {
 export interface Domain {
   domain: string
   verifiedAt: string | null
+  // Set while the admin of the server keeps the domain out of service.
+  suspendedAt: string | null
   checkedAt: string | null
   blossomServers: string[]
   createdAt: string
@@ -45,6 +47,16 @@ export interface AdminDomain {
   createdAt: string
   addressCount: number
   checks: Record<RecordId, RecordCheck> | null
+}
+
+export interface Suspension {
+  domain: string
+  suspendedAt: string
+}
+
+export interface AdminOverview {
+  domains: AdminDomain[]
+  suspensions: Suspension[]
 }
 
 export class ApiError extends Error {
@@ -105,6 +117,11 @@ export function createApi(
     removeAddress: async (name: string, localPart: string): Promise<void> => {
       await call('DELETE', addressPath(name, localPart))
     },
-    listAllDomains: async (): Promise<AdminDomain[]> => (await call('GET', '/admin/domains')).domains,
+    adminOverview: (): Promise<AdminOverview> => call('GET', '/admin/domains'),
+    suspendDomain: async (name: string): Promise<Suspension> =>
+      (await call('PUT', `/admin${domainPath(name)}/suspension`)).suspension,
+    liftSuspension: async (name: string): Promise<void> => {
+      await call('DELETE', `/admin${domainPath(name)}/suspension`)
+    },
   }
 }

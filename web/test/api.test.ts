@@ -72,11 +72,27 @@ test('sends a body as JSON and signs its hash', async () => {
   expect(event.tags).toContainEqual(['payload', hashPayload({ pubkey: 'npub1alice' })])
 })
 
-test('lists every domain of the server for an admin', async () => {
-  const { api, requests } = recordingApi(() => Response.json({ domains: [] }))
+test('loads the overview of the server for an admin', async () => {
+  const overview = { domains: [], suspensions: [] }
+  const { api, requests } = recordingApi(() => Response.json(overview))
 
-  expect(await api.listAllDomains()).toEqual([])
+  expect(await api.adminOverview()).toEqual(overview)
 
   expect(requests[0].url).toBe(`${ORIGIN}/admin/domains`)
   expect(requests[0].init.method).toBe('GET')
+})
+
+test('suspends a domain and lifts its suspension', async () => {
+  const suspension = { domain: 'example.com', suspendedAt: '' }
+  const { api, requests } = recordingApi(() =>
+    requests.length === 1 ? Response.json({ suspension }, { status: 201 }) : new Response(null, { status: 204 }),
+  )
+
+  expect(await api.suspendDomain('example.com')).toEqual(suspension)
+  await api.liftSuspension('example.com')
+
+  expect(requests.map(({ url, init }) => [init.method, url])).toEqual([
+    ['PUT', `${ORIGIN}/admin/domains/example.com/suspension`],
+    ['DELETE', `${ORIGIN}/admin/domains/example.com/suspension`],
+  ])
 })

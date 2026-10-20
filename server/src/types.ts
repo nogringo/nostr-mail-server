@@ -74,6 +74,11 @@ export type DomainSummary = Domain & {
   addressCount: number
 }
 
+export interface Suspension {
+  domain: string
+  suspendedAt: string
+}
+
 export type NewDomain = Pick<
   Domain,
   | 'domain'
@@ -119,6 +124,7 @@ export type RecipientOutcome =
 
 export interface DomainRepository {
   findDomain(domain: string, pubkey: string): Promise<Domain | null>
+  // The verified lookups leave the suspended domains out: nothing is served for them.
   findVerifiedDomain(domain: string): Promise<Domain | null>
   findVerifiedDomainByBridgePubkey(bridgePubkey: string): Promise<Domain | null>
   listVerifiedDomains(): Promise<Domain[]>
@@ -131,6 +137,11 @@ export interface DomainRepository {
   recordChecks(domain: string, pubkey: string, checks: DomainChecks, verified: boolean): Promise<Domain | null>
   // Also drops the addresses the claim declared.
   deleteDomain(domain: string, pubkey: string): Promise<boolean>
+  listSuspensions(): Promise<Suspension[]>
+  findSuspension(domain: string): Promise<Suspension | null>
+  // Returns the existing suspension when the domain is already suspended.
+  suspendDomain(domain: string): Promise<Suspension>
+  unsuspendDomain(domain: string): Promise<boolean>
   listAddresses(domain: string): Promise<Address[]>
   findAddress(domain: string, localPart: string): Promise<Address | null>
   // Creates the address, or points an existing one at the new pubkey.

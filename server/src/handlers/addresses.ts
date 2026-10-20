@@ -79,6 +79,10 @@ async function findOwnedDomain(
     reply.code(409).send({ error: 'domain_not_verified' })
     return null
   }
+  if (await repo.findSuspension(domain.domain)) {
+    reply.code(403).send({ error: 'domain_suspended' })
+    return null
+  }
 
   return domain
 }

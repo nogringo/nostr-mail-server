@@ -27,7 +27,8 @@ export default function DomainSection({ domain, ownPubkey, api, onChange, onRemo
   const [checkError, setCheckError] = useState<string | null>(null)
   const [removeError, setRemoveError] = useState<string | null>(null)
   const status = domainStatus(domain)
-  const needsDns = status.tone !== 'ok'
+  const suspended = domain.suspendedAt !== null
+  const needsDns = !suspended && status.tone !== 'ok'
 
   async function run(action: 'check' | 'remove', setError: (error: string | null) => void, task: () => Promise<void>) {
     setBusy(action)
@@ -80,12 +81,18 @@ export default function DomainSection({ domain, ownPubkey, api, onChange, onRemo
         {domain.checkedAt && <span className="text-muted">, checked {timeAgo(domain.checkedAt)}</span>}
       </p>
 
+      {suspended && (
+        <p className="mt-6 max-w-xl text-sm">
+          The domain no longer receives nor sends mail, and its addresses no longer resolve. Ask the admin of this
+          server why.
+        </p>
+      )}
       {needsDns && dns}
-      {domain.verifiedAt && <Addresses domain={domain.domain} api={api} ownPubkey={ownPubkey} />}
-      {!needsDns && dnsShown && dns}
+      {domain.verifiedAt && !suspended && <Addresses domain={domain.domain} api={api} ownPubkey={ownPubkey} />}
+      {!needsDns && !suspended && dnsShown && dns}
 
       <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-        {!needsDns && (
+        {!needsDns && !suspended && (
           <Button
             variant="quiet"
             aria-expanded={dnsShown}
@@ -169,6 +176,7 @@ type Tone = keyof typeof TONES
 
 function domainStatus(domain: Domain): { tone: Tone; text: string } {
   const found = (id: RecordId) => domain.records.find((record) => record.id === id)?.check?.status === 'ok'
+  if (domain.suspendedAt) return { tone: 'bad', text: 'Suspended by the admin of this server' }
   if (!domain.checkedAt) return { tone: 'wait', text: 'Publish the records below, then check DNS' }
   if (!domain.verifiedAt) return { tone: 'wait', text: 'Waiting for the ownership record' }
   if (!found('mx')) return { tone: 'wait', text: 'Verified, waiting for the MX record' }

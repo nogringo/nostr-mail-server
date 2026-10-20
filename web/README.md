@@ -6,8 +6,9 @@ and check them. Once the domain is verified, the page lists its addresses:
 pointing at an npub or a hex public key.
 
 `/admin` lists every domain connected to the server, verified or not, with
-its owner, its named addresses and the records of its last check. Only the
-keys of the server's `ADMIN_PUBKEYS` can open it.
+its owner, its named addresses and the records of its last check, and
+suspends a domain or lifts its suspension. Only the keys of the server's
+`ADMIN_PUBKEYS` can open it.
 
 Sign-in uses a NIP-07 extension or a NIP-46 bunker (`bunker://` link or
 `name@domain`). Every API call is signed with

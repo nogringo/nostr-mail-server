@@ -90,6 +90,17 @@ test('a domain that is not verified resolves nothing', async () => {
   await app.close()
 })
 
+test('a suspended domain resolves nothing', async () => {
+  const { repo, app } = await setup()
+  await repo.suspendDomain('example.com')
+
+  for (const name of ['_smtp', npubEncode(PUBKEY), 'alice']) {
+    expect((await lookup(app, 'example.com', `?name=${name}`)).json(), name).toEqual({ names: {} })
+  }
+
+  await app.close()
+})
+
 test('the name is required', async () => {
   const { app } = await setup()
 

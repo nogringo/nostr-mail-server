@@ -90,6 +90,25 @@ test('each verified domain key gets its own subscription, closed once the domain
   expect(network.open()).toEqual([])
 })
 
+test('a suspended domain stops listening and its queued mail fails', async () => {
+  const { repo, network, transport, outbox, alice, domain, receive } = await setup()
+  transport.answers.set('bob@remote.example', { status: 'deferred', response: '451 4.7.1 Greylisted' })
+  const wrap = outboundWrap(alice, domain.bridgePubkey)
+  await outbox.syncSubscriptions()
+  await receive(wrap)
+
+  await repo.suspendDomain('example.com')
+  await outbox.syncSubscriptions()
+  const bob = repo.outbound.get(wrap.id)?.recipients.get('bob@remote.example')
+  if (bob) bob.nextAttemptAt = new Date(Date.now() - 1000)
+  await outbox.deliverDue()
+
+  expect(network.open()).toEqual([])
+  expect(transport.sent).toHaveLength(1)
+  expect(bob).toMatchObject({ status: 'failed', attempts: 2 })
+  await outbox.stop()
+})
+
 test('a wrap from an address of the sender goes out DKIM signed, one transaction per recipient domain', async () => {
   const { repo, transport, alice, domain, receive } = await setup()
   const mailFrom = `${npubEncode(alice.pubkey)}@example.com`

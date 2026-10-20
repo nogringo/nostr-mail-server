@@ -6,7 +6,7 @@ import { publishDomainLists } from '../lists.js'
 import { generateKeyPair } from '../nostr.js'
 import { checkRecords, expectedRecords } from '../records.js'
 import type { RelayNetwork } from '../relays.js'
-import type { DnsLookup, Domain, DomainConfig, DomainRepository } from '../types.js'
+import type { DnsLookup, Domain, DomainConfig, DomainRepository, Suspension } from '../types.js'
 import { authenticate } from './auth.js'
 
 interface DomainParams {
@@ -27,8 +27,11 @@ export function registerDomainRoutes(
     const pubkey = authenticate(request, reply)
     if (pubkey === null) return reply
 
-    const domains = await repo.listDomains(pubkey)
-    return reply.send({ domains: domains.map((domain) => present(domain, config)) })
+    const [domains, suspensions] = await Promise.all([repo.listDomains(pubkey), repo.listSuspensions()])
+    const suspended = new Map(suspensions.map((suspension) => [suspension.domain, suspension]))
+    return reply.send({
+      domains: domains.map((domain) => present(domain, config, suspended.get(domain.domain) ?? null)),
+    })
   })
 
   app.put('/domains/:domain', async (request: DomainRequest, reply) => {
@@ -39,7 +42,9 @@ export function registerDomainRoutes(
     if (!name) return reply.code(400).send({ error: 'invalid_domain' })
 
     const existing = await repo.findDomain(name, pubkey)
-    if (existing) return reply.send({ domain: present(existing, config) })
+    const suspension = await repo.findSuspension(name)
+    if (existing) return reply.send({ domain: present(existing, config, suspension) })
+    if (suspension) return reply.code(403).send({ error: 'domain_suspended' })
 
     const dkim = await generateDkimKeyPair()
     const bridge = generateKeyPair()
@@ -54,7 +59,7 @@ export function registerDomainRoutes(
       bridgePrivateKey: bridge.privateKey,
       blossomServers: config.blossomServers,
     })
-    return reply.code(201).send({ domain: present(created, config) })
+    return reply.code(201).send({ domain: present(created, config, null) })
   })
 
   app.get('/domains/:domain', async (request: DomainRequest, reply) => {
@@ -64,7 +69,7 @@ export function registerDomainRoutes(
     const domain = await findOwnDomain(repo, request, pubkey)
     if (!domain) return reply.code(404).send({ error: 'domain_not_found' })
 
-    return reply.send({ domain: present(domain, config) })
+    return reply.send({ domain: present(domain, config, await repo.findSuspension(domain.domain)) })
   })
 
   app.post('/domains/:domain/check', async (request: DomainRequest, reply) => {
@@ -73,6 +78,7 @@ export function registerDomainRoutes(
 
     const domain = await findOwnDomain(repo, request, pubkey)
     if (!domain) return reply.code(404).send({ error: 'domain_not_found' })
+    if (await repo.findSuspension(domain.domain)) return reply.code(403).send({ error: 'domain_suspended' })
 
     const checks = await checkRecords(domain, config, dns)
     const updated = await repo.recordChecks(domain.domain, pubkey, checks, checks.ownership.status === 'ok')
@@ -84,7 +90,7 @@ export function registerDomainRoutes(
       request.log.warn({ domain: updated.domain }, 'The lists of the domain key were not all published')
     }
 
-    return reply.send({ domain: present(updated, config) })
+    return reply.send({ domain: present(updated, config, null) })
   })
 
   app.delete('/domains/:domain', async (request: DomainRequest, reply) => {
@@ -104,10 +110,11 @@ async function findOwnDomain(repo: DomainRepository, request: DomainRequest, pub
 }
 
 // The private keys never leave the server.
-function present(domain: Domain, config: DomainConfig) {
+function present(domain: Domain, config: DomainConfig, suspension: Suspension | null) {
   return {
     domain: domain.domain,
     verifiedAt: domain.verifiedAt,
+    suspendedAt: suspension?.suspendedAt ?? null,
     checkedAt: domain.checkedAt,
     blossomServers: domain.blossomServers,
     createdAt: domain.createdAt,

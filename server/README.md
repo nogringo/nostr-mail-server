@@ -15,9 +15,9 @@ the host and path of the request. The signing pubkey owns the claims it makes.
 | Method | Path | Action |
 |--------|------|--------|
 | `GET` | `/domains` | List the caller's claims |
-| `PUT` | `/domains/{domain}` | Claim a domain: `201` when created, `200` when the caller already claimed it, `400 invalid_domain` |
+| `PUT` | `/domains/{domain}` | Claim a domain: `201` when created, `200` when the caller already claimed it, `400 invalid_domain`, `403 domain_suspended` for a new claim on a suspended domain |
 | `GET` | `/domains/{domain}` | One claim, `404 domain_not_found` if the caller has none |
-| `POST` | `/domains/{domain}/check` | Look the records up now and store the result |
+| `POST` | `/domains/{domain}/check` | Look the records up now and store the result, `403 domain_suspended` on a suspended domain |
 | `DELETE` | `/domains/{domain}` | Release the claim: `204`, or `404 domain_not_found` |
 
 A domain is returned as:
@@ -26,6 +26,7 @@ A domain is returned as:
 {
   "domain": "example.com",
   "verifiedAt": null,
+  "suspendedAt": null,
   "checkedAt": "2026-10-20T12:00:00.000Z",
   "blossomServers": ["https://blossom.nmail.li"],
   "createdAt": "2026-10-20T11:58:00.000Z",
@@ -96,7 +97,8 @@ part at a pubkey. Same NIP-98 authentication as the domain routes.
 | `DELETE` | `/domains/{domain}/addresses/{localPart}` | `204`, or `404 address_not_found` |
 
 Every route answers `404 domain_not_found` when the caller has no claim on the
-domain and `409 domain_not_verified` while its claim is not verified. `PUT`
+domain, `409 domain_not_verified` while its claim is not verified and
+`403 domain_suspended` while the domain is [suspended](#suspension). `PUT`
 also answers `400` with `invalid_local_part`, `reserved_local_part` or
 `invalid_pubkey`.
 
@@ -129,7 +131,9 @@ same NIP-98 authentication. Any other key gets `403 not_admin`.
 
 | Method | Path | Action |
 |--------|------|--------|
-| `GET` | `/admin/domains` | Every claim of every key, verified or not, sorted by domain then by age |
+| `GET` | `/admin/domains` | `{"domains": [...], "suspensions": [...]}`: every claim of every key, verified or not, sorted by domain then by age, and every suspended domain |
+| `PUT` | `/admin/domains/{domain}/suspension` | Suspend the domain, claimed or not: `201` when suspended, `200` when it already was, `400 invalid_domain` |
+| `DELETE` | `/admin/domains/{domain}/suspension` | Lift the suspension: `204`, or `404 suspension_not_found` |
 
 A claim is returned as:
 
@@ -149,7 +153,24 @@ A claim is returned as:
 ```
 
 `checks` holds the six records of the last check, `null` before the first one.
-`addressCount` counts the named addresses the claim declared.
+`addressCount` counts the named addresses the claim declared. A suspension is
+returned as `{"domain": "example.com", "suspendedAt": "<date>"}`.
+
+### Suspension
+
+A suspension takes the domain name out of service, whichever key claims it:
+
+- `RCPT TO` on the domain is refused with `550 5.1.1`.
+- NIP-05 resolves no name on it and Caddy gets it no new certificate.
+- Its key stops listening for wraps within 30 seconds, and the mail it still
+  had queued fails at its next attempt.
+- No new claim is made on it, and its owner can no longer check it or manage
+  its addresses. The owner still sees it, marked as suspended, and can release
+  it; the suspension stays.
+
+Lifting the suspension puts back the verified claim with its addresses as they
+were. Its key listens again from two days back, so wraps sent meanwhile are
+sent then.
 
 ## NIP-05
 
@@ -170,14 +191,14 @@ On a verified domain, `name` resolves to:
 { "names": { "alice": "<hex>" } }
 ```
 
-An unknown name, or any name on a domain that is not verified, returns
+An unknown name, or any name on a domain that is not verified or is suspended, returns
 `{"names": {}}`. A missing `name` is `400 name_required`. There is no `relays`
 field: Nostr Mail finds relays through kind 10050.
 
 The domain's `https` record points it at `PUBLIC_IPV4`, where the reverse proxy
 gets its certificate on demand. Before that, it asks
 `GET /certificates/allowed?domain=<domain>`, which answers `200` for a verified
-domain and `404` otherwise, so pointing any name at the server does not make it
+domain that is not suspended and `404` otherwise, so pointing any name at the server does not make it
 request certificates. The proxy should not expose this route.
 
 ## Receiving mail
@@ -189,7 +210,7 @@ answered with a temporary error so the sending server retries.
 
 | Step | Answer |
 |------|--------|
-| `RCPT TO` on a domain that is not verified, or a local part that is neither a declared address nor an npub | `550 5.1.1` |
+| `RCPT TO` on a domain that is not verified or is suspended, or a local part that is neither a declared address nor an npub | `550 5.1.1` |
 | `RCPT TO` whose pubkey publishes no DM relay list (kind 10050) | `450 4.2.0` |
 | More than 50 recipients | `452 4.5.3` |
 | Message above `MAX_MESSAGE_BYTES` | `552 5.3.4` |

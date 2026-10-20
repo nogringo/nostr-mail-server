@@ -104,6 +104,20 @@ test('only the verified owner manages addresses', async () => {
   await app.close()
 })
 
+test('the addresses of a suspended domain cannot be managed', async () => {
+  const { repo, app, owner } = await setup()
+  await repo.suspendDomain('example.com')
+
+  const listed = await request(app, owner, 'GET', '/domains/example.com/addresses')
+  const added = await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkey: owner.pubkey })
+
+  expect([listed.statusCode, added.statusCode]).toEqual([403, 403])
+  expect(added.json()).toEqual({ error: 'domain_suspended' })
+  expect(await repo.findAddress('example.com', 'bob')).toBeNull()
+
+  await app.close()
+})
+
 test.each([
   { localPart: 'a..b', error: 'invalid_local_part' },
   { localPart: 'alice+tag', error: 'invalid_local_part' },

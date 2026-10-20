@@ -269,6 +269,29 @@ test('check of an unknown claim returns 404', async () => {
   await app.close()
 })
 
+test('a suspended domain shows to its owner, cannot be checked nor claimed by another key', async () => {
+  const { repo, app } = setup()
+  const alice = signer()
+  await request(app, alice, 'PUT', '/domains/example.com')
+  const suspension = await repo.suspendDomain('example.com')
+
+  const listed = await request(app, alice, 'GET', '/domains')
+  const again = await request(app, alice, 'PUT', '/domains/example.com')
+  const check = await request(app, alice, 'POST', '/domains/example.com/check')
+  const other = await request(app, signer(), 'PUT', '/domains/example.com')
+
+  expect(listed.json().domains[0].suspendedAt).toBe(suspension.suspendedAt)
+  expect(again.statusCode).toBe(200)
+  expect(again.json().domain.suspendedAt).toBe(suspension.suspendedAt)
+  expect(check.statusCode).toBe(403)
+  expect(check.json()).toEqual({ error: 'domain_suspended' })
+  expect(other.statusCode).toBe(403)
+  expect(other.json()).toEqual({ error: 'domain_suspended' })
+  expect(await repo.findDomain('example.com', alice.pubkey)).toMatchObject({ checkedAt: null })
+
+  await app.close()
+})
+
 test('DELETE releases the claim', async () => {
   const { app } = setup()
   const alice = signer()

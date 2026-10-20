@@ -131,6 +131,14 @@ test('the known recipients still get the message when others are refused', async
   expect(network.published).toHaveLength(1)
 })
 
+test('a suspended domain refuses its recipients with 550', async () => {
+  const { repo, network, send } = await setup()
+  await repo.suspendDomain('example.com')
+
+  await expect(send(['bob@example.com'])).rejects.toMatchObject({ code: 'EENVELOPE', responseCode: 550 })
+  expect(network.published).toEqual([])
+})
+
 test('a recipient without DM relays is deferred with 450', async () => {
   const { network, bob, send } = await setup()
   network.dmRelays.delete(bob.pubkey)
