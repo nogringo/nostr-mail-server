@@ -9,6 +9,7 @@ import { generateKeyPair } from './nostr.js'
 import { Outbox } from './outbox.js'
 import { NostrRelayNetwork } from './relays.js'
 import { PgDomainRepository } from './repository.js'
+import { SettingsStore } from './settings.js'
 import { createSmtpServer } from './smtp.js'
 import { readTls, reloadTls } from './tls.js'
 
@@ -16,10 +17,11 @@ const config = loadConfig()
 const migrations = await migrate(config.databaseUrl)
 const repo = new PgDomainRepository(config.databaseUrl)
 const serverKey = await repo.findOrCreateServerKey(generateKeyPair())
-const relays = new NostrRelayNetwork(config.indexerRelays)
+const settings = await SettingsStore.load(repo)
+const relays = new NostrRelayNetwork(() => settings.current.indexerRelays)
 // One registry for the API, SMTP and the outbox, so that each bunker gets one connection.
 const signers = new DomainSigners({ logger: { info: (details, message) => app.log.info(details, message) } })
-const app = buildApp(repo, config, createDnsLookup(config.dnsServers), relays, { logger: true, signers })
+const app = buildApp(repo, config, createDnsLookup(config.dnsServers), relays, settings, { logger: true, signers })
 const smtpLogger = app.log.child({ component: 'smtp' })
 // Without the certificate files the server does not start: an orchestrator retries until they exist.
 const tls = config.tls ? await readTls(config.tls) : undefined
@@ -28,6 +30,7 @@ const smtp = createSmtpServer(
   relays,
   blossom,
   createAuthResolver(config.dnsServers),
+  settings,
   { ...config, serverPrivateKey: serverKey.privateKey },
   { logger: smtpLogger, tls, signers },
 )
@@ -37,7 +40,7 @@ const transport = createSmtpTransport({
   heloName: config.mxHost,
   findExchangers: createExchangerLookup(config.dnsServers),
 })
-const outbox = new Outbox(repo, relays, blossom, transport, config, app.log.child({ component: 'outbox' }), signers)
+const outbox = new Outbox(repo, relays, blossom, transport, settings, app.log.child({ component: 'outbox' }), signers)
 
 if (migrations.length) app.log.info({ migrations }, 'applied database migrations')
 

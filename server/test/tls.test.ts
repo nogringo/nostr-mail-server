@@ -16,6 +16,7 @@ import {
   fixtureTlsFiles,
   MemoryDomainRepository,
   replyReader,
+  settingsStore,
 } from './helpers.js'
 
 const cleanups: (() => Promise<void>)[] = []
@@ -35,18 +36,14 @@ async function setup() {
   await install('a')
 
   const loaded = await readTls(files)
+  const repo = new MemoryDomainRepository()
   const server = createSmtpServer(
-    new MemoryDomainRepository(),
+    repo,
     new FakeRelayNetwork(),
     new FakeBlobStore(),
     new FakeAuthDns().resolve,
-    {
-      mxHost: 'mx.example.org',
-      maxMessageBytes: 1024,
-      adminPubkeys: [],
-      blossomServers: [],
-      serverPrivateKey: generateKeyPair().privateKey,
-    },
+    settingsStore(repo),
+    { mxHost: 'mx.example.org', adminPubkeys: [], serverPrivateKey: generateKeyPair().privateKey },
     { tls: loaded },
   )
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))

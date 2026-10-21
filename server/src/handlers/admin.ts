@@ -1,7 +1,11 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { DomainSigners } from '../bunker.js'
 import { normalizeDomain } from '../domain.js'
+import { publishEveryDomainLists } from '../lists.js'
 import { parsePubkey } from '../nostr.js'
 import { checkServerRecords } from '../records.js'
+import type { RelayNetwork } from '../relays.js'
+import { parseSettingsChanges, type SettingsStore } from '../settings.js'
 import type { ApiConfig, DnsLookup, DomainRepository, DomainSummary } from '../types.js'
 import { authenticateAdmin } from './auth.js'
 
@@ -9,13 +13,19 @@ type DomainRequest = FastifyRequest<{ Params: { domain: string } }>
 
 type KeyRequest = FastifyRequest<{ Params: { pubkey: string } }>
 
-type SettingsRequest = FastifyRequest<{ Body: { openRegistration?: unknown } | undefined }>
+type SettingsRequest = FastifyRequest<{ Body: unknown }>
 
 // What the operator of the server sees and does, authenticated with NIP-98 by a key of ADMIN_PUBKEYS.
 export function registerAdminRoutes(
   app: FastifyInstance,
   repo: DomainRepository,
-  { config, dns }: { config: ApiConfig; dns: DnsLookup },
+  {
+    config,
+    dns,
+    relays,
+    signers,
+    settings,
+  }: { config: ApiConfig; dns: DnsLookup; relays: RelayNetwork; signers: DomainSigners; settings: SettingsStore },
 ): void {
   const admins = config.adminPubkeys
 
@@ -23,11 +33,10 @@ export function registerAdminRoutes(
   app.get('/admin/domains', async (request, reply) => {
     if (authenticateAdmin(request, reply, admins) === null) return reply
 
-    const [domains, suspensions, allowedKeys, settings, abuseReports, serverRecords] = await Promise.all([
+    const [domains, suspensions, allowedKeys, abuseReports, serverRecords] = await Promise.all([
       repo.listAllDomains(),
       repo.listSuspensions(),
       repo.listAllowedKeys(),
-      repo.findSettings(),
       repo.listAbuseReports(),
       checkServerRecords(config, dns),
     ])
@@ -35,22 +44,31 @@ export function registerAdminRoutes(
       domains: domains.map(present),
       suspensions,
       allowedKeys,
-      settings,
+      settings: settings.current,
       abuseReports,
       serverRecords,
     })
   })
 
-  app.put('/admin/settings', async (request: SettingsRequest, reply) => {
+  // Takes any of the settings; the others keep their value.
+  app.patch('/admin/settings', async (request: SettingsRequest, reply) => {
     const admin = authenticateAdmin(request, reply, admins)
     if (admin === null) return reply
 
-    const openRegistration = request.body?.openRegistration
-    if (typeof openRegistration !== 'boolean') return reply.code(400).send({ error: 'invalid_settings' })
+    const parsed = parseSettingsChanges(request.body)
+    if ('error' in parsed) return reply.code(400).send({ error: parsed.error })
 
-    const settings = await repo.updateSettings({ openRegistration })
-    request.log.info({ settings, admin }, 'Changed the settings of the server')
-    return reply.send({ settings })
+    const before = settings.current
+    const after = await settings.update(parsed.changes)
+    request.log.info({ changes: parsed.changes, admin }, 'Changed the settings of the server')
+
+    if (!sameUrls(before.domainRelays, after.domainRelays) || !sameUrls(before.indexerRelays, after.indexerRelays)) {
+      void publishEveryDomainLists(repo, relays, signers, after).then(
+        (failed) => request.log.info({ failed }, 'Published the lists of the domain keys on the new relays'),
+        (error) => request.log.error({ error }, 'The lists of the domain keys could not be published'),
+      )
+    }
+    return reply.send({ settings: after })
   })
 
   app.put('/admin/domains/:domain/suspension', async (request: DomainRequest, reply) => {
@@ -114,4 +132,8 @@ function present(domain: DomainSummary) {
     addressCount: domain.addressCount,
     checks: domain.checks,
   }
+}
+
+function sameUrls(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((url, index) => url === right[index])
 }

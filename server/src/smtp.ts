@@ -19,6 +19,7 @@ import {
 } from './inbound.js'
 import { decodedField } from './mime.js'
 import type { Inbox, RelayNetwork } from './relays.js'
+import type { SettingsStore } from './settings.js'
 import { type KeySigner, localSigner, SignerRefusal, SignerUnavailable } from './signer.js'
 import type { TlsCredentials } from './tls.js'
 import type { AppConfig, Domain, DomainRepository } from './types.js'
@@ -44,7 +45,7 @@ interface Target {
 
 type Recipient = Target & Inbox
 
-type SmtpConfig = Pick<AppConfig, 'mxHost' | 'maxMessageBytes' | 'adminPubkeys' | 'blossomServers'> & {
+type SmtpConfig = Pick<AppConfig, 'mxHost' | 'adminPubkeys'> & {
   // The server's own key, which writes the complaints no domain key is left for.
   serverPrivateKey: string
 }
@@ -65,7 +66,8 @@ export function createSmtpServer(
   relays: RelayNetwork,
   blobs: BlobStore,
   resolver: DNSResolver,
-  { mxHost, maxMessageBytes, adminPubkeys, blossomServers, serverPrivateKey }: SmtpConfig,
+  settings: SettingsStore,
+  { mxHost, adminPubkeys, serverPrivateKey }: SmtpConfig,
   {
     logger = silent,
     tls,
@@ -75,10 +77,14 @@ export function createSmtpServer(
   // Keyed by envelope, which the server replaces for every transaction.
   const recipients = new WeakMap<SMTPServerEnvelope, Recipient[]>()
   const abuseDomains = new WeakMap<SMTPServerEnvelope, Set<string>>()
-  const serverWriter: Writer = {
-    signer: localSigner(serverPrivateKey),
-    blossomServers,
-    maxInlineMimeBytes: MAX_INLINE_MIME_BYTES,
+  const serverSigner = localSigner(serverPrivateKey)
+
+  function serverWriter(): Writer {
+    return {
+      signer: serverSigner,
+      blossomServers: settings.current.blossomServers,
+      maxInlineMimeBytes: MAX_INLINE_MIME_BYTES,
+    }
   }
 
   function domainWriter(domain: Domain): Writer {
@@ -137,12 +143,15 @@ export function createSmtpServer(
     }
     if (name !== mxHost && !(await repo.hasServedDomain(name)) && !(await repo.findSuspension(name))) return null
 
-    return adminPubkeys.map((pubkey) => ({ writer: serverWriter, pubkey }))
+    const writer = serverWriter()
+    return adminPubkeys.map((pubkey) => ({ writer, pubkey }))
   }
 
   async function deliver(stream: SMTPServerDataStream, session: SMTPServerSession): Promise<string> {
     const message = await readMessage(stream)
-    if (stream.sizeExceeded) throw smtpError(552, `5.3.4 Messages are limited to ${maxMessageBytes} bytes`)
+    if (stream.sizeExceeded) {
+      throw smtpError(552, `5.3.4 Messages are limited to ${settings.current.maxMessageBytes} bytes`)
+    }
 
     const targets = recipients.get(session.envelope) ?? []
     const mailFrom = session.envelope.mailFrom ? session.envelope.mailFrom.address : ''
@@ -251,18 +260,24 @@ export function createSmtpServer(
     )
   }
 
-  return new SMTPServer({
+  const server = new SMTPServer({
     name: mxHost,
     banner: 'Nostr Mail',
-    size: maxMessageBytes,
+    size: settings.current.maxMessageBytes,
     // AUTH is for submission servers, and STARTTLS is offered only with a certificate.
     disabledCommands: tls ? ['AUTH'] : ['AUTH', 'STARTTLS'],
     ...tls,
     socketTimeout: SOCKET_TIMEOUT_MS,
     logger: false,
+    // The server reads its size limit on EHLO, MAIL FROM and DATA: a new limit applies from the next connection.
+    onConnect: (_session, callback) => {
+      server.options.size = settings.current.maxMessageBytes
+      callback()
+    },
     onRcptTo: (address, session, callback) => respond(session, acceptRecipient(address, session), callback),
     onData: (stream, session, callback) => respond(session, deliver(stream, session), callback),
   })
+  return server
 }
 
 // The whole message is read even past the limit, as the client sends it anyway.

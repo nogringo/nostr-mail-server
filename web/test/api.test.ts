@@ -102,7 +102,13 @@ test('loads the overview of the server for an admin', async () => {
     domains: [],
     suspensions: [],
     allowedKeys: [],
-    settings: { openRegistration: false },
+    settings: {
+      openRegistration: false,
+      maxMessageBytes: 26214400,
+      blossomServers: [],
+      domainRelays: [],
+      indexerRelays: [],
+    },
     abuseReports: [],
     serverRecords: [],
   }
@@ -144,13 +150,20 @@ test('allows a key by its npub and takes it back by its hex', async () => {
   ])
 })
 
-test('changes the settings of the server', async () => {
-  const { api, requests } = recordingApi(() => Response.json({ settings: { openRegistration: true } }))
+test('sends only the settings that change', async () => {
+  const settings = {
+    openRegistration: true,
+    maxMessageBytes: 1,
+    blossomServers: [],
+    domainRelays: [],
+    indexerRelays: [],
+  }
+  const { api, requests } = recordingApi(() => Response.json({ settings }))
 
-  expect(await api.updateSettings({ openRegistration: true })).toEqual({ openRegistration: true })
+  expect(await api.updateSettings({ openRegistration: true })).toEqual(settings)
 
   expect(requests.map(({ url, init }) => [init.method, url, init.body])).toEqual([
-    ['PUT', `${ORIGIN}/admin/settings`, '{"openRegistration":true}'],
+    ['PATCH', `${ORIGIN}/admin/settings`, '{"openRegistration":true}'],
   ])
 })
 

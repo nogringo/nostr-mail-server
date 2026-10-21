@@ -9,7 +9,6 @@ import {
   apiConfig,
   authorization,
   BUNKER_RELAY,
-  domainConfig,
   FakeBunker,
   FakeDns,
   FakeRelayNetwork,
@@ -17,17 +16,18 @@ import {
   outboundWrap,
   privateKeyOf,
   request,
+  settingsStore,
   signer,
+  testSettings,
   verifyDomain,
 } from './helpers.js'
 
 function setup(bunker = new FakeBunker()) {
   const repo = new MemoryDomainRepository()
-  repo.settings = { openRegistration: true }
   const dns = new FakeDns()
   const network = new FakeRelayNetwork()
   const signers = new DomainSigners({ open: bunker.open, timeoutMs: 50, connectTimeoutMs: 50 })
-  const app = buildApp(repo, apiConfig, dns, network, { signers })
+  const app = buildApp(repo, apiConfig, dns, network, settingsStore(repo, { openRegistration: true }), { signers })
   return { repo, dns, network, app }
 }
 
@@ -51,7 +51,7 @@ test('PUT claims a domain and returns the records to publish', async () => {
   const { domain } = response.json()
   expect(domain.domain).toBe('example.com')
   expect(domain.verifiedAt).toBeNull()
-  expect(domain.blossomServers).toEqual(domainConfig.blossomServers)
+  expect(domain.blossomServers).toEqual(testSettings.blossomServers)
   expect(domain.records.map((record: { id: string }) => record.id)).toEqual([
     'ownership',
     'mx',
@@ -152,7 +152,13 @@ test('GET /domains lists only the caller claims', async () => {
 function closedSetup() {
   const repo = new MemoryDomainRepository()
   const admin = signer()
-  const app = buildApp(repo, { ...apiConfig, adminPubkeys: [admin.pubkey] }, new FakeDns(), new FakeRelayNetwork())
+  const app = buildApp(
+    repo,
+    { ...apiConfig, adminPubkeys: [admin.pubkey] },
+    new FakeDns(),
+    new FakeRelayNetwork(),
+    settingsStore(repo),
+  )
   return { repo, app, admin }
 }
 

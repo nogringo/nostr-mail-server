@@ -4,7 +4,7 @@ import { describeError } from '../lib/errors'
 import { byteSize, timeAgo } from '../lib/format'
 import { Button, ErrorText } from './ui'
 
-// A message can reach MAX_MESSAGE_BYTES, too much for the page to lay out.
+// A message can reach the size limit of the server, too much for the page to lay out.
 const MAX_SHOWN_CHARS = 200_000
 
 interface Props {

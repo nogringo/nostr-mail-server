@@ -76,8 +76,9 @@ keeps its claims, which a [suspension](#suspension) stops.
 
 Each claim gets its own token, its own 2048-bit DKIM key and its own Nostr key
 pair, served as `_smtp@<domain>` (see [NIP-05](#nip-05)), all generated when it
-is created. The DKIM private key stays on the server. It also gets the Blossom
-servers of `BLOSSOM_SERVERS` at that time, which store its large mail.
+is created. The DKIM private key stays on the server. It also gets the
+[Blossom servers](#settings) of the server at that time, which store its large
+mail.
 
 ### Domain key
 
@@ -130,16 +131,18 @@ can hit: a relay made for bunkers suits it better.
 
 The domain key writes the mail the domain receives, so clients read its lists
 to find what it refers to. Every check that finds the domain verified
-publishes, signed by that key, on `DOMAIN_RELAYS` and `INDEXER_RELAYS`:
+publishes, signed by that key, on the domain relays and the indexer relays of
+the [settings](#settings):
 
 | Kind | Content |
 |------|---------|
-| 10002 (NIP-65) | `DOMAIN_RELAYS`, the relays where its lists are found |
-| 10050 (NIP-17) | `DOMAIN_RELAYS`, where clients send the mail the domain relays |
+| 10002 (NIP-65) | The domain relays, where its lists are found |
+| 10050 (NIP-17) | The domain relays, where clients send the mail the domain relays |
 | 10063 (BUD-03) | The claim's Blossom servers |
 
 A failed publication is logged and does not fail the check: checking again
-publishes the lists again.
+publishes the lists again. When an admin changes the domain relays or the
+indexer relays, every verified domain key publishes its lists again.
 
 ### Ownership
 
@@ -204,7 +207,7 @@ same NIP-98 authentication. Any other key gets `403 not_admin`.
 | `DELETE` | `/admin/domains/{domain}/suspension` | Lift the suspension: `204`, or `404 suspension_not_found` |
 | `PUT` | `/admin/allowed-keys/{npub or hex}` | Let the key [claim domains](#who-can-claim): `201` when added, `200` when it already was, `400 invalid_pubkey` |
 | `DELETE` | `/admin/allowed-keys/{npub or hex}` | Take the key off the list: `204`, or `404 allowed_key_not_found` |
-| `PUT` | `/admin/settings` | Body `{"openRegistration": true}`: store the [settings](#settings) and return them as `{"settings": {...}}`, `400 invalid_settings` |
+| `PATCH` | `/admin/settings` | Body with any of the [settings](#settings), the others keep their value: returns them all as `{"settings": {...}}`, or `400` with `invalid_open_registration`, `invalid_max_message_bytes`, `invalid_blossom_servers`, `invalid_domain_relays` or `invalid_indexer_relays` |
 
 A claim is returned as:
 
@@ -236,8 +239,18 @@ registration is open.
 
 ### Settings
 
-`{"openRegistration": false}`: when `true`, any key
-[claims domains](#who-can-claim). It is `false` on a new server.
+What the admins change from the site, stored in Postgres and applied without a
+restart:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `openRegistration` | `false` | When `true`, any key [claims domains](#who-can-claim) |
+| `maxMessageBytes` | `26214400` (25 MiB) | Largest message accepted over SMTP, advertised with `SIZE` from the next connection, and largest blob read to send. Between 64 KiB and 1 GiB |
+| `blossomServers` | `https://blossom.nmail.li`, `https://blossom.yakihonne.com`, `https://blossom.ditto.pub` | `https://` Blossom servers given to new claims for their large mail, and used by the server's own key; existing claims keep theirs |
+| `domainRelays` | `wss://relay.nmail.li/`, `wss://relay.ditto.pub/`, `wss://nos.lol/`, `wss://relay.primal.net/` | `wss://` relays the domain keys announce (kinds 10002 and 10050), publish their [lists](#lists-of-the-domain-key) on, and [receive the mail to send](#receiving-the-wraps) on |
+| `indexerRelays` | `wss://purplepag.es/`, `wss://user.kindpag.es/`, `wss://indexer.coracle.social/` | `wss://` relays where the lists of other pubkeys (kinds 10002, 10050 and 10063) are looked up, and where the domain keys publish their lists too |
+
+URLs must point at public hosts, and each list needs one at least.
 
 ### Server records
 
@@ -323,7 +336,7 @@ answered with a temporary error so the sending server retries.
 | `RCPT TO` on a domain that is not verified or is suspended, or a local part that is neither a declared address, an npub nor `abuse` (`abuse` is taken on a suspended domain, on one the server served once, and on `MX_HOST`) | `550 5.1.1` |
 | `RCPT TO` with a pubkey that has no inbox relays (neither DM relays in a kind 10050 nor read relays in a kind 10002), except to `abuse` | `450 4.2.0` |
 | More than 50 recipients | `452 4.5.3` |
-| Message above `MAX_MESSAGE_BYTES` | `552 5.3.4` |
+| Message above [`maxMessageBytes`](#settings) | `552 5.3.4` |
 | Message failing DMARC from a domain whose policy is `reject` | `550 5.7.1` |
 | The same, while the SPF or a DKIM lookup failed | `451 4.7.0` |
 | No Blossom server stores a large message, a recipient's relays all refuse it, or the database fails | `451` |
@@ -403,12 +416,12 @@ Blossom, as Nostr Mail clients expect:
 
 Clients look for the blob on the servers of the most recent kind 10063 among
 the author (the domain key) and the recipient, then on their own defaults. The
-blob is on both lists, and `BLOSSOM_SERVERS` defaults to the servers Nostr
-Mail clients always check as a last resort.
+blob is on both lists, and the default [Blossom servers](#settings) are the
+ones Nostr Mail clients always check as a last resort.
 
 A recipient's wrap goes to its inbox relays: its DM relays (kind 10050) when it
 lists any, else the read relays of its NIP-65 list (kind 10002). The NIP-65
-list is looked up on `INDEXER_RELAYS`. The DM relays and the Blossom servers
+list is looked up on the [indexer relays](#settings). The DM relays and the Blossom servers
 (kind 10063) are looked up there too and on the pubkey's NIP-65 write relays,
 and the most recent list wins. A list is written by
 whoever holds the key, so only public `wss://` and `https://` hosts are
@@ -469,7 +482,9 @@ by the domain.
 ### Receiving the wraps
 
 Each verified domain key has its own subscription to kind 1059 events tagged
-with it on `DOMAIN_RELAYS`, the relays of its kind 10050. Each one opens its own
+with it on the [domain relays](#settings), the relays of its kind 10050. A relay
+taken off the domain relays is still listened to for seven days, for the
+clients that have not read the new kind 10050. Each one opens its own
 connections and answers NIP-42 AUTH with its key, since a DM relay may serve the
 gift wraps of only one authenticated key per connection. NIP-59 dates a wrap up
 to two days back, so a subscription reaches two days back too, and every
@@ -493,7 +508,7 @@ An accepted wrap is queued in Postgres, the wrap itself kept until every
 recipient has an outcome. Delivery then:
 
 1. Reads the MIME: the rumor's `content`, or for a large email the Blossom blob
-   its tags point to, looked for on the domain's servers and `BLOSSOM_SERVERS`,
+   its tags point to, looked for on the domain's servers and the server's,
    then on the sender's kind 10063, checked against its hash and decrypted.
 2. Checks the `From` field: one address, which belongs to the sender like
    `mail-from`. DMARC aligns it with the DKIM signature, so it cannot name
@@ -537,10 +552,6 @@ cp .env.example .env
 | `DNS_SERVERS` | no | system resolver | Comma-separated IP addresses used for the record checks and for SPF, DKIM and DMARC |
 | `PORT` | no | `3000` | HTTP port |
 | `SMTP_PORT` | no | `2525` | SMTP port that receives mail for the connected domains |
-| `MAX_MESSAGE_BYTES` | no | `26214400` (25 MiB) | Largest message accepted over SMTP, advertised with `SIZE`, and largest blob read to send |
-| `BLOSSOM_SERVERS` | no | `https://blossom.nmail.li`, `https://blossom.yakihonne.com`, `https://blossom.ditto.pub` | Comma-separated `https://` Blossom servers given to new claims for their large mail; existing claims keep theirs |
-| `DOMAIN_RELAYS` | no | `wss://relay.nmail.li`, `wss://relay.ditto.pub`, `wss://nos.lol`, `wss://relay.primal.net` | Comma-separated `wss://` relays the domain keys announce (kinds 10002 and 10050), publish their lists on, and receive the mail to send on |
-| `INDEXER_RELAYS` | no | `wss://purplepag.es`, `wss://user.kindpag.es`, `wss://indexer.coracle.social` | Comma-separated `wss://` relays where the lists of other pubkeys (kinds 10002, 10050 and 10063) are looked up |
 | `TLS_CERT_FILE` | no | | PEM certificate for `MX_HOST` offered with STARTTLS, set together with `TLS_KEY_FILE` |
 | `TLS_KEY_FILE` | no | | PEM private key of that certificate |
 

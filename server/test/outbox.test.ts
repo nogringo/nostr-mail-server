@@ -15,6 +15,7 @@ import {
   newBridgeKey,
   outboundWrap,
   sendingDomain,
+  settingsStore,
   signer,
   verifyDomain,
 } from './helpers.js'
@@ -51,12 +52,13 @@ async function setup(bunker = new FakeBunker()) {
   const transport = new FakeTransport()
   const logs: string[] = []
   const logger = { info: (_: object, message: string) => logs.push(message), error: () => {} }
+  const settings = settingsStore(repo, { domainRelays: [DOMAIN_RELAY], blossomServers: [DOMAIN_SERVER] })
   const outbox = new Outbox(
     repo,
     network,
     blobs,
     transport,
-    { domainRelays: [DOMAIN_RELAY], blossomServers: [DOMAIN_SERVER], maxMessageBytes: 1024 * 1024 },
+    settings,
     logger,
     new DomainSigners({ open: bunker.open, timeoutMs: 50 }),
   )
@@ -69,7 +71,7 @@ async function setup(bunker = new FakeBunker()) {
     await outbox.deliverDue()
   }
 
-  return { repo, network, blobs, transport, logs, outbox, domain, alice, receive }
+  return { repo, network, blobs, transport, logs, outbox, domain, alice, receive, settings }
 }
 
 test('each verified domain key gets its own subscription, closed once the domain goes', async () => {
@@ -93,6 +95,19 @@ test('each verified domain key gets its own subscription, closed once the domain
   expect(network.open().map((subscription) => subscription.filter['#p'])).toEqual([[domain.bridgePubkey]])
   await outbox.stop()
   expect(network.open()).toEqual([])
+})
+
+test('new domain relays are listened to at once, and the removed ones for a while', async () => {
+  const { network, outbox, domain, settings } = await setup()
+  await outbox.syncSubscriptions()
+
+  await settings.update({ domainRelays: ['wss://new.example.org/'] })
+  await outbox.syncSubscriptions()
+
+  const open = network.open()
+  expect(open.map((subscription) => subscription.relays)).toEqual([['wss://new.example.org/', DOMAIN_RELAY]])
+  expect(open[0].filter['#p']).toEqual([domain.bridgePubkey])
+  await outbox.stop()
 })
 
 test('a replaced domain key is listened to instead of the old one', async () => {
@@ -232,14 +247,7 @@ test('a wrap from someone else than the owner of mail-from is refused once and f
 test('a domain without SPF and DKIM refuses to send', async () => {
   const { repo, network, blobs, transport, alice } = await setup()
   const domain = await verifyDomain(repo, 'quiet.example', signer().pubkey)
-  const outbox = new Outbox(
-    repo,
-    network,
-    blobs,
-    transport,
-    { domainRelays: [], blossomServers: [], maxMessageBytes: 1024 },
-    { info() {}, error() {} },
-  )
+  const outbox = new Outbox(repo, network, blobs, transport, settingsStore(repo), { info() {}, error() {} })
   const wrap = outboundWrap(alice, domain.bridgePubkey, { mailFrom: `${npubEncode(alice.pubkey)}@quiet.example` })
 
   await outbox.receive(wrap, domain.bridgePubkey)
@@ -269,14 +277,7 @@ test('a wrap seen again, even by a new process, is not sent twice', async () => 
   await receive(wrap)
 
   await outbox.receive(wrap, domain.bridgePubkey)
-  const restarted = new Outbox(
-    repo,
-    network,
-    blobs,
-    transport,
-    { domainRelays: [], blossomServers: [], maxMessageBytes: 1024 },
-    { info() {}, error() {} },
-  )
+  const restarted = new Outbox(repo, network, blobs, transport, settingsStore(repo), { info() {}, error() {} })
   await restarted.receive(wrap, domain.bridgePubkey)
   await restarted.deliverDue()
 

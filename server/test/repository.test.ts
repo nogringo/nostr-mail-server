@@ -78,6 +78,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '010_add_bridge_bunker.sql',
       '011_create_allowed_keys.sql',
       '012_create_server_settings.sql',
+      '013_add_service_settings.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -242,11 +243,28 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect(await repo.listAllowedKeys()).toEqual([])
   })
 
-  test('keeps registration closed until an admin opens it', async () => {
-    expect(await repo.findSettings()).toEqual({ openRegistration: false })
-    expect(await repo.updateSettings({ openRegistration: true })).toEqual({ openRegistration: true })
-    expect(await repo.findSettings()).toEqual({ openRegistration: true })
-    expect(await repo.updateSettings({ openRegistration: false })).toEqual({ openRegistration: false })
+  test('starts with the defaults the environment variables had, then stores what an admin sets', async () => {
+    const defaults = await repo.findSettings()
+    expect(defaults).toEqual({
+      openRegistration: false,
+      maxMessageBytes: 25 * 1024 * 1024,
+      blossomServers: ['https://blossom.nmail.li', 'https://blossom.yakihonne.com', 'https://blossom.ditto.pub'],
+      domainRelays: ['wss://relay.nmail.li/', 'wss://relay.ditto.pub/', 'wss://nos.lol/', 'wss://relay.primal.net/'],
+      indexerRelays: ['wss://purplepag.es/', 'wss://user.kindpag.es/', 'wss://indexer.coracle.social/'],
+      retiredDomainRelays: {},
+    })
+
+    const changed = {
+      openRegistration: true,
+      maxMessageBytes: 1024 * 1024,
+      blossomServers: ['https://cdn.example.com/blossom'],
+      domainRelays: ['wss://relay.example.com/'],
+      indexerRelays: ['wss://indexer.example.com/'],
+      retiredDomainRelays: { 'wss://relay.nmail.li/': '2026-10-28T12:00:00.000Z' },
+    }
+    await repo.updateSettings(changed)
+    expect(await repo.findSettings()).toEqual(changed)
+    await repo.updateSettings(defaults)
   })
 
   test('queues a wrap once and lists its recipients while they are due', async () => {

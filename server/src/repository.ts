@@ -17,7 +17,8 @@ import type {
   NewOutboundMessage,
   OutboundMessage,
   RecipientOutcome,
-  ServerSettings,
+  RetiredRelays,
+  StoredSettings,
   Suspension,
 } from './types.js'
 
@@ -65,6 +66,15 @@ interface SuspensionRow {
 interface AllowedKeyRow {
   pubkey: string
   allowed_at: Date
+}
+
+interface SettingsRow {
+  open_registration: boolean
+  max_message_bytes: number
+  blossom_servers: string[]
+  domain_relays: string[]
+  indexer_relays: string[]
+  retired_domain_relays: RetiredRelays
 }
 
 interface AbuseReportRow {
@@ -304,16 +314,35 @@ export class PgDomainRepository implements DomainRepository {
     return (result.rowCount ?? 0) > 0
   }
 
-  async findSettings(): Promise<ServerSettings> {
-    const result = await this.pool.query<{ open_registration: boolean }>(
-      'select open_registration from server_settings',
+  async findSettings(): Promise<StoredSettings> {
+    const result = await this.pool.query<SettingsRow>(
+      `select open_registration, max_message_bytes, blossom_servers, domain_relays, indexer_relays,
+        retired_domain_relays from server_settings`,
     )
-    return { openRegistration: result.rows[0].open_registration }
+    const row = result.rows[0]
+    return {
+      openRegistration: row.open_registration,
+      maxMessageBytes: row.max_message_bytes,
+      blossomServers: row.blossom_servers,
+      domainRelays: row.domain_relays,
+      indexerRelays: row.indexer_relays,
+      retiredDomainRelays: row.retired_domain_relays,
+    }
   }
 
-  async updateSettings(settings: ServerSettings): Promise<ServerSettings> {
-    await this.pool.query('update server_settings set open_registration = $1', [settings.openRegistration])
-    return this.findSettings()
+  async updateSettings(settings: StoredSettings): Promise<void> {
+    await this.pool.query(
+      `update server_settings set open_registration = $1, max_message_bytes = $2, blossom_servers = $3,
+        domain_relays = $4, indexer_relays = $5, retired_domain_relays = $6`,
+      [
+        settings.openRegistration,
+        settings.maxMessageBytes,
+        settings.blossomServers,
+        settings.domainRelays,
+        settings.indexerRelays,
+        settings.retiredDomainRelays,
+      ],
+    )
   }
 
   async listAddresses(domain: string): Promise<Address[]> {

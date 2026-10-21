@@ -95,6 +95,13 @@ export interface AllowedKey {
 export interface ServerSettings {
   // Any key connects domains, so the allowed keys do not matter.
   openRegistration: boolean
+  maxMessageBytes: number
+  // Given to new domains for their large mail.
+  blossomServers: string[]
+  // Announced by every domain key.
+  domainRelays: string[]
+  // Where the lists of other keys are looked up.
+  indexerRelays: string[]
 }
 
 export interface AdminOverview {
@@ -189,7 +196,8 @@ export function createApi(
     disallowKey: async (pubkey: string): Promise<void> => {
       await call('DELETE', `/admin/allowed-keys/${pubkey}`)
     },
-    updateSettings: async (settings: ServerSettings): Promise<ServerSettings> =>
-      (await call('PUT', '/admin/settings', { ...settings })).settings,
+    // The settings left out keep their value.
+    updateSettings: async (changes: Partial<ServerSettings>): Promise<ServerSettings> =>
+      (await call('PATCH', '/admin/settings', changes)).settings,
   }
 }

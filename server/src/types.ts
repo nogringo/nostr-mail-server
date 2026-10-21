@@ -4,16 +4,12 @@ import type { NostrEvent } from 'nostr-tools/pure'
 export interface AppConfig {
   port: number
   smtpPort: number
-  maxMessageBytes: number
   databaseUrl: string
   mxHost: string
   spfInclude: string
   publicIpv4: string
   dkimSelector: string
   dnsServers: string[]
-  indexerRelays: string[]
-  domainRelays: string[]
-  blossomServers: string[]
   tls: TlsFiles | null
   // Hex pubkeys allowed to see every domain of the server.
   adminPubkeys: string[]
@@ -25,10 +21,7 @@ export interface TlsFiles {
   keyFile: string
 }
 
-export type DomainConfig = Pick<
-  AppConfig,
-  'mxHost' | 'spfInclude' | 'publicIpv4' | 'dkimSelector' | 'indexerRelays' | 'domainRelays' | 'blossomServers'
->
+export type DomainConfig = Pick<AppConfig, 'mxHost' | 'spfInclude' | 'publicIpv4' | 'dkimSelector'>
 
 export type ApiConfig = DomainConfig & Pick<AppConfig, 'adminPubkeys'>
 
@@ -100,7 +93,20 @@ export interface AllowedKey {
 export interface ServerSettings {
   // Any key may claim a domain, not only the admins and the allowed keys.
   openRegistration: boolean
+  // Largest message received over SMTP, and largest blob read to send one.
+  maxMessageBytes: number
+  // Given to new claims for their large mail, and used by the server key.
+  blossomServers: string[]
+  // Announced by every domain key (kinds 10002 and 10050): its lists are published there, and its mail to send read.
+  domainRelays: string[]
+  // Where the lists of other keys are looked up.
+  indexerRelays: string[]
 }
+
+// Domain relays taken off the settings, by the date the outbox stops listening to them.
+export type RetiredRelays = Record<string, string>
+
+export type StoredSettings = ServerSettings & { retiredDomainRelays: RetiredRelays }
 
 // A NIP-46 remote signer that holds a domain key.
 export interface BunkerKey {
@@ -213,8 +219,8 @@ export interface DomainRepository {
   // Returns the existing entry when the key is already allowed.
   allowKey(pubkey: string): Promise<AllowedKey>
   disallowKey(pubkey: string): Promise<boolean>
-  findSettings(): Promise<ServerSettings>
-  updateSettings(settings: ServerSettings): Promise<ServerSettings>
+  findSettings(): Promise<StoredSettings>
+  updateSettings(settings: StoredSettings): Promise<void>
   listAddresses(domain: string): Promise<Address[]>
   findAddress(domain: string, localPart: string): Promise<Address | null>
   // Creates the address, or points an existing one at the new pubkey.

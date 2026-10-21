@@ -1,5 +1,5 @@
 import { npubEncode } from 'nostr-tools/nip19'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { buildApp } from '../src/app.js'
 import {
   apiConfig,
@@ -8,7 +8,9 @@ import {
   FakeRelayNetwork,
   MemoryDomainRepository,
   request,
+  settingsStore,
   signer,
+  testSettings,
   verifyDomain,
 } from './helpers.js'
 
@@ -16,8 +18,9 @@ function setup() {
   const repo = new MemoryDomainRepository()
   const admin = signer()
   const dns = new FakeDns()
-  const app = buildApp(repo, { ...apiConfig, adminPubkeys: [admin.pubkey] }, dns, new FakeRelayNetwork())
-  return { repo, app, admin, dns }
+  const network = new FakeRelayNetwork()
+  const app = buildApp(repo, { ...apiConfig, adminPubkeys: [admin.pubkey] }, dns, network, settingsStore(repo))
+  return { repo, app, admin, dns, network }
 }
 
 test('GET /admin/domains lists every claim of every key with its address count', async () => {
@@ -34,7 +37,7 @@ test('GET /admin/domains lists every claim of every key with its address count',
   expect(response.statusCode).toBe(200)
   expect(response.json().suspensions).toEqual([])
   expect(response.json().allowedKeys).toEqual([])
-  expect(response.json().settings).toEqual({ openRegistration: false })
+  expect(response.json().settings).toEqual(testSettings)
   expect(response.json().domains).toEqual([
     {
       domain: 'example.com',
@@ -121,7 +124,7 @@ test('a key that is not an admin gets 403', async () => {
 
 test('without ADMIN_PUBKEYS nobody is an admin', async () => {
   const repo = new MemoryDomainRepository()
-  const app = buildApp(repo, apiConfig, new FakeDns(), new FakeRelayNetwork())
+  const app = buildApp(repo, apiConfig, new FakeDns(), new FakeRelayNetwork(), settingsStore(repo))
 
   const response = await request(app, signer(), 'GET', '/admin/domains')
 
@@ -265,32 +268,59 @@ test('only an admin manages the allowed keys', async () => {
   await app.close()
 })
 
-test('an admin opens registration to any key, then closes it', async () => {
-  const { repo, app, admin } = setup()
+test('an admin changes some settings, the others keep their value', async () => {
+  const { app, admin } = setup()
 
-  const opened = await request(app, admin, 'PUT', '/admin/settings', { openRegistration: true })
+  const changed = await request(app, admin, 'PATCH', '/admin/settings', {
+    openRegistration: true,
+    maxMessageBytes: 10 * 1024 * 1024,
+    blossomServers: ['https://Cdn.Example.com/blossom/'],
+  })
   const overview = await request(app, admin, 'GET', '/admin/domains')
 
-  expect(opened.statusCode).toBe(200)
-  expect(opened.json()).toEqual({ settings: { openRegistration: true } })
-  expect(overview.json().settings).toEqual({ openRegistration: true })
-
-  const closed = await request(app, admin, 'PUT', '/admin/settings', { openRegistration: false })
-
-  expect(closed.json()).toEqual({ settings: { openRegistration: false } })
-  expect(await repo.findSettings()).toEqual({ openRegistration: false })
+  expect(changed.statusCode).toBe(200)
+  expect(changed.json()).toEqual({
+    settings: {
+      ...testSettings,
+      openRegistration: true,
+      maxMessageBytes: 10 * 1024 * 1024,
+      blossomServers: ['https://cdn.example.com/blossom'],
+    },
+  })
+  expect(overview.json().settings).toEqual(changed.json().settings)
 
   await app.close()
 })
 
-test('settings that are not a boolean answer 400', async () => {
-  const { app, admin } = setup()
+test('new relays make every verified domain key publish its lists on them', async () => {
+  const { repo, app, admin, network } = setup()
+  const verified = await verifyDomain(repo, 'example.com', signer().pubkey)
+  await repo.createDomain(claim('pending.example', signer().pubkey))
 
-  const missing = await request(app, admin, 'PUT', '/admin/settings', {})
-  const text = await request(app, admin, 'PUT', '/admin/settings', { openRegistration: 'true' })
+  await request(app, admin, 'PATCH', '/admin/settings', { maxMessageBytes: 2 * 1024 * 1024 })
+  expect(network.published).toEqual([])
 
-  expect([missing.statusCode, text.statusCode]).toEqual([400, 400])
-  expect(text.json()).toEqual({ error: 'invalid_settings' })
+  await request(app, admin, 'PATCH', '/admin/settings', { domainRelays: ['wss://new.example.org'] })
+  await vi.waitFor(() => expect(network.published).toHaveLength(3))
+
+  expect(network.published.map(({ event }) => event.pubkey)).toEqual(Array(3).fill(verified.bridgePubkey))
+  expect(network.published[0].relays).toEqual(['wss://new.example.org/', ...testSettings.indexerRelays])
+  expect(network.published[1].event.tags).toEqual([['relay', 'wss://new.example.org/']])
+
+  await app.close()
+})
+
+test('an invalid setting answers 400 and changes nothing', async () => {
+  const { repo, app, admin } = setup()
+
+  const response = await request(app, admin, 'PATCH', '/admin/settings', {
+    openRegistration: true,
+    domainRelays: ['https://relay.example.com'],
+  })
+
+  expect(response.statusCode).toBe(400)
+  expect(response.json()).toEqual({ error: 'invalid_domain_relays' })
+  expect(repo.storedSettings.openRegistration).toBe(false)
 
   await app.close()
 })
@@ -298,10 +328,10 @@ test('settings that are not a boolean answer 400', async () => {
 test('only an admin changes the settings', async () => {
   const { repo, app } = setup()
 
-  const response = await request(app, signer(), 'PUT', '/admin/settings', { openRegistration: true })
+  const response = await request(app, signer(), 'PATCH', '/admin/settings', { openRegistration: true })
 
   expect(response.statusCode).toBe(403)
-  expect(await repo.findSettings()).toEqual({ openRegistration: false })
+  expect(repo.storedSettings.openRegistration).toBe(false)
 
   await app.close()
 })

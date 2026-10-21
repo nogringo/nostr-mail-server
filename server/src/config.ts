@@ -1,26 +1,10 @@
 import { isIP } from 'node:net'
-import { normalizeBlossomUrl } from './blossom.js'
 import { normalizeHostname } from './domain.js'
-import { normalizeRelayUrl, parsePubkey } from './nostr.js'
+import { parsePubkey } from './nostr.js'
 import type { AppConfig, TlsFiles } from './types.js'
 
 const DNS_NAME = /^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/
 const SELECTOR = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
-const DEFAULT_INDEXER_RELAYS = ['wss://purplepag.es', 'wss://user.kindpag.es', 'wss://indexer.coracle.social']
-// The NIP-65 relays Nostr Mail recommends.
-const DEFAULT_DOMAIN_RELAYS = [
-  'wss://relay.nmail.li',
-  'wss://relay.ditto.pub',
-  'wss://nos.lol',
-  'wss://relay.primal.net',
-]
-// The servers Nostr Mail clients always look in, whoever wrote the email.
-const DEFAULT_BLOSSOM_SERVERS = [
-  'https://blossom.nmail.li',
-  'https://blossom.yakihonne.com',
-  'https://blossom.ditto.pub',
-]
-const DEFAULT_MAX_MESSAGE_BYTES = 25 * 1024 * 1024
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const databaseUrl = env.DATABASE_URL?.trim()
@@ -31,16 +15,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     port: parsePort(env.PORT, 'PORT', 3000),
     smtpPort: parsePort(env.SMTP_PORT, 'SMTP_PORT', 2525),
-    maxMessageBytes: parseMaxMessageBytes(env.MAX_MESSAGE_BYTES),
     databaseUrl,
     mxHost: parseDnsName(env.MX_HOST, 'MX_HOST'),
     spfInclude: parseDnsName(env.SPF_INCLUDE, 'SPF_INCLUDE'),
     publicIpv4: parsePublicIpv4(env.PUBLIC_IPV4),
     dkimSelector: parseSelector(env.DKIM_SELECTOR),
     dnsServers: parseDnsServers(env.DNS_SERVERS),
-    indexerRelays: parseUrls(env.INDEXER_RELAYS, 'INDEXER_RELAYS', normalizeRelayUrl, DEFAULT_INDEXER_RELAYS),
-    domainRelays: parseUrls(env.DOMAIN_RELAYS, 'DOMAIN_RELAYS', normalizeRelayUrl, DEFAULT_DOMAIN_RELAYS),
-    blossomServers: parseUrls(env.BLOSSOM_SERVERS, 'BLOSSOM_SERVERS', normalizeBlossomUrl, DEFAULT_BLOSSOM_SERVERS),
     tls: parseTlsFiles(env.TLS_CERT_FILE, env.TLS_KEY_FILE),
     adminPubkeys: parseAdminPubkeys(env.ADMIN_PUBKEYS),
   }
@@ -129,36 +109,4 @@ function parseDnsServers(value: string | undefined): string[] {
   }
 
   return servers
-}
-
-function parseMaxMessageBytes(value: string | undefined): number {
-  if (!value) return DEFAULT_MAX_MESSAGE_BYTES
-
-  const bytes = Number(value)
-  if (!Number.isInteger(bytes) || bytes <= 0) {
-    throw new Error('MAX_MESSAGE_BYTES must be a positive integer')
-  }
-
-  return bytes
-}
-
-function parseUrls(
-  value: string | undefined,
-  name: string,
-  normalize: (url: string) => string | null,
-  fallback: string[],
-): string[] {
-  const urls = value
-    ?.split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-
-  if (!urls?.length) return fallback
-
-  const normalized = urls.map(normalize)
-  if (normalized.some((url) => url === null)) {
-    throw new Error(`${name} must contain comma-separated URLs of public hosts`)
-  }
-
-  return normalized as string[]
 }

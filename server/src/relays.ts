@@ -37,10 +37,11 @@ export interface RelayNetwork {
 export class NostrRelayNetwork implements RelayNetwork {
   private readonly pool = new SimplePool()
 
-  constructor(private readonly indexerRelays: string[]) {}
+  // The indexer relays are read on every lookup, as an admin may change them.
+  constructor(private readonly indexerRelays: () => string[]) {}
 
   async findInbox(pubkey: string): Promise<Inbox> {
-    const lists = await this.query(this.indexerRelays, {
+    const lists = await this.query(this.indexerRelays(), {
       kinds: [RELAY_LIST_KIND, DM_RELAY_LIST_KIND, BLOSSOM_SERVER_LIST_KIND],
       authors: [pubkey],
     })

@@ -33,6 +33,8 @@ Addresses. Each tab has its own URL fragment (`#dns`, `#abuse`, etc.).
 - Abuse: the mail sent to `abuse@` of every domain.
 - Server: the server's own DNS records (A, PTR and SPF), checked each time the
   page loads. The page opens on this tab while a record needs fixing.
+- Settings: the largest message, the Blossom servers given to new domains, the
+  domain relays and the indexer relays. Each one is saved on its own.
 
 `/admin/*` is the API, so the tabs are URL fragments (`/admin#abuse`). Only
 the keys of the server's `ADMIN_PUBKEYS` can open the page.

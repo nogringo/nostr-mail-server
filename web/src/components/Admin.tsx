@@ -19,10 +19,11 @@ import type { Signer } from '../lib/signer'
 import AbuseReportRow from './AbuseReportRow'
 import AllowedKeys from './AllowedKeys'
 import RecordRow from './RecordRow'
+import ServiceSettings from './ServiceSettings'
 import { type TabLink, Tabs, useHash } from './Tabs'
 import { Button, CopyButton, ErrorText, TONES, type Tone } from './ui'
 
-type Tab = 'domains' | 'access' | 'suspended' | 'abuse' | 'server'
+type Tab = 'domains' | 'access' | 'suspended' | 'abuse' | 'server' | 'settings'
 
 const RECORDS: [RecordId, string][] = [
   ['ownership', 'Ownership'],
@@ -101,8 +102,8 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
     }))
   }
 
-  async function changeSettings(settings: ServerSettings) {
-    const saved = await api.updateSettings(settings)
+  async function changeSettings(changes: Partial<ServerSettings>) {
+    const saved = await api.updateSettings(changes)
     setOverview((current) => ({ ...current, settings: saved }))
   }
 
@@ -120,6 +121,7 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
     { id: 'suspended', label: 'Suspended', count: suspensions.length },
     { id: 'abuse', label: 'Abuse', count: abuseReports.length },
     { id: 'server', label: 'Server', count: problemsIn(serverRecords), tone: 'bad' },
+    { id: 'settings', label: 'Settings' },
   ]
   const tab = tabs.find(({ id }) => id === hash)?.id ?? opening
 
@@ -156,7 +158,7 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
         domains={domains}
         onAllow={allow}
         onDisallow={disallow}
-        onOpenRegistration={(open) => changeSettings({ ...settings, openRegistration: open })}
+        onOpenRegistration={(open) => changeSettings({ openRegistration: open })}
       />
     ),
     suspended: (
@@ -201,6 +203,7 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
       </>
     ),
     server: <ServerDns records={serverRecords} />,
+    settings: <ServiceSettings settings={settings} onSave={changeSettings} />,
   }
 
   return (

@@ -9,6 +9,7 @@ import { publishDomainLists } from '../lists.js'
 import { generateKeyPair, parseNsec } from '../nostr.js'
 import { checkRecords, expectedRecords } from '../records.js'
 import type { RelayNetwork } from '../relays.js'
+import type { SettingsStore } from '../settings.js'
 import type {
   AbuseReport,
   ApiConfig,
@@ -36,14 +37,18 @@ type KeyRequest = FastifyRequest<{ Params: DomainParams; Body: { nsec?: unknown;
 export function registerDomainRoutes(
   app: FastifyInstance,
   repo: DomainRepository,
-  { config, dns, relays, signers }: { config: ApiConfig; dns: DnsLookup; relays: RelayNetwork; signers: DomainSigners },
+  {
+    config,
+    dns,
+    relays,
+    signers,
+    settings,
+  }: { config: ApiConfig; dns: DnsLookup; relays: RelayNetwork; signers: DomainSigners; settings: SettingsStore },
 ): void {
   const publishLists = (domain: Domain) =>
-    publishDomainLists(relays, signers.forDomain(domain), domain.blossomServers, config)
+    publishDomainLists(relays, signers.forDomain(domain), domain.blossomServers, settings.current)
   const canClaim = async (pubkey: string) =>
-    config.adminPubkeys.includes(pubkey) ||
-    (await repo.findSettings()).openRegistration ||
-    (await repo.isAllowedKey(pubkey))
+    config.adminPubkeys.includes(pubkey) || settings.current.openRegistration || (await repo.isAllowedKey(pubkey))
 
   app.get('/domains', async (request, reply) => {
     const pubkey = authenticate(request, reply)
@@ -91,7 +96,7 @@ export function registerDomainRoutes(
       dkimPrivateKey: dkim.privateKey,
       bridgePubkey: bridge.pubkey,
       bridgePrivateKey: bridge.privateKey,
-      blossomServers: config.blossomServers,
+      blossomServers: settings.current.blossomServers,
     })
     return reply.code(201).send({ domain: present(created, config, null, []) })
   })

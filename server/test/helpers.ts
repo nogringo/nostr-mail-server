@@ -14,6 +14,7 @@ import { generateDkimKeyPair } from '../src/dkim.js'
 import { NIP98_KIND } from '../src/nip98.js'
 import { generateKeyPair } from '../src/nostr.js'
 import type { Inbox, RelayNetwork, Subscription } from '../src/relays.js'
+import { SettingsStore } from '../src/settings.js'
 import { type KeySigner, localSigner } from '../src/signer.js'
 import { readTls, type TlsCredentials } from '../src/tls.js'
 import type {
@@ -37,6 +38,7 @@ import type {
   OutboundMessage,
   RecipientOutcome,
   ServerSettings,
+  StoredSettings,
   Suspension,
   TlsFiles,
 } from '../src/types.js'
@@ -48,12 +50,23 @@ export const domainConfig: DomainConfig = {
   spfInclude: '_spf.example.org',
   publicIpv4: '192.0.2.10',
   dkimSelector: 'nostrmail',
-  indexerRelays: ['wss://indexer.example.org/'],
-  domainRelays: ['wss://relay.example.org/'],
-  blossomServers: ['https://blossom.example.org'],
 }
 
 export const apiConfig: ApiConfig = { ...domainConfig, adminPubkeys: [] }
+
+export const testSettings: ServerSettings = {
+  openRegistration: false,
+  maxMessageBytes: 1024 * 1024,
+  blossomServers: ['https://blossom.example.org'],
+  domainRelays: ['wss://relay.example.org/'],
+  indexerRelays: ['wss://indexer.example.org/'],
+}
+
+// The settings of the repository, with these changes stored first.
+export function settingsStore(repo: MemoryDomainRepository, changes: Partial<ServerSettings> = {}): SettingsStore {
+  repo.storedSettings = { ...repo.storedSettings, ...changes }
+  return new SettingsStore(repo, repo.storedSettings)
+}
 
 export interface StoredRecipient {
   status: RecipientOutcome['status']
@@ -76,7 +89,7 @@ export class MemoryDomainRepository implements DomainRepository {
   readonly outbound = new Map<string, StoredOutboundMessage>()
   readonly suspensions = new Map<string, Suspension>()
   readonly allowedKeys = new Map<string, AllowedKey>()
-  settings: ServerSettings = { openRegistration: false }
+  storedSettings: StoredSettings = { ...testSettings, retiredDomainRelays: {} }
   readonly servedDomains = new Set<string>()
   serverKey: KeyPair | null = null
   readonly abuseReports: { report: AbuseReport; emailId: string; message: Buffer }[] = []
@@ -242,15 +255,14 @@ export class MemoryDomainRepository implements DomainRepository {
     return this.allowedKeys.delete(pubkey)
   }
 
-  async findSettings(): Promise<ServerSettings> {
+  async findSettings(): Promise<StoredSettings> {
     this.assertAvailable()
-    return this.settings
+    return this.storedSettings
   }
 
-  async updateSettings(settings: ServerSettings): Promise<ServerSettings> {
+  async updateSettings(settings: StoredSettings): Promise<void> {
     this.assertAvailable()
-    this.settings = { ...settings }
-    return this.settings
+    this.storedSettings = settings
   }
 
   async listAddresses(domain: string): Promise<Address[]> {
@@ -427,7 +439,7 @@ export function claim(domain: string, pubkey: string): NewDomain {
     dkimPrivateKey: 'private',
     bridgePubkey: bridge.pubkey,
     bridgePrivateKey: bridge.privateKey,
-    blossomServers: domainConfig.blossomServers,
+    blossomServers: testSettings.blossomServers,
   }
 }
 
@@ -739,7 +751,7 @@ export type App = ReturnType<typeof buildApp>
 export function request(
   app: App,
   user: Signer,
-  method: 'GET' | 'PUT' | 'POST' | 'DELETE',
+  method: 'GET' | 'PUT' | 'PATCH' | 'POST' | 'DELETE',
   path: string,
   payload?: object,
 ) {

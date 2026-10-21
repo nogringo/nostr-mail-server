@@ -21,6 +21,7 @@ import {
   openWrap,
   readFixtureTls,
   replyReader,
+  settingsStore,
   signer,
   verifyDomain,
 } from './helpers.js'
@@ -59,18 +60,14 @@ async function setup({
   const blobs = new FakeBlobStore()
   const authDns = new FakeAuthDns()
   const serverKey = generateKeyPair()
+  const settings = settingsStore(repo, { maxMessageBytes: MAX_MESSAGE_BYTES, blossomServers: [SERVER_BLOSSOM] })
   const server = createSmtpServer(
     repo,
     network,
     blobs,
     authDns.resolve,
-    {
-      mxHost: 'mx.example.org',
-      maxMessageBytes: MAX_MESSAGE_BYTES,
-      adminPubkeys,
-      blossomServers: [SERVER_BLOSSOM],
-      serverPrivateKey: serverKey.privateKey,
-    },
+    settings,
+    { mxHost: 'mx.example.org', adminPubkeys, serverPrivateKey: serverKey.privateKey },
     { tls, signers: new DomainSigners({ open: bunker.open, timeoutMs: 50 }) },
   )
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -90,7 +87,7 @@ async function setup({
   const send = (to: string[], raw = MESSAGE) =>
     transport.sendMail({ envelope: { from: 'alice@sender.example', to }, raw })
 
-  return { repo, network, blobs, authDns, port, serverKey, owner, domain, bob, send }
+  return { repo, network, blobs, authDns, port, serverKey, owner, domain, bob, send, settings }
 }
 
 test('a message to a declared address is gift wrapped to its pubkey and published', async () => {
@@ -443,7 +440,7 @@ test('the message is deferred with 451 when no Blossom server stores it', async 
   expect(network.published).toHaveLength(0)
 })
 
-test('a message over MAX_MESSAGE_BYTES is refused with 552 after DATA', async () => {
+test('a message over the size limit is refused with 552 after DATA', async () => {
   const { network, blobs, port } = await setup()
   const line = 'x'.repeat(76)
   const body = Array.from({ length: Math.ceil(MAX_MESSAGE_BYTES / line.length) + 1 }, () => line).join('\r\n')
@@ -594,6 +591,28 @@ function decryptBlob(bytes: Buffer, rumor: NostrEvent): string {
 }
 
 // Sends each command once the previous reply is complete and returns every reply, greeting first.
+test('a new size limit applies from the next connection', async () => {
+  const { network, port, settings } = await setup()
+  await settings.update({ maxMessageBytes: 128 * 1024 })
+  const body = 'x'
+    .repeat(76)
+    .concat('\r\n')
+    .repeat(Math.ceil((160 * 1024) / 78))
+
+  const replies = await converse(port, [
+    'EHLO client.example',
+    'MAIL FROM:<alice@sender.example>',
+    'RCPT TO:<bob@example.com>',
+    'DATA',
+    `Subject: Big\r\n\r\n${body}.`,
+    'QUIT',
+  ])
+
+  expect(replies[1]).toContain('SIZE 131072')
+  expect(replies[5]).toMatch(/^552 5\.3\.4 Messages are limited to 131072 bytes/)
+  expect(network.published).toHaveLength(0)
+})
+
 async function converse(port: number, commands: string[]): Promise<string[]> {
   const socket = connect(port, '127.0.0.1')
   const reply = replyReader(socket)

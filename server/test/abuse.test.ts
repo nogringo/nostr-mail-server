@@ -7,6 +7,7 @@ import {
   FakeRelayNetwork,
   MemoryDomainRepository,
   request,
+  settingsStore,
   signer,
   verifyDomain,
 } from './helpers.js'
@@ -16,7 +17,13 @@ const MESSAGE = Buffer.from('From: spam@sender.example\r\nSubject: Spam\r\n\r\nH
 function setup() {
   const repo = new MemoryDomainRepository()
   const admin = signer()
-  const app = buildApp(repo, { ...apiConfig, adminPubkeys: [admin.pubkey] }, new FakeDns(), new FakeRelayNetwork())
+  const app = buildApp(
+    repo,
+    { ...apiConfig, adminPubkeys: [admin.pubkey] },
+    new FakeDns(),
+    new FakeRelayNetwork(),
+    settingsStore(repo),
+  )
   return { repo, app, admin }
 }
 

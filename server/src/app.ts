@@ -7,6 +7,7 @@ import { registerCertificateRoutes } from './handlers/certificates.js'
 import { registerDomainRoutes } from './handlers/domains.js'
 import { registerNip05Routes } from './handlers/nip05.js'
 import type { RelayNetwork } from './relays.js'
+import type { SettingsStore } from './settings.js'
 import type { ApiConfig, DnsLookup, DomainRepository } from './types.js'
 
 export function buildApp(
@@ -14,6 +15,7 @@ export function buildApp(
   config: ApiConfig,
   dns: DnsLookup,
   relays: RelayNetwork,
+  settings: SettingsStore,
   { logger = false, signers = new DomainSigners() }: { logger?: boolean; signers?: DomainSigners } = {},
 ) {
   const app = Fastify({ logger })
@@ -26,11 +28,11 @@ export function buildApp(
   })
 
   app.get('/healthz', async () => 'ok')
-  registerDomainRoutes(app, repo, { config, dns, relays, signers })
+  registerDomainRoutes(app, repo, { config, dns, relays, signers, settings })
   registerAddressRoutes(app, repo)
   registerNip05Routes(app, repo)
   registerCertificateRoutes(app, repo)
-  registerAdminRoutes(app, repo, { config, dns })
+  registerAdminRoutes(app, repo, { config, dns, relays, signers, settings })
   registerAbuseRoutes(app, repo, config.adminPubkeys)
 
   return app

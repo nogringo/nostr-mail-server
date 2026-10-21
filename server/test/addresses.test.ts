@@ -8,13 +8,14 @@ import {
   FakeRelayNetwork,
   MemoryDomainRepository,
   request,
+  settingsStore,
   signer,
   verifyDomain,
 } from './helpers.js'
 
 async function setup() {
   const repo = new MemoryDomainRepository()
-  const app = buildApp(repo, apiConfig, new FakeDns(), new FakeRelayNetwork())
+  const app = buildApp(repo, apiConfig, new FakeDns(), new FakeRelayNetwork(), settingsStore(repo))
   const owner = signer()
   await verifyDomain(repo, 'example.com', owner.pubkey)
   return { repo, app, owner }

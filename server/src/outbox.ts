@@ -5,8 +5,9 @@ import type { DeliveryResult, MailTransport } from './delivery.js'
 import { signMessage } from './dkim.js'
 import { checkAuthor, checkSender, type OutboundEmail, openOutboundWrap, Refusal } from './outbound.js'
 import type { RelayNetwork, Subscription } from './relays.js'
+import type { SettingsStore } from './settings.js'
 import type { KeySigner } from './signer.js'
-import type { AppConfig, Domain, DomainRepository, OutboundMessage, RecipientOutcome } from './types.js'
+import type { Domain, DomainRepository, OutboundMessage, RecipientOutcome } from './types.js'
 
 const GIFT_WRAP_KIND = 1059
 const TICK_MS = 30_000
@@ -29,8 +30,6 @@ export interface OutboxLogger {
   error(details: object, message: string): void
 }
 
-type OutboxConfig = Pick<AppConfig, 'domainRelays' | 'blossomServers' | 'maxMessageBytes'>
-
 // Sends the mail clients gift wrap to the domain keys. A wrap is checked and
 // queued as it arrives, then delivered over SMTP and retried while the
 // recipient's server defers it.
@@ -41,6 +40,8 @@ export class Outbox {
   private readonly seen = new Map<string, number>()
   private timer: NodeJS.Timeout | undefined
   private renewedAt = 0
+  // The relays the subscriptions listen on.
+  private listening = ''
   private prunedAt = 0
   private draining: Promise<void> | null = null
   private drainAgain = false
@@ -50,7 +51,7 @@ export class Outbox {
     private readonly relays: RelayNetwork,
     private readonly blobs: BlobStore,
     private readonly transport: MailTransport,
-    private readonly config: OutboxConfig,
+    private readonly settings: SettingsStore,
     private readonly logger: OutboxLogger,
     private readonly signers = new DomainSigners(),
   ) {}
@@ -81,13 +82,18 @@ export class Outbox {
   }
 
   // One subscription per verified domain key, authenticated as that key. A key
-  // that moves between the server and a bunker gets a new one.
+  // that moves between the server and a bunker gets a new one, and every key
+  // does when the relays change.
   async syncSubscriptions(): Promise<void> {
     const signers = new Map(
       (await this.repo.listVerifiedDomains()).map((domain) => [domain.bridgePubkey, this.signers.forDomain(domain)]),
     )
-    const renew = Date.now() - this.renewedAt >= RENEW_SUBSCRIPTIONS_MS
-    if (renew) this.renewedAt = Date.now()
+    const relays = this.settings.outboxRelays()
+    const renew = Date.now() - this.renewedAt >= RENEW_SUBSCRIPTIONS_MS || relays.join(' ') !== this.listening
+    if (renew) {
+      this.renewedAt = Date.now()
+      this.listening = relays.join(' ')
+    }
 
     for (const [pubkey, { subscription, signer }] of this.subscriptions) {
       if (renew || signers.get(pubkey) !== signer) {
@@ -97,7 +103,7 @@ export class Outbox {
     }
     for (const [pubkey, signer] of signers) {
       if (!this.subscriptions.has(pubkey))
-        this.subscriptions.set(pubkey, { subscription: this.subscribe(signer), signer })
+        this.subscriptions.set(pubkey, { subscription: this.subscribe(signer, relays), signer })
     }
 
     const oldest = now() - LOOKBACK_SECONDS
@@ -141,9 +147,9 @@ export class Outbox {
     return this.draining
   }
 
-  private subscribe(signer: KeySigner): Subscription {
+  private subscribe(signer: KeySigner, relays: string[]): Subscription {
     return this.relays.subscribe(
-      this.config.domainRelays,
+      relays,
       { kinds: [GIFT_WRAP_KIND], '#p': [signer.pubkey], since: now() - LOOKBACK_SECONDS },
       signer,
       (wrap) => {
@@ -217,8 +223,9 @@ export class Outbox {
     if ('mime' in email.body) return toCrlf(Buffer.from(email.body.mime))
 
     const { sha256, key, nonce } = email.body.blob
-    const maxBytes = this.config.maxMessageBytes + AUTH_TAG_BYTES
-    const servers = [...new Set([...domain.blossomServers, ...this.config.blossomServers])]
+    const settings = this.settings.current
+    const maxBytes = settings.maxMessageBytes + AUTH_TAG_BYTES
+    const servers = [...new Set([...domain.blossomServers, ...settings.blossomServers])]
     let bytes = await this.blobs.download(servers, sha256, maxBytes)
     if (!bytes) {
       const { blossomServers } = await this.relays.findInbox(email.senderPubkey)
