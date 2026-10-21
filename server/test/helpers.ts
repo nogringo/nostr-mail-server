@@ -19,6 +19,7 @@ import { readTls, type TlsCredentials } from '../src/tls.js'
 import type {
   AbuseReport,
   Address,
+  AllowedKey,
   ApiConfig,
   BridgeKey,
   DnsLookup,
@@ -35,6 +36,7 @@ import type {
   NewOutboundMessage,
   OutboundMessage,
   RecipientOutcome,
+  ServerSettings,
   Suspension,
   TlsFiles,
 } from '../src/types.js'
@@ -73,6 +75,8 @@ export class MemoryDomainRepository implements DomainRepository {
   readonly addresses = new Map<string, Address>()
   readonly outbound = new Map<string, StoredOutboundMessage>()
   readonly suspensions = new Map<string, Suspension>()
+  readonly allowedKeys = new Map<string, AllowedKey>()
+  settings: ServerSettings = { openRegistration: false }
   readonly servedDomains = new Set<string>()
   serverKey: KeyPair | null = null
   readonly abuseReports: { report: AbuseReport; emailId: string; message: Buffer }[] = []
@@ -214,6 +218,39 @@ export class MemoryDomainRepository implements DomainRepository {
   async unsuspendDomain(domain: string): Promise<boolean> {
     this.assertAvailable()
     return this.suspensions.delete(domain)
+  }
+
+  async listAllowedKeys(): Promise<AllowedKey[]> {
+    this.assertAvailable()
+    return [...this.allowedKeys.values()]
+  }
+
+  async isAllowedKey(pubkey: string): Promise<boolean> {
+    this.assertAvailable()
+    return this.allowedKeys.has(pubkey)
+  }
+
+  async allowKey(pubkey: string): Promise<AllowedKey> {
+    this.assertAvailable()
+    const allowedKey = this.allowedKeys.get(pubkey) ?? { pubkey, allowedAt: new Date().toISOString() }
+    this.allowedKeys.set(pubkey, allowedKey)
+    return allowedKey
+  }
+
+  async disallowKey(pubkey: string): Promise<boolean> {
+    this.assertAvailable()
+    return this.allowedKeys.delete(pubkey)
+  }
+
+  async findSettings(): Promise<ServerSettings> {
+    this.assertAvailable()
+    return this.settings
+  }
+
+  async updateSettings(settings: ServerSettings): Promise<ServerSettings> {
+    this.assertAvailable()
+    this.settings = { ...settings }
+    return this.settings
   }
 
   async listAddresses(domain: string): Promise<Address[]> {

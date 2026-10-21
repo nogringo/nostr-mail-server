@@ -23,6 +23,7 @@ import {
 
 function setup(bunker = new FakeBunker()) {
   const repo = new MemoryDomainRepository()
+  repo.settings = { openRegistration: true }
   const dns = new FakeDns()
   const network = new FakeRelayNetwork()
   const signers = new DomainSigners({ open: bunker.open, timeoutMs: 50, connectTimeoutMs: 50 })
@@ -143,6 +144,64 @@ test('GET /domains lists only the caller claims', async () => {
 
   expect(response.statusCode).toBe(200)
   expect(response.json().domains.map((domain: { domain: string }) => domain.domain)).toEqual(['a.example', 'b.example'])
+  expect(response.json().canClaim).toBe(true)
+
+  await app.close()
+})
+
+function closedSetup() {
+  const repo = new MemoryDomainRepository()
+  const admin = signer()
+  const app = buildApp(repo, { ...apiConfig, adminPubkeys: [admin.pubkey] }, new FakeDns(), new FakeRelayNetwork())
+  return { repo, app, admin }
+}
+
+test('while registration is closed only the admins and the allowed keys connect a domain', async () => {
+  const { repo, app, admin } = closedSetup()
+  const alice = signer()
+  const stranger = signer()
+  await repo.allowKey(alice.pubkey)
+
+  const refused = await request(app, stranger, 'PUT', '/domains/stranger.example')
+  const allowed = await request(app, alice, 'PUT', '/domains/alice.example')
+  const byAdmin = await request(app, admin, 'PUT', '/domains/admin.example')
+
+  expect(refused.statusCode).toBe(403)
+  expect(refused.json()).toEqual({ error: 'not_allowed' })
+  expect(await repo.findDomain('stranger.example', stranger.pubkey)).toBeNull()
+  expect([allowed.statusCode, byAdmin.statusCode]).toEqual([201, 201])
+
+  await app.close()
+})
+
+test('GET /domains tells whether the key can connect a domain', async () => {
+  const { repo, app, admin } = closedSetup()
+  const alice = signer()
+  await repo.allowKey(alice.pubkey)
+
+  const answers = await Promise.all(
+    [signer(), alice, admin].map(async (user) => (await request(app, user, 'GET', '/domains')).json().canClaim),
+  )
+
+  expect(answers).toEqual([false, true, true])
+
+  await app.close()
+})
+
+test('a key no longer allowed keeps its claims but makes no new one', async () => {
+  const { repo, app } = closedSetup()
+  const alice = signer()
+  await repo.allowKey(alice.pubkey)
+  await request(app, alice, 'PUT', '/domains/alice.example')
+  await repo.disallowKey(alice.pubkey)
+
+  const again = await request(app, alice, 'PUT', '/domains/alice.example')
+  const other = await request(app, alice, 'PUT', '/domains/other.example')
+  const listed = await request(app, alice, 'GET', '/domains')
+
+  expect(again.statusCode).toBe(200)
+  expect(other.statusCode).toBe(403)
+  expect(listed.json().domains.map((domain: { domain: string }) => domain.domain)).toEqual(['alice.example'])
 
   await app.close()
 })

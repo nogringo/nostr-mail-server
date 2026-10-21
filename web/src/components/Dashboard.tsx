@@ -1,32 +1,40 @@
 import { useEffect, useMemo, useState } from 'react'
-import { createApi, type Domain } from '../lib/api'
+import { createApi, type Domain, type DomainList } from '../lib/api'
 import { domainHref, domainStatus } from '../lib/domain'
 import { describeError } from '../lib/errors'
 import { plural, timeAgo } from '../lib/format'
 import type { Signer } from '../lib/signer'
+import PrivateServer from './PrivateServer'
 import { ButtonLink, ErrorText, TONES } from './ui'
 
 export default function Dashboard({ signer }: { signer: Signer }) {
   const api = useMemo(() => createApi(signer), [signer])
-  const [domains, setDomains] = useState<Domain[] | null>(null)
+  const [list, setList] = useState<DomainList | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    api.listDomains().then(setDomains, (failure) => setError(describeError(failure)))
+    api.listDomains().then(setList, (failure) => setError(describeError(failure)))
   }, [api])
+
+  const domains = list?.domains
 
   return (
     <div className="pt-10 sm:pt-16">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="font-semibold text-3xl tracking-tight">Your domains</h1>
-        <ButtonLink href="/connect">Connect a domain</ButtonLink>
+        {list?.canClaim && <ButtonLink href="/connect">Connect a domain</ButtonLink>}
       </div>
       {error && (
         <div className="mt-6">
           <ErrorText>{error}</ErrorText>
         </div>
       )}
-      {domains?.length === 0 && (
+      {list && !list.canClaim && (
+        <div className="mt-6">
+          <PrivateServer pubkey={signer.pubkey} />
+        </div>
+      )}
+      {list?.canClaim && domains?.length === 0 && (
         <p className="mt-6 max-w-xl text-muted">
           No domain yet. Connect one you own to receive its mail in Nostr Mail.
         </p>

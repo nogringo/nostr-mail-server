@@ -25,6 +25,10 @@ Addresses. Each tab has its own URL fragment (`#dns`, `#abuse`, etc.).
 - Domains: every domain connected to the server, verified or not, with its
   owner, its named addresses and the records of its last check. Each one can
   be suspended.
+- Access: who can connect a domain (the admins and the allowed keys, or any
+  key), then the allowed keys, with the adding and removal of a key. A key that may not connect a domain sees, on
+  its domains page and on `/connect`, that the server is private, with its
+  npub to send to the admin.
 - Suspended: the suspended domains, and the lifting of a suspension.
 - Abuse: the mail sent to `abuse@` of every domain.
 - Server: the server's own DNS records (A, PTR and SPF), checked each time the

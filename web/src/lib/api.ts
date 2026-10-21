@@ -57,6 +57,12 @@ export interface AbuseReport {
   receivedAt: string
 }
 
+export interface DomainList {
+  domains: Domain[]
+  // Whether this key may connect a new domain.
+  canClaim: boolean
+}
+
 export interface Address {
   localPart: string
   address: string
@@ -80,9 +86,22 @@ export interface Suspension {
   suspendedAt: string
 }
 
+// A key an admin lets connect domains.
+export interface AllowedKey {
+  pubkey: string
+  allowedAt: string
+}
+
+export interface ServerSettings {
+  // Any key connects domains, so the allowed keys do not matter.
+  openRegistration: boolean
+}
+
 export interface AdminOverview {
   domains: AdminDomain[]
   suspensions: Suspension[]
+  allowedKeys: AllowedKey[]
+  settings: ServerSettings
   abuseReports: AbuseReport[]
   serverRecords: ServerRecord[]
 }
@@ -139,7 +158,7 @@ export function createApi(
     `${domainPath(name)}/addresses/${encodeURIComponent(localPart)}`
 
   return {
-    listDomains: async (): Promise<Domain[]> => (await call('GET', '/domains')).domains,
+    listDomains: (): Promise<DomainList> => call('GET', '/domains'),
     getDomain: async (name: string): Promise<Domain> => (await call('GET', domainPath(name))).domain,
     connectDomain: async (name: string): Promise<Domain> => (await call('PUT', domainPath(name))).domain,
     checkDomain: async (name: string): Promise<Domain> => (await call('POST', `${domainPath(name)}/check`)).domain,
@@ -165,5 +184,12 @@ export function createApi(
     liftSuspension: async (name: string): Promise<void> => {
       await call('DELETE', `/admin${domainPath(name)}/suspension`)
     },
+    allowKey: async (key: string): Promise<AllowedKey> =>
+      (await call('PUT', `/admin/allowed-keys/${encodeURIComponent(key)}`)).allowedKey,
+    disallowKey: async (pubkey: string): Promise<void> => {
+      await call('DELETE', `/admin/allowed-keys/${pubkey}`)
+    },
+    updateSettings: async (settings: ServerSettings): Promise<ServerSettings> =>
+      (await call('PUT', '/admin/settings', { ...settings })).settings,
   }
 }

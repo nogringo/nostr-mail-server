@@ -98,7 +98,14 @@ test('reads the nsec of the domain key and replaces it with an nsec or a bunker'
 })
 
 test('loads the overview of the server for an admin', async () => {
-  const overview = { domains: [], suspensions: [], abuseReports: [], serverRecords: [] }
+  const overview = {
+    domains: [],
+    suspensions: [],
+    allowedKeys: [],
+    settings: { openRegistration: false },
+    abuseReports: [],
+    serverRecords: [],
+  }
   const { api, requests } = recordingApi(() => Response.json(overview))
 
   expect(await api.adminOverview()).toEqual(overview)
@@ -119,6 +126,31 @@ test('suspends a domain and lifts its suspension', async () => {
   expect(requests.map(({ url, init }) => [init.method, url])).toEqual([
     ['PUT', `${ORIGIN}/admin/domains/example.com/suspension`],
     ['DELETE', `${ORIGIN}/admin/domains/example.com/suspension`],
+  ])
+})
+
+test('allows a key by its npub and takes it back by its hex', async () => {
+  const allowedKey = { pubkey: 'a'.repeat(64), allowedAt: '' }
+  const { api, requests } = recordingApi(() =>
+    requests.length === 1 ? Response.json({ allowedKey }, { status: 201 }) : new Response(null, { status: 204 }),
+  )
+
+  expect(await api.allowKey('npub1abc')).toEqual(allowedKey)
+  await api.disallowKey(allowedKey.pubkey)
+
+  expect(requests.map(({ url, init }) => [init.method, url])).toEqual([
+    ['PUT', `${ORIGIN}/admin/allowed-keys/npub1abc`],
+    ['DELETE', `${ORIGIN}/admin/allowed-keys/${'a'.repeat(64)}`],
+  ])
+})
+
+test('changes the settings of the server', async () => {
+  const { api, requests } = recordingApi(() => Response.json({ settings: { openRegistration: true } }))
+
+  expect(await api.updateSettings({ openRegistration: true })).toEqual({ openRegistration: true })
+
+  expect(requests.map(({ url, init }) => [init.method, url, init.body])).toEqual([
+    ['PUT', `${ORIGIN}/admin/settings`, '{"openRegistration":true}'],
   ])
 })
 

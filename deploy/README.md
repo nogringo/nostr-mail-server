@@ -38,9 +38,9 @@ sudo docker compose up -d --build
 
 `ADMIN_PUBKEYS` lists the npubs that can sign in at `https://SITE_HOST/admin`
 and see every domain connected to the server. They also receive the mail sent
-to `abuse@` on every domain. Caddy gets the certificate when
-it starts. To update, copy the new code
-and run `sudo docker compose up -d --build` again. Logs:
+to `abuse@` on every domain. Only they, and the keys they allow on that page,
+can connect a domain, unless they open the server to any key there. Caddy gets
+the certificate when it starts. To update, copy the new code and run `sudo docker compose up -d --build` again. Logs:
 `sudo docker compose logs -f server`.
 
 The SMTP server waits for that certificate: on a first start it restarts until

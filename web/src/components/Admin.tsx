@@ -10,17 +10,19 @@ import {
   type RecordCheck,
   type RecordId,
   type ServerRecord,
+  type ServerSettings,
   type Suspension,
 } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { npubOf, plural, shortNpub, timeAgo } from '../lib/format'
 import type { Signer } from '../lib/signer'
 import AbuseReportRow from './AbuseReportRow'
+import AllowedKeys from './AllowedKeys'
 import RecordRow from './RecordRow'
 import { type TabLink, Tabs, useHash } from './Tabs'
 import { Button, CopyButton, ErrorText, TONES, type Tone } from './ui'
 
-type Tab = 'domains' | 'suspended' | 'abuse' | 'server'
+type Tab = 'domains' | 'access' | 'suspended' | 'abuse' | 'server'
 
 const RECORDS: [RecordId, string][] = [
   ['ownership', 'Ownership'],
@@ -81,7 +83,30 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
     }))
   }
 
-  const { domains, suspensions, abuseReports, serverRecords } = overview
+  async function allow(key: string) {
+    const allowedKey = await api.allowKey(key)
+    setOverview((current) => ({
+      ...current,
+      allowedKeys: current.allowedKeys.some((other) => other.pubkey === allowedKey.pubkey)
+        ? current.allowedKeys
+        : [...current.allowedKeys, allowedKey],
+    }))
+  }
+
+  async function disallow(pubkey: string) {
+    await api.disallowKey(pubkey)
+    setOverview((current) => ({
+      ...current,
+      allowedKeys: current.allowedKeys.filter((other) => other.pubkey !== pubkey),
+    }))
+  }
+
+  async function changeSettings(settings: ServerSettings) {
+    const saved = await api.updateSettings(settings)
+    setOverview((current) => ({ ...current, settings: saved }))
+  }
+
+  const { domains, suspensions, allowedKeys, settings, abuseReports, serverRecords } = overview
   const suspended = new Set(suspensions.map((suspension) => suspension.domain))
   const served = domains.filter((domain) => !suspended.has(domain.domain))
   const verified = served.filter((domain) => domain.verifiedAt)
@@ -91,6 +116,7 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
 
   const tabs: TabLink<Tab>[] = [
     { id: 'domains', label: 'Domains' },
+    { id: 'access', label: 'Access', count: settings.openRegistration ? 0 : allowedKeys.length },
     { id: 'suspended', label: 'Suspended', count: suspensions.length },
     { id: 'abuse', label: 'Abuse', count: abuseReports.length },
     { id: 'server', label: 'Server', count: problemsIn(serverRecords), tone: 'bad' },
@@ -123,6 +149,16 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
           )}
         </div>
       ),
+    access: (
+      <AllowedKeys
+        allowedKeys={allowedKeys}
+        openRegistration={settings.openRegistration}
+        domains={domains}
+        onAllow={allow}
+        onDisallow={disallow}
+        onOpenRegistration={(open) => changeSettings({ ...settings, openRegistration: open })}
+      />
+    ),
     suspended: (
       <>
         <p className="text-muted text-sm">

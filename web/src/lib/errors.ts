@@ -18,6 +18,8 @@ const MESSAGES: Record<string, string> = {
   not_admin: 'This key is not an admin of this server. Add its npub to ADMIN_PUBKEYS.',
   domain_suspended: 'The admin of this server suspended this domain.',
   suspension_not_found: 'This domain is no longer suspended. Reload the page.',
+  not_allowed: 'This server is private: its admin chooses the keys that connect domains.',
+  allowed_key_not_found: 'This key is no longer allowed. Reload the page.',
   no_extension: 'No Nostr extension found in this browser.',
   invalid_bunker: 'Enter a bunker:// link or the name@domain of your bunker.',
   bunker_timeout: 'Your bunker did not answer in time.',

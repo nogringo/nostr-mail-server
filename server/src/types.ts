@@ -91,6 +91,17 @@ export interface Suspension {
   suspendedAt: string
 }
 
+export interface AllowedKey {
+  pubkey: string
+  allowedAt: string
+}
+
+// What the admins change from the /admin page.
+export interface ServerSettings {
+  // Any key may claim a domain, not only the admins and the allowed keys.
+  openRegistration: boolean
+}
+
 // A NIP-46 remote signer that holds a domain key.
 export interface BunkerKey {
   // The bunker's own key, which answers the requests.
@@ -197,6 +208,13 @@ export interface DomainRepository {
   // Returns the existing suspension when the domain is already suspended.
   suspendDomain(domain: string): Promise<Suspension>
   unsuspendDomain(domain: string): Promise<boolean>
+  listAllowedKeys(): Promise<AllowedKey[]>
+  isAllowedKey(pubkey: string): Promise<boolean>
+  // Returns the existing entry when the key is already allowed.
+  allowKey(pubkey: string): Promise<AllowedKey>
+  disallowKey(pubkey: string): Promise<boolean>
+  findSettings(): Promise<ServerSettings>
+  updateSettings(settings: ServerSettings): Promise<ServerSettings>
   listAddresses(domain: string): Promise<Address[]>
   findAddress(domain: string, localPart: string): Promise<Address | null>
   // Creates the address, or points an existing one at the new pubkey.

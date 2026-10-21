@@ -3,6 +3,7 @@ import pg from 'pg'
 import type {
   AbuseReport,
   Address,
+  AllowedKey,
   BridgeKey,
   BunkerKey,
   Domain,
@@ -16,6 +17,7 @@ import type {
   NewOutboundMessage,
   OutboundMessage,
   RecipientOutcome,
+  ServerSettings,
   Suspension,
 } from './types.js'
 
@@ -58,6 +60,11 @@ interface AddressRow {
 interface SuspensionRow {
   domain: string
   suspended_at: Date
+}
+
+interface AllowedKeyRow {
+  pubkey: string
+  allowed_at: Date
 }
 
 interface AbuseReportRow {
@@ -268,6 +275,45 @@ export class PgDomainRepository implements DomainRepository {
   async unsuspendDomain(domain: string): Promise<boolean> {
     const result = await this.pool.query('delete from suspended_domains where domain = $1', [domain])
     return (result.rowCount ?? 0) > 0
+  }
+
+  async listAllowedKeys(): Promise<AllowedKey[]> {
+    const result = await this.pool.query<AllowedKeyRow>(
+      'select pubkey, allowed_at from allowed_keys order by allowed_at asc, pubkey asc',
+    )
+    return result.rows.map(toAllowedKey)
+  }
+
+  async isAllowedKey(pubkey: string): Promise<boolean> {
+    const result = await this.pool.query('select 1 from allowed_keys where pubkey = $1', [pubkey])
+    return (result.rowCount ?? 0) > 0
+  }
+
+  async allowKey(pubkey: string): Promise<AllowedKey> {
+    await this.pool.query('insert into allowed_keys (pubkey) values ($1) on conflict (pubkey) do nothing', [pubkey])
+    const result = await this.pool.query<AllowedKeyRow>(
+      'select pubkey, allowed_at from allowed_keys where pubkey = $1',
+      [pubkey],
+    )
+    if (!result.rows[0]) throw new Error(`The allowed key ${pubkey} disappeared while being created`)
+    return toAllowedKey(result.rows[0])
+  }
+
+  async disallowKey(pubkey: string): Promise<boolean> {
+    const result = await this.pool.query('delete from allowed_keys where pubkey = $1', [pubkey])
+    return (result.rowCount ?? 0) > 0
+  }
+
+  async findSettings(): Promise<ServerSettings> {
+    const result = await this.pool.query<{ open_registration: boolean }>(
+      'select open_registration from server_settings',
+    )
+    return { openRegistration: result.rows[0].open_registration }
+  }
+
+  async updateSettings(settings: ServerSettings): Promise<ServerSettings> {
+    await this.pool.query('update server_settings set open_registration = $1', [settings.openRegistration])
+    return this.findSettings()
   }
 
   async listAddresses(domain: string): Promise<Address[]> {
@@ -487,6 +533,10 @@ function toDomain(row: DomainRow): Domain {
 
 function toSuspension(row: SuspensionRow): Suspension {
   return { domain: row.domain, suspendedAt: row.suspended_at.toISOString() }
+}
+
+function toAllowedKey(row: AllowedKeyRow): AllowedKey {
+  return { pubkey: row.pubkey, allowedAt: row.allowed_at.toISOString() }
 }
 
 function toAbuseReport(row: AbuseReportRow): AbuseReport {

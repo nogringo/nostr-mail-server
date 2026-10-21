@@ -1,3 +1,4 @@
+import { npubEncode } from 'nostr-tools/nip19'
 import { expect, test } from 'vitest'
 import { buildApp } from '../src/app.js'
 import {
@@ -32,6 +33,8 @@ test('GET /admin/domains lists every claim of every key with its address count',
 
   expect(response.statusCode).toBe(200)
   expect(response.json().suspensions).toEqual([])
+  expect(response.json().allowedKeys).toEqual([])
+  expect(response.json().settings).toEqual({ openRegistration: false })
   expect(response.json().domains).toEqual([
     {
       domain: 'example.com',
@@ -206,6 +209,99 @@ test('suspending an invalid domain answers 400', async () => {
 
   expect(response.statusCode).toBe(400)
   expect(response.json()).toEqual({ error: 'invalid_domain' })
+
+  await app.close()
+})
+
+test('an admin allows a key, by npub or hex, then takes it back', async () => {
+  const { repo, app, admin } = setup()
+  const alice = signer()
+
+  const created = await request(app, admin, 'PUT', `/admin/allowed-keys/${npubEncode(alice.pubkey)}`)
+  const again = await request(app, admin, 'PUT', `/admin/allowed-keys/${alice.pubkey}`)
+  const overview = await request(app, admin, 'GET', '/admin/domains')
+
+  expect(created.statusCode).toBe(201)
+  expect(created.json()).toEqual({ allowedKey: { pubkey: alice.pubkey, allowedAt: expect.any(String) } })
+  expect(again.statusCode).toBe(200)
+  expect(again.json()).toEqual(created.json())
+  expect(overview.json().allowedKeys).toEqual([created.json().allowedKey])
+
+  const removed = await request(app, admin, 'DELETE', `/admin/allowed-keys/${npubEncode(alice.pubkey)}`)
+  const removedAgain = await request(app, admin, 'DELETE', `/admin/allowed-keys/${alice.pubkey}`)
+
+  expect(removed.statusCode).toBe(204)
+  expect(removedAgain.statusCode).toBe(404)
+  expect(removedAgain.json()).toEqual({ error: 'allowed_key_not_found' })
+  expect(await repo.isAllowedKey(alice.pubkey)).toBe(false)
+
+  await app.close()
+})
+
+test('allowing something that is not a key answers 400', async () => {
+  const { app, admin } = setup()
+
+  const response = await request(app, admin, 'PUT', '/admin/allowed-keys/alice@example.com')
+
+  expect(response.statusCode).toBe(400)
+  expect(response.json()).toEqual({ error: 'invalid_pubkey' })
+
+  await app.close()
+})
+
+test('only an admin manages the allowed keys', async () => {
+  const { repo, app } = setup()
+  const alice = signer()
+  const bob = signer()
+  await repo.allowKey(bob.pubkey)
+
+  const allow = await request(app, alice, 'PUT', `/admin/allowed-keys/${alice.pubkey}`)
+  const remove = await request(app, alice, 'DELETE', `/admin/allowed-keys/${bob.pubkey}`)
+
+  expect([allow.statusCode, remove.statusCode]).toEqual([403, 403])
+  expect(await repo.isAllowedKey(alice.pubkey)).toBe(false)
+  expect(await repo.isAllowedKey(bob.pubkey)).toBe(true)
+
+  await app.close()
+})
+
+test('an admin opens registration to any key, then closes it', async () => {
+  const { repo, app, admin } = setup()
+
+  const opened = await request(app, admin, 'PUT', '/admin/settings', { openRegistration: true })
+  const overview = await request(app, admin, 'GET', '/admin/domains')
+
+  expect(opened.statusCode).toBe(200)
+  expect(opened.json()).toEqual({ settings: { openRegistration: true } })
+  expect(overview.json().settings).toEqual({ openRegistration: true })
+
+  const closed = await request(app, admin, 'PUT', '/admin/settings', { openRegistration: false })
+
+  expect(closed.json()).toEqual({ settings: { openRegistration: false } })
+  expect(await repo.findSettings()).toEqual({ openRegistration: false })
+
+  await app.close()
+})
+
+test('settings that are not a boolean answer 400', async () => {
+  const { app, admin } = setup()
+
+  const missing = await request(app, admin, 'PUT', '/admin/settings', {})
+  const text = await request(app, admin, 'PUT', '/admin/settings', { openRegistration: 'true' })
+
+  expect([missing.statusCode, text.statusCode]).toEqual([400, 400])
+  expect(text.json()).toEqual({ error: 'invalid_settings' })
+
+  await app.close()
+})
+
+test('only an admin changes the settings', async () => {
+  const { repo, app } = setup()
+
+  const response = await request(app, signer(), 'PUT', '/admin/settings', { openRegistration: true })
+
+  expect(response.statusCode).toBe(403)
+  expect(await repo.findSettings()).toEqual({ openRegistration: false })
 
   await app.close()
 })

@@ -1,9 +1,10 @@
 import { type SubmitEvent, useMemo, useState } from 'react'
-import { createApi } from '../lib/api'
+import { ApiError, createApi } from '../lib/api'
 import { domainHref } from '../lib/domain'
 import { describeError } from '../lib/errors'
 import { npubOf, shortNpub } from '../lib/format'
 import type { Signer } from '../lib/signer'
+import PrivateServer from './PrivateServer'
 import { BackLink, Button, ErrorText } from './ui'
 
 // The address the domain will receive, written as the user types the domain.
@@ -13,6 +14,7 @@ export default function Connect({ signer }: { signer: Signer }) {
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [refused, setRefused] = useState(false)
 
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -25,9 +27,22 @@ export default function Connect({ signer }: { signer: Signer }) {
       const domain = await api.connectDomain(value)
       window.location.assign(domainHref(domain.domain))
     } catch (failure) {
-      setError(describeError(failure))
+      if (failure instanceof ApiError && failure.code === 'not_allowed') setRefused(true)
+      else setError(describeError(failure))
       setBusy(false)
     }
+  }
+
+  if (refused) {
+    return (
+      <div className="pt-10 sm:pt-16">
+        <BackLink href="/dashboard">Your domains</BackLink>
+        <h1 className="mt-3 font-semibold text-3xl tracking-tight">Connect a domain</h1>
+        <div className="mt-6">
+          <PrivateServer pubkey={signer.pubkey} />
+        </div>
+      </div>
+    )
   }
 
   return (

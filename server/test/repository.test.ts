@@ -76,6 +76,8 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '008_create_served_domains.sql',
       '009_create_server_key.sql',
       '010_add_bridge_bunker.sql',
+      '011_create_allowed_keys.sql',
+      '012_create_server_settings.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -224,6 +226,27 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect(await repo.unsuspendDomain('example.com')).toBe(false)
     expect(await repo.findSuspension('example.com')).toBeNull()
     expect(await repo.findVerifiedDomain('example.com')).toEqual(owner)
+  })
+
+  test('allows a key once and takes it back', async () => {
+    const allowed = await repo.allowKey(CAROL)
+
+    expect(await repo.allowKey(CAROL)).toEqual(allowed)
+    expect(allowed).toEqual({ pubkey: CAROL, allowedAt: expect.any(String) })
+    expect(await repo.isAllowedKey(CAROL)).toBe(true)
+    expect(await repo.listAllowedKeys()).toEqual([allowed])
+
+    expect(await repo.disallowKey(CAROL)).toBe(true)
+    expect(await repo.disallowKey(CAROL)).toBe(false)
+    expect(await repo.isAllowedKey(CAROL)).toBe(false)
+    expect(await repo.listAllowedKeys()).toEqual([])
+  })
+
+  test('keeps registration closed until an admin opens it', async () => {
+    expect(await repo.findSettings()).toEqual({ openRegistration: false })
+    expect(await repo.updateSettings({ openRegistration: true })).toEqual({ openRegistration: true })
+    expect(await repo.findSettings()).toEqual({ openRegistration: true })
+    expect(await repo.updateSettings({ openRegistration: false })).toEqual({ openRegistration: false })
   })
 
   test('queues a wrap once and lists its recipients while they are due', async () => {

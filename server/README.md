@@ -14,8 +14,8 @@ the host and path of the request. The signing pubkey owns the claims it makes.
 
 | Method | Path | Action |
 |--------|------|--------|
-| `GET` | `/domains` | List the caller's claims |
-| `PUT` | `/domains/{domain}` | Claim a domain: `201` when created, `200` when the caller already claimed it, `400 invalid_domain`, `403 domain_suspended` for a new claim on a suspended domain |
+| `GET` | `/domains` | `{"domains": [...], "canClaim": true}`: the caller's claims, and whether it may [claim a new domain](#who-can-claim) |
+| `PUT` | `/domains/{domain}` | Claim a domain: `201` when created, `200` when the caller already claimed it, `400 invalid_domain`, `403 not_allowed` when the caller [may not claim](#who-can-claim), `403 domain_suspended` for a new claim on a suspended domain |
 | `GET` | `/domains/{domain}` | One claim, `404 domain_not_found` if the caller has none |
 | `POST` | `/domains/{domain}/check` | Look the records up now and store the result, `403 domain_suspended` on a suspended domain |
 | `GET` | `/domains/{domain}/key` | `{"nsec": "nsec1..."}`, the secret of the [domain key](#domain-key), `409 key_in_bunker` when a bunker holds it |
@@ -55,6 +55,13 @@ so a client can show what is wrong.
 `abuseReports` lists the [abuse reports](#abuse-reports) of the domain received
 since the claim was verified, newest first. A key that takes a domain over does
 not see those of the previous owner.
+
+### Who can claim
+
+Unless an admin [opens registration](#settings), only the keys of
+`ADMIN_PUBKEYS` and the [allowed keys](#allowed-keys) make new claims. Any other key gets
+`403 not_allowed`. The gate is on new claims only: a key taken off the list
+keeps its claims, which a [suspension](#suspension) stops.
 
 ### Records
 
@@ -191,10 +198,13 @@ same NIP-98 authentication. Any other key gets `403 not_admin`.
 
 | Method | Path | Action |
 |--------|------|--------|
-| `GET` | `/admin/domains` | `{"domains": [...], "suspensions": [...], "abuseReports": [...], "serverRecords": [...]}`: every claim of every key, verified or not, sorted by domain then by age, every suspended domain, every [abuse report](#abuse-reports), newest first, and the [server's own records](#server-records) |
+| `GET` | `/admin/domains` | `{"domains": [...], "suspensions": [...], "allowedKeys": [...], "settings": {...}, "abuseReports": [...], "serverRecords": [...]}`: every claim of every key, verified or not, sorted by domain then by age, every suspended domain, the [allowed keys](#allowed-keys), the [settings](#settings), every [abuse report](#abuse-reports), newest first, and the [server's own records](#server-records) |
 | `GET` | `/admin/abuse-reports/{id}` | The message of any abuse report, or `404 abuse_report_not_found` |
 | `PUT` | `/admin/domains/{domain}/suspension` | Suspend the domain, claimed or not: `201` when suspended, `200` when it already was, `400 invalid_domain` |
 | `DELETE` | `/admin/domains/{domain}/suspension` | Lift the suspension: `204`, or `404 suspension_not_found` |
+| `PUT` | `/admin/allowed-keys/{npub or hex}` | Let the key [claim domains](#who-can-claim): `201` when added, `200` when it already was, `400 invalid_pubkey` |
+| `DELETE` | `/admin/allowed-keys/{npub or hex}` | Take the key off the list: `204`, or `404 allowed_key_not_found` |
+| `PUT` | `/admin/settings` | Body `{"openRegistration": true}`: store the [settings](#settings) and return them as `{"settings": {...}}`, `400 invalid_settings` |
 
 A claim is returned as:
 
@@ -216,6 +226,18 @@ A claim is returned as:
 `checks` holds the six records of the last check, `null` before the first one.
 `addressCount` counts the named addresses the claim declared. A suspension is
 returned as `{"domain": "example.com", "suspendedAt": "<date>"}`.
+
+### Allowed keys
+
+The keys an admin lets [claim domains](#who-can-claim), besides the admins,
+oldest first. Each one is returned as
+`{"pubkey": "<hex>", "allowedAt": "<date>"}`. The list is not used while
+registration is open.
+
+### Settings
+
+`{"openRegistration": false}`: when `true`, any key
+[claims domains](#who-can-claim). It is `false` on a new server.
 
 ### Server records
 

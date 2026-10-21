@@ -9,7 +9,16 @@ import { publishDomainLists } from '../lists.js'
 import { generateKeyPair, parseNsec } from '../nostr.js'
 import { checkRecords, expectedRecords } from '../records.js'
 import type { RelayNetwork } from '../relays.js'
-import type { AbuseReport, BridgeKey, DnsLookup, Domain, DomainConfig, DomainRepository, Suspension } from '../types.js'
+import type {
+  AbuseReport,
+  ApiConfig,
+  BridgeKey,
+  DnsLookup,
+  Domain,
+  DomainConfig,
+  DomainRepository,
+  Suspension,
+} from '../types.js'
 import { listOwnReports } from './abuse.js'
 import { authenticate } from './auth.js'
 
@@ -27,21 +36,24 @@ type KeyRequest = FastifyRequest<{ Params: DomainParams; Body: { nsec?: unknown;
 export function registerDomainRoutes(
   app: FastifyInstance,
   repo: DomainRepository,
-  {
-    config,
-    dns,
-    relays,
-    signers,
-  }: { config: DomainConfig; dns: DnsLookup; relays: RelayNetwork; signers: DomainSigners },
+  { config, dns, relays, signers }: { config: ApiConfig; dns: DnsLookup; relays: RelayNetwork; signers: DomainSigners },
 ): void {
   const publishLists = (domain: Domain) =>
     publishDomainLists(relays, signers.forDomain(domain), domain.blossomServers, config)
+  const canClaim = async (pubkey: string) =>
+    config.adminPubkeys.includes(pubkey) ||
+    (await repo.findSettings()).openRegistration ||
+    (await repo.isAllowedKey(pubkey))
 
   app.get('/domains', async (request, reply) => {
     const pubkey = authenticate(request, reply)
     if (pubkey === null) return reply
 
-    const [domains, suspensions] = await Promise.all([repo.listDomains(pubkey), repo.listSuspensions()])
+    const [domains, suspensions, allowed] = await Promise.all([
+      repo.listDomains(pubkey),
+      repo.listSuspensions(),
+      canClaim(pubkey),
+    ])
     const suspended = new Map(suspensions.map((suspension) => [suspension.domain, suspension]))
     return reply.send({
       domains: await Promise.all(
@@ -49,6 +61,7 @@ export function registerDomainRoutes(
           present(domain, config, suspended.get(domain.domain) ?? null, await listOwnReports(repo, domain)),
         ),
       ),
+      canClaim: allowed,
     })
   })
 
@@ -64,6 +77,7 @@ export function registerDomainRoutes(
     if (existing) {
       return reply.send({ domain: present(existing, config, suspension, await listOwnReports(repo, existing)) })
     }
+    if (!(await canClaim(pubkey))) return reply.code(403).send({ error: 'not_allowed' })
     if (suspension) return reply.code(403).send({ error: 'domain_suspended' })
 
     const dkim = await generateDkimKeyPair()
