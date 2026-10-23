@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { isReservedLocalPart, normalizeLocalPart } from '../address.js'
+import { isOwnerLocalPart, isReservedLocalPart, normalizeLocalPart } from '../address.js'
 import { normalizeDomain } from '../domain.js'
 import { parsePubkey } from '../nostr.js'
 import type { Address, Domain, DomainRepository } from '../types.js'
@@ -12,9 +12,9 @@ type AddressRequest = FastifyRequest<{
   Body: { pubkey?: unknown; private?: unknown } | undefined
 }>
 
-// Addresses on a domain, managed with NIP-98 by its verified owner. Each one
-// points a local part at a pubkey, which NIP-05 then serves on the domain
-// unless the address is private.
+// Addresses on a domain, managed with NIP-98 by its verified owner, and on a
+// shared domain by the keys that created them. Each one points a local part at
+// a pubkey, which NIP-05 then serves on the domain unless the address is private.
 export function registerAddressRoutes(app: FastifyInstance, repo: DomainRepository): void {
   app.get('/domains/:domain/addresses', async (request: DomainRequest, reply) => {
     const pubkey = authenticate(request, reply)
@@ -24,7 +24,7 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
     if (domain === null) return reply
 
     const addresses = await repo.listAddresses(domain.domain)
-    return reply.send({ addresses: addresses.map(present) })
+    return reply.send({ addresses: addresses.map(presentAddress) })
   })
 
   app.put('/domains/:domain/addresses/:localPart', async (request: AddressRequest, reply) => {
@@ -52,7 +52,7 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
       ownerPubkey: pubkey,
       private: isPrivate,
     })
-    return reply.code(existing ? 200 : 201).send({ address: present(address) })
+    return reply.code(existing ? 200 : 201).send({ address: presentAddress(address) })
   })
 
   app.delete('/domains/:domain/addresses/:localPart', async (request: AddressRequest, reply) => {
@@ -64,6 +64,53 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
 
     const localPart = normalizeLocalPart(request.params.localPart)
     if (!localPart || !(await repo.deleteAddress(domain.domain, localPart))) {
+      return reply.code(404).send({ error: 'address_not_found' })
+    }
+
+    return reply.code(204).send()
+  })
+
+  // Any key creates addresses for itself on a shared domain, and keeps managing them once it is no
+  // longer shared.
+  app.put('/addresses/:domain/:localPart', async (request: AddressRequest, reply) => {
+    const pubkey = authenticate(request, reply)
+    if (pubkey === null) return reply
+
+    const localPart = normalizeLocalPart(request.params.localPart)
+    if (!localPart) return reply.code(400).send({ error: 'invalid_local_part' })
+    if (isReservedLocalPart(localPart) || isOwnerLocalPart(localPart)) {
+      return reply.code(400).send({ error: 'reserved_local_part' })
+    }
+
+    const isPrivate = request.body?.private ?? false
+    if (typeof isPrivate !== 'boolean') return reply.code(400).send({ error: 'invalid_private' })
+
+    const name = normalizeDomain(request.params.domain)
+    const domain = name ? await repo.findVerifiedDomain(name) : null
+    const existing = domain && (await repo.findAddress(domain.domain, localPart))
+    if (existing && existing.createdBy !== pubkey) return reply.code(409).send({ error: 'address_taken' })
+    if (!domain || (!existing && !domain.shared)) return reply.code(403).send({ error: 'domain_not_shared' })
+
+    const address = await repo.putCreatedAddress({
+      domain: domain.domain,
+      localPart,
+      pubkey,
+      ownerPubkey: domain.pubkey,
+      createdBy: pubkey,
+      private: isPrivate,
+    })
+    if (!address) return reply.code(409).send({ error: 'address_taken' })
+
+    return reply.code(existing ? 200 : 201).send({ address: presentAddress(address) })
+  })
+
+  app.delete('/addresses/:domain/:localPart', async (request: AddressRequest, reply) => {
+    const pubkey = authenticate(request, reply)
+    if (pubkey === null) return reply
+
+    const name = normalizeDomain(request.params.domain)
+    const localPart = normalizeLocalPart(request.params.localPart)
+    if (!name || !localPart || !(await repo.deleteAddress(name, localPart, pubkey))) {
       return reply.code(404).send({ error: 'address_not_found' })
     }
 
@@ -97,11 +144,13 @@ async function findOwnedDomain(
   return domain
 }
 
-function present(address: Address) {
+export function presentAddress(address: Address) {
   return {
+    domain: address.domain,
     localPart: address.localPart,
     address: `${address.localPart}@${address.domain}`,
     pubkey: address.pubkey,
+    createdBy: address.createdBy,
     private: address.private,
     createdAt: address.createdAt,
   }

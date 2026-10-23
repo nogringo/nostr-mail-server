@@ -57,6 +57,21 @@ test('accepts the empty answer of a removal', async () => {
   expect(requests[0].init.method).toBe('DELETE')
 })
 
+test('creates and removes an address on a shared domain, without naming a key', async () => {
+  const { api, requests } = recordingApi(() => Response.json({ address: { address: 'alice@example.com' } }))
+
+  await api.putCreatedAddress('example.com', 'alice', true)
+
+  expect(requests[0].url).toBe(`${ORIGIN}/addresses/example.com/alice`)
+  expect(requests[0].init.body).toBe(JSON.stringify({ private: true }))
+
+  const removal = recordingApi(() => new Response(null, { status: 204 }))
+  await removal.api.removeCreatedAddress('example.com', 'alice')
+
+  expect(removal.requests[0].url).toBe(`${ORIGIN}/addresses/example.com/alice`)
+  expect(removal.requests[0].init.method).toBe('DELETE')
+})
+
 test('loads one domain by its name', async () => {
   const { api, requests } = recordingApi(() => Response.json({ domain: { domain: 'example.com' } }))
 

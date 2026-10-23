@@ -82,6 +82,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '014_add_private_addresses.sql',
       '015_add_abuse_report_deletions.sql',
       '016_add_nip05_host.sql',
+      '017_add_shared_domains.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -163,6 +164,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       localPart: 'bob',
       pubkey: BOB,
       ownerPubkey: ALICE,
+      createdBy: ALICE,
       private: false,
       createdAt: expect.any(String),
     })
@@ -464,6 +466,42 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
 
     expect(await repo.hasServedDomain('served.example')).toBe(true)
     expect(await repo.findOwnedDomain('served.example')).toBeNull()
+  })
+
+  test('a shared domain in service lists the addresses other keys create there', async () => {
+    await repo.createDomain(claim('shared.example', CAROL))
+    await repo.recordChecks('shared.example', CAROL, checks, true)
+    expect((await repo.setShared('shared.example', CAROL, true))?.shared).toBe(true)
+    expect(await repo.listSharedDomains()).toEqual(['shared.example'])
+
+    const member = { domain: 'shared.example', pubkey: ALICE, ownerPubkey: CAROL, createdBy: ALICE }
+    const zoe = await repo.putCreatedAddress({ ...member, localPart: 'zoe' })
+    expect(zoe).toMatchObject({ ...member, localPart: 'zoe', private: false })
+    await repo.putCreatedAddress({ ...member, localPart: 'alice' })
+    await repo.putAddress({ domain: 'shared.example', localPart: 'carol', pubkey: CAROL, ownerPubkey: CAROL })
+    expect((await repo.listCreatedAddresses(ALICE)).map((address) => address.localPart)).toEqual(['alice', 'zoe'])
+    expect(await repo.listCreatedAddresses(CAROL)).toEqual([])
+
+    expect(await repo.putCreatedAddress({ ...member, localPart: 'zoe', private: true })).toEqual({
+      ...zoe,
+      private: true,
+    })
+    expect(await repo.putCreatedAddress({ ...member, localPart: 'carol' })).toBeNull()
+    expect(await repo.putCreatedAddress({ ...member, pubkey: BOB, createdBy: BOB, localPart: 'zoe' })).toBeNull()
+
+    await repo.putAddress({ ...member, localPart: 'zoe', createdBy: CAROL, private: false })
+    expect((await repo.findAddress('shared.example', 'zoe'))?.createdBy).toBe(ALICE)
+    await repo.putAddress({ ...member, localPart: 'zoe', pubkey: CAROL, createdBy: CAROL })
+    expect((await repo.findAddress('shared.example', 'zoe'))?.createdBy).toBe(CAROL)
+
+    expect(await repo.deleteAddress('shared.example', 'carol', ALICE)).toBe(false)
+    expect(await repo.deleteAddress('shared.example', 'alice', ALICE)).toBe(true)
+
+    await repo.suspendDomain('shared.example')
+    expect(await repo.listSharedDomains()).toEqual([])
+    await repo.unsuspendDomain('shared.example')
+    await repo.deleteDomain('shared.example', CAROL)
+    expect(await repo.listAddresses('shared.example')).toEqual([])
   })
 
   test('creates the server key once and keeps it', async () => {

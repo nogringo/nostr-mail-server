@@ -12,6 +12,31 @@ export const SMTP_LOCAL_PART = '_smtp'
 // RFC 2142: where complaints about a domain go.
 export const ABUSE_LOCAL_PART = 'abuse'
 
+// The RFC 2142 mailboxes and the names that speak for a domain: on a shared domain only its owner gives them.
+const OWNER_LOCAL_PARTS = new Set([
+  'info',
+  'marketing',
+  'sales',
+  'support',
+  ABUSE_LOCAL_PART,
+  'noc',
+  'security',
+  'postmaster',
+  'hostmaster',
+  'usenet',
+  'news',
+  'webmaster',
+  'www',
+  'uucp',
+  'ftp',
+  'admin',
+  'administrator',
+  'root',
+  'mailer-daemon',
+  'noreply',
+  'no-reply',
+])
+
 export function normalizeLocalPart(value: string): string | null {
   const localPart = value.trim().toLowerCase()
   return localPart.length <= 64 && LOCAL_PART.test(localPart) ? localPart : null
@@ -20,6 +45,10 @@ export function normalizeLocalPart(value: string): string | null {
 // npub local parts resolve to their own pubkey on every verified domain.
 export function isReservedLocalPart(localPart: string): boolean {
   return localPart === SMTP_LOCAL_PART || localPart.startsWith('npub1')
+}
+
+export function isOwnerLocalPart(localPart: string): boolean {
+  return OWNER_LOCAL_PARTS.has(localPart)
 }
 
 export function parseEmailAddress(value: string): { localPart: string; domain: string } | null {

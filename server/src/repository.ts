@@ -26,10 +26,11 @@ import type {
 
 const DOMAIN_COLUMNS = `
   domain, pubkey, verification_token, dkim_selector, dkim_public_key, dkim_private_key,
-  bridge_pubkey, bridge_private_key, bridge_bunker, blossom_servers, nip05, checks, checked_at, verified_at, created_at
+  bridge_pubkey, bridge_private_key, bridge_bunker, blossom_servers, nip05, shared, checks, checked_at, verified_at,
+  created_at
 `
 
-const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, private, created_at'
+const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, created_by, private, created_at'
 
 const ABUSE_REPORT_COLUMNS = 'id, domain, mail_from, header_from, subject, octet_length(message) as size, received_at'
 
@@ -47,6 +48,7 @@ interface DomainRow {
   bridge_bunker: BunkerKey | null
   blossom_servers: string[]
   nip05: Nip05Host
+  shared: boolean
   checks: DomainChecks | null
   checked_at: Date | null
   verified_at: Date | null
@@ -58,6 +60,7 @@ interface AddressRow {
   local_part: string
   pubkey: string
   owner_pubkey: string
+  created_by: string
   private: boolean
   created_at: Date
 }
@@ -233,6 +236,21 @@ export class PgDomainRepository implements DomainRepository {
     return result.rows[0] ? toDomain(result.rows[0]) : null
   }
 
+  async setShared(domain: string, pubkey: string, shared: boolean): Promise<Domain | null> {
+    const result = await this.pool.query<DomainRow>(
+      `update domains set shared = $3 where domain = $1 and pubkey = $2 returning ${DOMAIN_COLUMNS}`,
+      [domain, pubkey, shared],
+    )
+    return result.rows[0] ? toDomain(result.rows[0]) : null
+  }
+
+  async listSharedDomains(): Promise<string[]> {
+    const result = await this.pool.query<{ domain: string }>(
+      `select domain from domains where shared and ${IN_SERVICE} order by domain asc`,
+    )
+    return result.rows.map((row) => row.domain)
+  }
+
   async deleteDomain(domain: string, pubkey: string): Promise<boolean> {
     return this.transaction(async (client) => {
       const result = await client.query('delete from domains where domain = $1 and pubkey = $2', [domain, pubkey])
@@ -377,25 +395,61 @@ export class PgDomainRepository implements DomainRepository {
     return result.rows[0] ? toAddress(result.rows[0]) : null
   }
 
+  async listCreatedAddresses(createdBy: string): Promise<Address[]> {
+    const result = await this.pool.query<AddressRow>(
+      `
+        select ${ADDRESS_COLUMNS} from addresses
+        where created_by = $1 and owner_pubkey <> $1
+        order by domain asc, local_part asc
+      `,
+      [createdBy],
+    )
+    return result.rows.map(toAddress)
+  }
+
   async putAddress(input: NewAddress): Promise<Address> {
     const result = await this.pool.query<AddressRow>(
       `
-        insert into addresses (domain, local_part, pubkey, owner_pubkey, private)
-        values ($1, $2, $3, $4, $5)
+        insert into addresses (domain, local_part, pubkey, owner_pubkey, created_by, private)
+        values ($1, $2, $3, $4, $5, $6)
         on conflict (domain, local_part) do update
-        set pubkey = excluded.pubkey, owner_pubkey = excluded.owner_pubkey, private = excluded.private
+        set pubkey = excluded.pubkey, owner_pubkey = excluded.owner_pubkey, private = excluded.private,
+            created_by = case when addresses.pubkey = excluded.pubkey then addresses.created_by
+                              else excluded.created_by end
         returning ${ADDRESS_COLUMNS}
       `,
-      [input.domain, input.localPart, input.pubkey, input.ownerPubkey, input.private ?? false],
+      [
+        input.domain,
+        input.localPart,
+        input.pubkey,
+        input.ownerPubkey,
+        input.createdBy ?? input.ownerPubkey,
+        input.private ?? false,
+      ],
     )
     return toAddress(result.rows[0])
   }
 
-  async deleteAddress(domain: string, localPart: string): Promise<boolean> {
-    const result = await this.pool.query('delete from addresses where domain = $1 and local_part = $2', [
-      domain,
-      localPart,
-    ])
+  async putCreatedAddress(input: NewAddress & { createdBy: string }): Promise<Address | null> {
+    const result = await this.pool.query<AddressRow>(
+      `
+        insert into addresses (domain, local_part, pubkey, owner_pubkey, created_by, private)
+        values ($1, $2, $3, $4, $5, $6)
+        on conflict (domain, local_part) do update
+        set private = excluded.private
+        where addresses.created_by = excluded.created_by
+        returning ${ADDRESS_COLUMNS}
+      `,
+      [input.domain, input.localPart, input.pubkey, input.ownerPubkey, input.createdBy, input.private ?? false],
+    )
+    return result.rows[0] ? toAddress(result.rows[0]) : null
+  }
+
+  async deleteAddress(domain: string, localPart: string, createdBy?: string): Promise<boolean> {
+    const result = await this.pool.query(
+      'delete from addresses where domain = $1 and local_part = $2 and created_by = coalesce($3, created_by)',
+      [domain, localPart, createdBy ?? null],
+    )
     return (result.rowCount ?? 0) > 0
   }
 
@@ -578,6 +632,7 @@ function toDomain(row: DomainRow): Domain {
     bridgeBunker: row.bridge_bunker,
     blossomServers: row.blossom_servers,
     nip05: row.nip05,
+    shared: row.shared,
     checks: row.checks,
     checkedAt: row.checked_at?.toISOString() ?? null,
     verifiedAt: row.verified_at?.toISOString() ?? null,
@@ -636,6 +691,7 @@ function toAddress(row: AddressRow): Address {
     localPart: row.local_part,
     pubkey: row.pubkey,
     ownerPubkey: row.owner_pubkey,
+    createdBy: row.created_by,
     private: row.private,
     createdAt: row.created_at.toISOString(),
   }

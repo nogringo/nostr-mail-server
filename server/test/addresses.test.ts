@@ -32,9 +32,11 @@ test('PUT creates an address from an npub and stores the hex pubkey', async () =
   expect(response.statusCode).toBe(201)
   expect(response.json()).toEqual({
     address: {
+      domain: 'example.com',
       localPart: 'bob',
       address: 'bob@example.com',
       pubkey: bob.pubkey,
+      createdBy: owner.pubkey,
       private: false,
       createdAt: expect.any(String),
     },

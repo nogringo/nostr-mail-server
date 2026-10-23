@@ -45,6 +45,8 @@ export interface Domain {
   checkedAt: string | null
   blossomServers: string[]
   nip05: Nip05Host
+  // Any key may create addresses on it for itself.
+  shared: boolean
   createdAt: string
   records: DnsRecord[]
   // Sent to abuse@ since this key owns the domain.
@@ -67,12 +69,18 @@ export interface DomainList {
   domains: Domain[]
   // Whether this key may connect a new domain.
   canClaim: boolean
+  // The domains of other keys where this one creates addresses for itself, and those it created.
+  sharedDomains: string[]
+  addresses: Address[]
 }
 
 export interface Address {
+  domain: string
   localPart: string
   address: string
   pubkey: string
+  // The owner of the domain, or the key that created it on a shared domain.
+  createdBy: string
   // NIP-05 does not show which key it reaches.
   private: boolean
   createdAt: string
@@ -85,6 +93,7 @@ export interface AdminDomain {
   verifiedAt: string | null
   checkedAt: string | null
   createdAt: string
+  shared: boolean
   addressCount: number
   checks: Record<RecordId, RecordCheck> | null
 }
@@ -171,6 +180,8 @@ export function createApi(
   const domainPath = (name: string) => `/domains/${encodeURIComponent(name)}`
   const addressPath = (name: string, localPart: string) =>
     `${domainPath(name)}/addresses/${encodeURIComponent(localPart)}`
+  const createdAddressPath = (name: string, localPart: string) =>
+    `/addresses/${encodeURIComponent(name)}/${encodeURIComponent(localPart)}`
 
   return {
     listDomains: (): Promise<DomainList> => call('GET', '/domains'),
@@ -180,6 +191,8 @@ export function createApi(
     // Checks the domain again, since the NIP-05 check depends on who serves it.
     setNip05Host: async (name: string, nip05: Nip05Host): Promise<Domain> =>
       (await call('PUT', `${domainPath(name)}/nip05`, { nip05 })).domain,
+    setShared: async (name: string, shared: boolean): Promise<Domain> =>
+      (await call('PUT', `${domainPath(name)}/shared`, { shared })).domain,
     removeDomain: async (name: string): Promise<void> => {
       await call('DELETE', domainPath(name))
     },
@@ -192,6 +205,12 @@ export function createApi(
       (await call('PUT', addressPath(name, localPart), { pubkey, private: isPrivate })).address,
     removeAddress: async (name: string, localPart: string): Promise<void> => {
       await call('DELETE', addressPath(name, localPart))
+    },
+    // An address on a shared domain, delivered to the signing key.
+    putCreatedAddress: async (name: string, localPart: string, isPrivate: boolean): Promise<Address> =>
+      (await call('PUT', createdAddressPath(name, localPart), { private: isPrivate })).address,
+    removeCreatedAddress: async (name: string, localPart: string): Promise<void> => {
+      await call('DELETE', createdAddressPath(name, localPart))
     },
     abuseMessage: async (name: string, id: number): Promise<Blob> =>
       (await send('GET', `${domainPath(name)}/abuse-reports/${id}`)).blob(),

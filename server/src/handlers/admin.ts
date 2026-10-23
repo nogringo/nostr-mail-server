@@ -129,6 +129,7 @@ function present(domain: DomainSummary) {
     verifiedAt: domain.verifiedAt,
     checkedAt: domain.checkedAt,
     createdAt: domain.createdAt,
+    shared: domain.shared,
     addressCount: domain.addressCount,
     checks: domain.checks,
   }

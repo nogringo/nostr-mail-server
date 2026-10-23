@@ -295,6 +295,7 @@ function DomainRow({ domain, onSuspend }: { domain: AdminDomain; onSuspend: (nam
       <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-muted text-sm">
         <Owner domain={domain} />
         {domain.verifiedAt && <span>{plural(domain.addressCount, 'named address', 'named addresses')}</span>}
+        {domain.shared && <span>open to everyone</span>}
         <span>claimed {timeAgo(domain.createdAt)}</span>
         {domain.checkedAt && <span>checked {timeAgo(domain.checkedAt)}</span>}
       </div>

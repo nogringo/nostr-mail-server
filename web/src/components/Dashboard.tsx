@@ -5,6 +5,7 @@ import { describeError } from '../lib/errors'
 import { plural, timeAgo } from '../lib/format'
 import type { Signer } from '../lib/signer'
 import PrivateServer from './PrivateServer'
+import SharedAddresses from './SharedAddresses'
 import { ButtonLink, ErrorText, TONES } from './ui'
 
 export default function Dashboard({ signer }: { signer: Signer }) {
@@ -45,6 +46,9 @@ export default function Dashboard({ signer }: { signer: Signer }) {
             <DomainRow key={domain.domain} domain={domain} />
           ))}
         </ul>
+      )}
+      {list && (list.sharedDomains.length > 0 || list.addresses.length > 0) && (
+        <SharedAddresses api={api} domains={list.sharedDomains} initial={list.addresses} />
       )}
     </div>
   )

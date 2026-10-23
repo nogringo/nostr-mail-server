@@ -22,6 +22,7 @@ import type {
   Suspension,
 } from '../types.js'
 import { listOwnReports } from './abuse.js'
+import { presentAddress } from './addresses.js'
 import { authenticate } from './auth.js'
 
 interface DomainParams {
@@ -33,6 +34,8 @@ type DomainRequest = FastifyRequest<{ Params: DomainParams }>
 type KeyRequest = FastifyRequest<{ Params: DomainParams; Body: { nsec?: unknown; bunker?: unknown } | undefined }>
 
 type Nip05Request = FastifyRequest<{ Params: DomainParams; Body: { nip05?: unknown } | undefined }>
+
+type SharedRequest = FastifyRequest<{ Params: DomainParams; Body: { shared?: unknown } | undefined }>
 
 // Domain lifecycle, authenticated with NIP-98: the signing pubkey owns the
 // claims it makes, and a claim becomes the domain's owner once its ownership
@@ -76,12 +79,15 @@ export function registerDomainRoutes(
     const pubkey = authenticate(request, reply)
     if (pubkey === null) return reply
 
-    const [domains, suspensions, allowed] = await Promise.all([
+    const [domains, suspensions, allowed, addresses, shared] = await Promise.all([
       repo.listDomains(pubkey),
       repo.listSuspensions(),
       canClaim(pubkey),
+      repo.listCreatedAddresses(pubkey),
+      repo.listSharedDomains(),
     ])
     const suspended = new Map(suspensions.map((suspension) => [suspension.domain, suspension]))
+    const owned = new Set(domains.filter((domain) => domain.verifiedAt).map((domain) => domain.domain))
     return reply.send({
       domains: await Promise.all(
         domains.map(async (domain) =>
@@ -89,6 +95,9 @@ export function registerDomainRoutes(
         ),
       ),
       canClaim: allowed,
+      // Where this key creates addresses for itself, and those it created.
+      sharedDomains: shared.filter((name) => !owned.has(name)),
+      addresses: addresses.map(presentAddress),
     })
   })
 
@@ -162,6 +171,23 @@ export function registerDomainRoutes(
 
     const changed = await repo.setNip05Host(domain.domain, pubkey, nip05)
     const updated = changed && (await check(request, changed))
+    if (!updated) return reply.code(404).send({ error: 'domain_not_found' })
+
+    return reply.send({ domain: present(updated, config, null, await listOwnReports(repo, updated)) })
+  })
+
+  app.put('/domains/:domain/shared', async (request: SharedRequest, reply) => {
+    const pubkey = authenticate(request, reply)
+    if (pubkey === null) return reply
+
+    const domain = await findOwnDomain(repo, request, pubkey)
+    if (!domain) return reply.code(404).send({ error: 'domain_not_found' })
+    if (await repo.findSuspension(domain.domain)) return reply.code(403).send({ error: 'domain_suspended' })
+
+    const shared = request.body?.shared
+    if (typeof shared !== 'boolean') return reply.code(400).send({ error: 'invalid_shared' })
+
+    const updated = await repo.setShared(domain.domain, pubkey, shared)
     if (!updated) return reply.code(404).send({ error: 'domain_not_found' })
 
     return reply.send({ domain: present(updated, config, null, await listOwnReports(repo, updated)) })
@@ -248,6 +274,7 @@ function present(domain: Domain, config: DomainConfig, suspension: Suspension | 
     checkedAt: domain.checkedAt,
     blossomServers: domain.blossomServers,
     nip05: domain.nip05,
+    shared: domain.shared,
     createdAt: domain.createdAt,
     records: expectedRecords(domain, config).map((record) => ({
       ...record,

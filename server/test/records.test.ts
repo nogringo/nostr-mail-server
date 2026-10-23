@@ -15,6 +15,7 @@ const domain: Domain = {
   bridgeBunker: null,
   blossomServers: [],
   nip05: 'server',
+  shared: false,
   checks: null,
   checkedAt: null,
   verifiedAt: null,

@@ -77,7 +77,12 @@ function DomainView({ initial, api, ownPubkey }: { initial: Domain; api: Api; ow
   }
 
   const panels: Record<Tab, ReactNode> = {
-    addresses: <Addresses domain={domain.domain} api={api} ownPubkey={ownPubkey} />,
+    addresses: (
+      <div className="space-y-10">
+        <Addresses domain={domain.domain} api={api} ownPubkey={ownPubkey} />
+        <Sharing domain={domain} api={api} onChange={setDomain} />
+      </div>
+    ),
     dns: <DnsPanel domain={domain} api={api} onChange={setDomain} />,
     abuse: <AbusePanel domain={domain} api={api} onDelete={deleteReport} />,
     settings: <SettingsPanel domain={domain} api={api} onChange={setDomain} />,
@@ -144,6 +149,47 @@ function DnsPanel({ domain, api, onChange }: { domain: Domain; api: Api; onChang
         </Button>
         <ErrorText>{error}</ErrorText>
       </div>
+    </div>
+  )
+}
+
+function Sharing({ domain, api, onChange }: { domain: Domain; api: Api; onChange: (domain: Domain) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function share(shared: boolean) {
+    setBusy(true)
+    setError(null)
+    try {
+      onChange(await api.setShared(domain.domain, shared))
+    } catch (failure) {
+      setError(describeError(failure))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div>
+      <h2 className="font-medium">Open to everyone</h2>
+      <label className="mt-3 flex w-fit cursor-pointer items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={domain.shared}
+          disabled={busy}
+          onChange={(event) => share(event.target.checked)}
+          className="mt-1 accent-accent"
+        />
+        <span>
+          Anyone can create addresses on {domain.domain}
+          <span className="block max-w-xl text-muted">
+            Anyone who signs in on this site creates them for their own key, and they show in the list above, where you
+            can remove them. Names like abuse, postmaster and support stay yours. Closing it again keeps the addresses
+            already created.
+          </span>
+        </span>
+      </label>
+      <ErrorText>{error}</ErrorText>
     </div>
   )
 }

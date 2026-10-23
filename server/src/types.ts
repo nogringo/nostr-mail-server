@@ -70,6 +70,8 @@ export interface Domain {
   // Where the domain's large mail is stored, published as the kind 10063 of its key.
   blossomServers: string[]
   nip05: Nip05Host
+  // Any key may create addresses on it for itself.
+  shared: boolean
   checks: DomainChecks | null
   checkedAt: string | null
   verifiedAt: string | null
@@ -142,16 +144,18 @@ export interface Address {
   domain: string
   localPart: string
   pubkey: string
-  // The verified owner of the domain, who declared the address.
+  // The verified owner of the domain, whose claim the address goes away with.
   ownerPubkey: string
+  // Who manages it besides the owner: the owner, or the key that created it on a shared domain.
+  createdBy: string
   // NIP-05 does not serve it: mail still reaches the pubkey, which nobody can look up.
   private: boolean
   createdAt: string
 }
 
-// Public unless said otherwise.
+// Public and created by the owner unless said otherwise.
 export type NewAddress = Pick<Address, 'domain' | 'localPart' | 'pubkey' | 'ownerPubkey'> &
-  Partial<Pick<Address, 'private'>>
+  Partial<Pick<Address, 'createdBy' | 'private'>>
 
 // A gift wrap addressed to a domain key: queued with its recipients, or refused.
 export type NewOutboundMessage = { wrapId: string; bridgePubkey: string } & (
@@ -217,6 +221,9 @@ export interface DomainRepository {
   // The domain is then served for good.
   recordChecks(domain: string, pubkey: string, checks: DomainChecks, verified: boolean): Promise<Domain | null>
   setNip05Host(domain: string, pubkey: string, nip05: Nip05Host): Promise<Domain | null>
+  setShared(domain: string, pubkey: string, shared: boolean): Promise<Domain | null>
+  // The shared domains in service.
+  listSharedDomains(): Promise<string[]>
   // Also drops the addresses the claim declared.
   deleteDomain(domain: string, pubkey: string): Promise<boolean>
   // Whether a claim on any domain has this key.
@@ -238,9 +245,16 @@ export interface DomainRepository {
   updateSettings(settings: StoredSettings): Promise<void>
   listAddresses(domain: string): Promise<Address[]>
   findAddress(domain: string, localPart: string): Promise<Address | null>
-  // Creates the address, or gives an existing one the new pubkey and privacy.
+  // The addresses a key created on the domains of other keys.
+  listCreatedAddresses(createdBy: string): Promise<Address[]>
+  // Creates the address, or gives an existing one the new pubkey and privacy. An address pointed at
+  // another pubkey is managed by `createdBy` from then on, one that keeps its pubkey by the same key.
   putAddress(input: NewAddress): Promise<Address>
-  deleteAddress(domain: string, localPart: string): Promise<boolean>
+  // Creates the address, or changes the privacy of one the same key created. Returns null when it is
+  // another key's.
+  putCreatedAddress(input: NewAddress & { createdBy: string }): Promise<Address | null>
+  // With `createdBy`, only an address that key created.
+  deleteAddress(domain: string, localPart: string, createdBy?: string): Promise<boolean>
   hasOutboundMessage(wrapId: string): Promise<boolean>
   // Does nothing when the wrap is already known.
   addOutboundMessage(input: NewOutboundMessage): Promise<void>

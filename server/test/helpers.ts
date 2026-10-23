@@ -167,6 +167,7 @@ export class MemoryDomainRepository implements DomainRepository {
       ...input,
       bridgeBunker: null,
       nip05: 'server',
+      shared: false,
       checks: null,
       checkedAt: null,
       verifiedAt: null,
@@ -207,6 +208,24 @@ export class MemoryDomainRepository implements DomainRepository {
     const next = { ...current, nip05 }
     this.domains.set(key(domain, pubkey), next)
     return next
+  }
+
+  async setShared(domain: string, pubkey: string, shared: boolean): Promise<Domain | null> {
+    this.assertAvailable()
+    const current = this.domains.get(key(domain, pubkey))
+    if (!current) return null
+
+    const next = { ...current, shared }
+    this.domains.set(key(domain, pubkey), next)
+    return next
+  }
+
+  async listSharedDomains(): Promise<string[]> {
+    this.assertAvailable()
+    return [...this.domains.values()]
+      .filter((claim) => claim.shared && this.inService(claim))
+      .map((claim) => claim.domain)
+      .sort()
   }
 
   async deleteDomain(domain: string, pubkey: string): Promise<boolean> {
@@ -300,11 +319,19 @@ export class MemoryDomainRepository implements DomainRepository {
     return this.addresses.get(key(domain, localPart)) ?? null
   }
 
+  async listCreatedAddresses(createdBy: string): Promise<Address[]> {
+    this.assertAvailable()
+    return [...this.addresses.values()]
+      .filter((address) => address.createdBy === createdBy && address.ownerPubkey !== createdBy)
+      .sort((left, right) => left.domain.localeCompare(right.domain) || left.localPart.localeCompare(right.localPart))
+  }
+
   async putAddress(input: NewAddress): Promise<Address> {
     this.assertAvailable()
     const existing = this.addresses.get(key(input.domain, input.localPart))
     const address = {
       ...input,
+      createdBy: existing?.pubkey === input.pubkey ? existing.createdBy : (input.createdBy ?? input.ownerPubkey),
       private: input.private ?? false,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
     }
@@ -312,8 +339,23 @@ export class MemoryDomainRepository implements DomainRepository {
     return address
   }
 
-  async deleteAddress(domain: string, localPart: string): Promise<boolean> {
+  async putCreatedAddress(input: NewAddress & { createdBy: string }): Promise<Address | null> {
     this.assertAvailable()
+    const existing = this.addresses.get(key(input.domain, input.localPart))
+    if (existing && existing.createdBy !== input.createdBy) return null
+
+    const address = existing
+      ? { ...existing, private: input.private ?? false }
+      : { ...input, private: input.private ?? false, createdAt: new Date().toISOString() }
+    this.addresses.set(key(input.domain, input.localPart), address)
+    return address
+  }
+
+  async deleteAddress(domain: string, localPart: string, createdBy?: string): Promise<boolean> {
+    this.assertAvailable()
+    const existing = this.addresses.get(key(domain, localPart))
+    if (createdBy !== undefined && existing?.createdBy !== createdBy) return false
+
     return this.addresses.delete(key(domain, localPart))
   }
 

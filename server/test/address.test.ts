@@ -1,6 +1,6 @@
 import { npubEncode } from 'nostr-tools/nip19'
 import { expect, test } from 'vitest'
-import { isReservedLocalPart, normalizeLocalPart, parseEmailAddress } from '../src/address.js'
+import { isOwnerLocalPart, isReservedLocalPart, normalizeLocalPart, parseEmailAddress } from '../src/address.js'
 
 const NPUB = npubEncode('a'.repeat(64))
 
@@ -25,6 +25,15 @@ test('_smtp and npub local parts are reserved', () => {
   }
   for (const name of ['alice', '_', 'smtp', 'a'.repeat(64)]) {
     expect(isReservedLocalPart(name), name).toBe(false)
+  }
+})
+
+test('the RFC 2142 mailboxes and the names that speak for a domain are left to its owner', () => {
+  for (const name of ['abuse', 'postmaster', 'hostmaster', 'webmaster', 'support', 'admin', 'root', 'noreply']) {
+    expect(isOwnerLocalPart(name), name).toBe(true)
+  }
+  for (const name of ['alice', 'abuse.team', 'supporter']) {
+    expect(isOwnerLocalPart(name), name).toBe(false)
   }
 })
 

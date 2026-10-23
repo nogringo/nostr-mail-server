@@ -1,4 +1,4 @@
-import { type SubmitEvent, useEffect, useState } from 'react'
+import { type SubmitEvent, useEffect, useId, useState } from 'react'
 import type { Address, Api } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { npubOf, shortNpub } from '../lib/format'
@@ -27,7 +27,7 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
     )
   }
 
-  async function add(localPart: string, pubkey: string, isPrivate: boolean) {
+  async function add({ localPart, pubkey, isPrivate }: NewAddress) {
     keep(await api.putAddress(domain, localPart, pubkey, isPrivate))
   }
 
@@ -50,7 +50,11 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
     }
   }
 
-  const deliveredTo = (pubkey: string) => (pubkey === ownPubkey ? 'your key' : shortNpub(npubOf(pubkey)))
+  function deliveredTo(address: Address) {
+    if (address.pubkey === ownPubkey) return 'your key'
+    const key = shortNpub(npubOf(address.pubkey))
+    return address.createdBy === address.pubkey ? `${key}, who created it` : key
+  }
 
   return (
     <div>
@@ -64,7 +68,7 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
           <AddressRow
             key={address.localPart}
             address={address.address}
-            deliveredTo={deliveredTo(address.pubkey)}
+            deliveredTo={deliveredTo(address)}
             isPrivate={address.private}
             onTogglePrivacy={() => togglePrivacy(address)}
             onRemove={() => remove(address.localPart)}
@@ -72,12 +76,12 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
         ))}
       </ul>
       <ErrorText>{error}</ErrorText>
-      <AddressForm domain={domain} ownNpub={ownNpub} onAdd={add} />
+      <AddressForm domains={[domain]} defaultPubkey={ownNpub} onAdd={add} />
     </div>
   )
 }
 
-function AddressRow({
+export function AddressRow({
   address,
   deliveredTo,
   isPrivate = false,
@@ -142,30 +146,41 @@ function AddressRow({
   )
 }
 
-function AddressForm({
-  domain,
-  ownNpub,
+export interface NewAddress {
+  domain: string
+  localPart: string
+  pubkey: string
+  isPrivate: boolean
+}
+
+// Without a default pubkey, the form does not ask which key the address delivers to.
+export function AddressForm({
+  domains,
+  defaultPubkey,
   onAdd,
 }: {
-  domain: string
-  ownNpub: string
-  onAdd: (localPart: string, pubkey: string, isPrivate: boolean) => Promise<void>
+  domains: string[]
+  defaultPubkey?: string
+  onAdd: (address: NewAddress) => Promise<void>
 }) {
   const [localPart, setLocalPart] = useState('')
-  const [pubkey, setPubkey] = useState(ownNpub)
+  const [domain, setDomain] = useState(domains[0])
+  const [pubkey, setPubkey] = useState(defaultPubkey ?? '')
   const [isPrivate, setIsPrivate] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const id = `new-address-${domain}`
+  const id = useId()
+  const asksPubkey = defaultPubkey !== undefined
+  const ready = localPart.trim() !== '' && (!asksPubkey || pubkey.trim() !== '')
 
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!localPart.trim() || !pubkey.trim()) return
+    if (!ready) return
 
     setBusy(true)
     setError(null)
     try {
-      await onAdd(localPart.trim().toLowerCase(), pubkey.trim(), isPrivate)
+      await onAdd({ domain, localPart: localPart.trim().toLowerCase(), pubkey: pubkey.trim(), isPrivate })
       setLocalPart('')
     } catch (failure) {
       setError(describeError(failure))
@@ -193,25 +208,45 @@ function AddressForm({
             onChange={(event) => setLocalPart(event.target.value)}
             className="min-w-0 border-rule border-b-2 bg-transparent caret-accent placeholder:text-rule focus:border-accent focus:outline-none"
           />
-          <span className="text-muted">@{domain}</span>
+          {domains.length > 1 ? (
+            <>
+              <span className="text-muted">@</span>
+              <select
+                aria-label="Domain"
+                value={domain}
+                onChange={(event) => setDomain(event.target.value)}
+                className="min-w-0 cursor-pointer border-rule border-b-2 bg-transparent text-muted focus:border-accent focus:outline-none"
+              >
+                {domains.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : (
+            <span className="text-muted">@{domain}</span>
+          )}
         </div>
       </div>
-      <div>
-        <label htmlFor={`${id}-pubkey`} className="block text-sm">
-          Delivered to
-        </label>
-        <input
-          id={`${id}-pubkey`}
-          type="text"
-          autoCapitalize="none"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="npub1..."
-          value={pubkey}
-          onChange={(event) => setPubkey(event.target.value)}
-          className="mt-1 w-full rounded-md border border-rule bg-surface px-3 py-2 font-mono text-sm"
-        />
-      </div>
+      {asksPubkey && (
+        <div>
+          <label htmlFor={`${id}-pubkey`} className="block text-sm">
+            Delivered to
+          </label>
+          <input
+            id={`${id}-pubkey`}
+            type="text"
+            autoCapitalize="none"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="npub1..."
+            value={pubkey}
+            onChange={(event) => setPubkey(event.target.value)}
+            className="mt-1 w-full rounded-md border border-rule bg-surface px-3 py-2 font-mono text-sm"
+          />
+        </div>
+      )}
       <label className="flex w-fit cursor-pointer items-start gap-2 text-sm">
         <input
           type="checkbox"
@@ -225,7 +260,7 @@ function AddressForm({
         </span>
       </label>
       <div className="flex flex-wrap items-center gap-4">
-        <Button type="submit" variant="secondary" disabled={!localPart.trim() || !pubkey.trim() || busy}>
+        <Button type="submit" variant="secondary" disabled={!ready || busy}>
           {busy ? 'Adding' : 'Add address'}
         </Button>
         <ErrorText>{error}</ErrorText>
