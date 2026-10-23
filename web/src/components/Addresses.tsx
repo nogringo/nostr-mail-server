@@ -19,13 +19,25 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
     api.listAddresses(domain).then(setAddresses, (failure) => setError(describeError(failure)))
   }, [api, domain])
 
-  async function add(localPart: string, pubkey: string) {
-    const address = await api.putAddress(domain, localPart, pubkey)
+  function keep(address: Address) {
     setAddresses((list) =>
       [...list.filter((other) => other.localPart !== address.localPart), address].sort((left, right) =>
         left.localPart.localeCompare(right.localPart),
       ),
     )
+  }
+
+  async function add(localPart: string, pubkey: string, isPrivate: boolean) {
+    keep(await api.putAddress(domain, localPart, pubkey, isPrivate))
+  }
+
+  async function togglePrivacy(address: Address) {
+    setError(null)
+    try {
+      keep(await api.putAddress(domain, address.localPart, address.pubkey, !address.private))
+    } catch (failure) {
+      setError(describeError(failure))
+    }
   }
 
   async function remove(localPart: string) {
@@ -42,7 +54,10 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
 
   return (
     <div>
-      <p className="text-muted text-sm">Mail sent to an address reaches the Nostr key it points at.</p>
+      <p className="text-muted text-sm">
+        Mail sent to an address reaches the Nostr key it points at. Anyone can look up the key of a public address
+        (NIP-05), while a private one keeps it hidden.
+      </p>
       <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
         <AddressRow address={`${ownNpub}@${domain}`} deliveredTo="your key, always available" />
         {addresses.map((address) => (
@@ -50,6 +65,8 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
             key={address.localPart}
             address={address.address}
             deliveredTo={deliveredTo(address.pubkey)}
+            isPrivate={address.private}
+            onTogglePrivacy={() => togglePrivacy(address)}
             onRemove={() => remove(address.localPart)}
           />
         ))}
@@ -63,38 +80,61 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
 function AddressRow({
   address,
   deliveredTo,
+  isPrivate = false,
+  onTogglePrivacy,
   onRemove,
 }: {
   address: string
   deliveredTo: string
+  isPrivate?: boolean
+  onTogglePrivacy?: () => Promise<void>
   onRemove?: () => Promise<void>
 }) {
-  const [removing, setRemoving] = useState(false)
+  const [pending, setPending] = useState<'privacy' | 'removal' | null>(null)
 
-  async function remove() {
-    if (!onRemove) return
-    setRemoving(true)
-    await onRemove()
-    setRemoving(false)
+  async function run(action: 'privacy' | 'removal', task: () => Promise<void>) {
+    setPending(action)
+    await task()
+    setPending(null)
   }
 
+  const action = 'cursor-pointer rounded px-1.5 py-0.5 text-muted text-sm hover:bg-rule/60 disabled:opacity-50'
+
   return (
-    <li className="flex items-start justify-between gap-3 px-4 py-3">
+    <li className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
       <div className="min-w-0">
-        <p className="break-all font-mono text-sm leading-6">{address}</p>
+        <p className="break-all font-mono text-sm leading-6">
+          {address}
+          {isPrivate && (
+            <span className="ml-2 whitespace-nowrap rounded border border-rule px-1.5 py-px font-sans text-muted text-xs">
+              Private
+            </span>
+          )}
+        </p>
         <p className="text-muted text-sm">Delivered to {deliveredTo}</p>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="-ml-1.5 flex shrink-0 items-center gap-1 sm:ml-0">
         <CopyButton text={address} label={address} />
+        {onTogglePrivacy && (
+          <button
+            type="button"
+            onClick={() => run('privacy', onTogglePrivacy)}
+            disabled={pending !== null}
+            aria-label={`Make ${address} ${isPrivate ? 'public' : 'private'}`}
+            className={`${action} hover:text-ink`}
+          >
+            {pending === 'privacy' ? 'Saving' : isPrivate ? 'Make public' : 'Make private'}
+          </button>
+        )}
         {onRemove && (
           <button
             type="button"
-            onClick={remove}
-            disabled={removing}
+            onClick={() => run('removal', onRemove)}
+            disabled={pending !== null}
             aria-label={`Remove ${address}`}
-            className="cursor-pointer rounded px-1.5 py-0.5 text-muted text-sm hover:bg-rule/60 hover:text-bad disabled:opacity-50"
+            className={`${action} hover:text-bad`}
           >
-            {removing ? 'Removing' : 'Remove'}
+            {pending === 'removal' ? 'Removing' : 'Remove'}
           </button>
         )}
       </div>
@@ -109,10 +149,11 @@ function AddressForm({
 }: {
   domain: string
   ownNpub: string
-  onAdd: (localPart: string, pubkey: string) => Promise<void>
+  onAdd: (localPart: string, pubkey: string, isPrivate: boolean) => Promise<void>
 }) {
   const [localPart, setLocalPart] = useState('')
   const [pubkey, setPubkey] = useState(ownNpub)
+  const [isPrivate, setIsPrivate] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const id = `new-address-${domain}`
@@ -124,7 +165,7 @@ function AddressForm({
     setBusy(true)
     setError(null)
     try {
-      await onAdd(localPart.trim().toLowerCase(), pubkey.trim())
+      await onAdd(localPart.trim().toLowerCase(), pubkey.trim(), isPrivate)
       setLocalPart('')
     } catch (failure) {
       setError(describeError(failure))
@@ -171,6 +212,18 @@ function AddressForm({
           className="mt-1 w-full rounded-md border border-rule bg-surface px-3 py-2 font-mono text-sm"
         />
       </div>
+      <label className="flex w-fit cursor-pointer items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={isPrivate}
+          onChange={(event) => setIsPrivate(event.target.checked)}
+          className="mt-1 accent-accent"
+        />
+        <span>
+          Private
+          <span className="block text-muted">Mail still arrives, but nobody can look up the key it reaches.</span>
+        </span>
+      </label>
       <div className="flex flex-wrap items-center gap-4">
         <Button type="submit" variant="secondary" disabled={!localPart.trim() || !pubkey.trim() || busy}>
           {busy ? 'Adding' : 'Add address'}

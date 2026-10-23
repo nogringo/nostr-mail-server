@@ -25,6 +25,7 @@ The project is built in small steps. What exists today:
 | Website: a header linking your domains and, for an admin, the admin page | done |
 | Domain key: the owner shows its nsec or replaces it with their own nsec | done |
 | Domain key held by the owner's bunker (NIP-46) instead of the server | done |
+| Private addresses: they receive and send, but NIP-05 does not show their key | done |
 
 ## Layout
 

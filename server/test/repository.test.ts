@@ -79,6 +79,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '011_create_allowed_keys.sql',
       '012_create_server_settings.sql',
       '013_add_service_settings.sql',
+      '014_add_private_addresses.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -160,11 +161,12 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       localPart: 'bob',
       pubkey: BOB,
       ownerPubkey: ALICE,
+      private: false,
       createdAt: expect.any(String),
     })
 
-    const repointed = await repo.putAddress({ ...created, pubkey: CAROL })
-    expect(repointed).toEqual({ ...created, pubkey: CAROL })
+    const repointed = await repo.putAddress({ ...created, pubkey: CAROL, private: true })
+    expect(repointed).toEqual({ ...created, pubkey: CAROL, private: true })
     expect(await repo.findAddress('example.com', 'bob')).toEqual(repointed)
 
     await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: ALICE, ownerPubkey: ALICE })

@@ -163,14 +163,14 @@ part at a pubkey. Same NIP-98 authentication as the domain routes.
 | Method | Path | Action |
 |--------|------|--------|
 | `GET` | `/domains/{domain}/addresses` | List the addresses of the domain |
-| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkey": "<hex or npub>"}`: `201` when created, `200` when an existing address now points at this pubkey |
+| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkey": "<hex or npub>", "private": false}`: `201` when created, `200` when an existing address now points at this pubkey with this privacy |
 | `DELETE` | `/domains/{domain}/addresses/{localPart}` | `204`, or `404 address_not_found` |
 
 Every route answers `404 domain_not_found` when the caller has no claim on the
 domain, `409 domain_not_verified` while its claim is not verified and
 `403 domain_suspended` while the domain is [suspended](#suspension). `PUT`
-also answers `400` with `invalid_local_part`, `reserved_local_part` or
-`invalid_pubkey`.
+also answers `400` with `invalid_local_part`, `reserved_local_part`,
+`invalid_pubkey` or `invalid_private`.
 
 An address is returned as:
 
@@ -179,9 +179,15 @@ An address is returned as:
   "localPart": "alice",
   "address": "alice@example.com",
   "pubkey": "<hex>",
+  "private": false,
   "createdAt": "2026-10-20T12:00:00.000Z"
 }
 ```
+
+An address is public unless `private` is `true`. A private address receives
+and sends like a public one, but [NIP-05](#nip-05) does not show its pubkey:
+nobody can link the address to the key it reaches. `PUT` without `private`
+makes the address public.
 
 A local part is lowercased and keeps to the NIP-05 characters: dot-separated
 runs of `a-z`, `0-9`, `-` and `_`, 64 characters at most. Reserved names
@@ -308,13 +314,13 @@ On a verified domain, `name` resolves to:
 |--------|--------|
 | `_smtp` | The domain's own key, which clients wrap the mail they send from the domain to |
 | `npub1...` | The pubkey it encodes |
-| A declared address | Its pubkey |
+| A declared address that is not private | Its pubkey |
 
 ```json
 { "names": { "alice": "<hex>" } }
 ```
 
-An unknown name, or any name on a domain that is not verified or is suspended, returns
+An unknown or private name, or any name on a domain that is not verified or is suspended, returns
 `{"names": {}}`. A missing `name` is `400 name_required`. There is no `relays`
 field: Nostr Mail finds relays through kind 10050.
 
@@ -497,7 +503,7 @@ A wrap is refused, and never sent, when:
 |-------|---------|
 | The domain's last check found SPF and DKIM | `<domain> does not send mail until its SPF and DKIM records are found` |
 | The wrap opens with the domain key, its seal is signed by the rumor's author, and the rumor is a kind 1301 | The wrap does not hold an email |
-| `mail-from` is an address of the domain that resolves to the author, as NIP-05 shows it: a declared name, or the author's own `npub1...` | `<address> is not an address of the sender` |
+| `mail-from` is an address of the domain that resolves to the author: a declared name, private or not, or the author's own `npub1...` | `<address> is not an address of the sender` |
 | 1 to 50 `rcpt-to` tags, each `local@domain` with a dot-atom local part | Not an address mail can be relayed to |
 
 The refusal is recorded with the wrap id and logged.

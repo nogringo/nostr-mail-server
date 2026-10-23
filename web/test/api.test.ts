@@ -67,18 +67,24 @@ test('loads one domain by its name', async () => {
 })
 
 test('sends a body as JSON and signs its hash', async () => {
-  const address = { localPart: 'alice', address: 'alice@example.com', pubkey: 'ab'.repeat(32), createdAt: '' }
+  const address = {
+    localPart: 'alice',
+    address: 'alice@example.com',
+    pubkey: 'ab'.repeat(32),
+    private: true,
+    createdAt: '',
+  }
   const { api, requests } = recordingApi(() => Response.json({ address }, { status: 201 }))
 
-  expect(await api.putAddress('example.com', 'alice', 'npub1alice')).toEqual(address)
+  expect(await api.putAddress('example.com', 'alice', 'npub1alice', true)).toEqual(address)
 
   const [{ url, init }] = requests
   expect(url).toBe(`${ORIGIN}/domains/example.com/addresses/alice`)
-  expect(init.body).toBe('{"pubkey":"npub1alice"}')
+  expect(init.body).toBe('{"pubkey":"npub1alice","private":true}')
   const headers = init.headers as Record<string, string>
   expect(headers['content-type']).toBe('application/json')
   const event = await unpackEventFromToken(headers.authorization)
-  expect(event.tags).toContainEqual(['payload', hashPayload({ pubkey: 'npub1alice' })])
+  expect(event.tags).toContainEqual(['payload', hashPayload({ pubkey: 'npub1alice', private: true })])
 })
 
 test('reads the nsec of the domain key and replaces it with an nsec or a bunker', async () => {

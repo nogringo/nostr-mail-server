@@ -280,7 +280,11 @@ export class MemoryDomainRepository implements DomainRepository {
   async putAddress(input: NewAddress): Promise<Address> {
     this.assertAvailable()
     const existing = this.addresses.get(key(input.domain, input.localPart))
-    const address = { ...input, createdAt: existing?.createdAt ?? new Date().toISOString() }
+    const address = {
+      ...input,
+      private: input.private ?? false,
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
+    }
     this.addresses.set(key(input.domain, input.localPart), address)
     return address
   }

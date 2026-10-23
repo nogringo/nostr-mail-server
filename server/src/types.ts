@@ -138,10 +138,14 @@ export interface Address {
   pubkey: string
   // The verified owner of the domain, who declared the address.
   ownerPubkey: string
+  // NIP-05 does not serve it: mail still reaches the pubkey, which nobody can look up.
+  private: boolean
   createdAt: string
 }
 
-export type NewAddress = Pick<Address, 'domain' | 'localPart' | 'pubkey' | 'ownerPubkey'>
+// Public unless said otherwise.
+export type NewAddress = Pick<Address, 'domain' | 'localPart' | 'pubkey' | 'ownerPubkey'> &
+  Partial<Pick<Address, 'private'>>
 
 // A gift wrap addressed to a domain key: queued with its recipients, or refused.
 export type NewOutboundMessage = { wrapId: string; bridgePubkey: string } & (
@@ -223,7 +227,7 @@ export interface DomainRepository {
   updateSettings(settings: StoredSettings): Promise<void>
   listAddresses(domain: string): Promise<Address[]>
   findAddress(domain: string, localPart: string): Promise<Address | null>
-  // Creates the address, or points an existing one at the new pubkey.
+  // Creates the address, or gives an existing one the new pubkey and privacy.
   putAddress(input: NewAddress): Promise<Address>
   deleteAddress(domain: string, localPart: string): Promise<boolean>
   hasOutboundMessage(wrapId: string): Promise<boolean>

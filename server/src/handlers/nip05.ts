@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import { findAddressPubkey, normalizeLocalPart, SMTP_LOCAL_PART } from '../address.js'
+import { normalizeLocalPart, SMTP_LOCAL_PART } from '../address.js'
 import { normalizeDomain, normalizeHost } from '../domain.js'
+import { decodeNpub } from '../nostr.js'
 import type { DomainRepository } from '../types.js'
 
 type Nip05Request = FastifyRequest<{ Querystring: { name?: unknown } }>
@@ -28,5 +29,9 @@ async function resolve(repo: DomainRepository, domain: string, localPart: string
   if (!verified) return null
   if (localPart === SMTP_LOCAL_PART) return verified.bridgePubkey
 
-  return findAddressPubkey(repo, domain, localPart)
+  const npubPubkey = decodeNpub(localPart)
+  if (npubPubkey) return npubPubkey
+
+  const address = await repo.findAddress(domain, localPart)
+  return address && !address.private ? address.pubkey : null
 }

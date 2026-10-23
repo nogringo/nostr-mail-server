@@ -41,7 +41,7 @@ export async function findAddressPubkey(
   return decodeNpub(localPart) ?? (await repo.findAddress(domain, localPart))?.pubkey ?? null
 }
 
-// A sender writes from the addresses of the domain that resolve to its key, as NIP-05 shows them.
+// A sender writes from the addresses of the domain that resolve to its key, private ones included.
 export async function ownsAddress(
   repo: DomainRepository,
   domain: string,

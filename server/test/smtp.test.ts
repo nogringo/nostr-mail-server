@@ -117,6 +117,22 @@ test('a message to a declared address is gift wrapped to its pubkey and publishe
   expect(rumor.content.endsWith(MESSAGE)).toBe(true)
 })
 
+test('a private address is delivered like a public one', async () => {
+  const { repo, network, owner, bob, send } = await setup()
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'shop',
+    pubkey: bob.pubkey,
+    ownerPubkey: owner.pubkey,
+    private: true,
+  })
+
+  const info = await send(['shop@example.com'])
+
+  expect(info.rejected).toEqual([])
+  expect(openWrap(network.published[0].event, bob.sk).rumor.kind).toBe(1301)
+})
+
 test('an npub address is delivered without being declared', async () => {
   const { network, send } = await setup()
   const carol = signer()

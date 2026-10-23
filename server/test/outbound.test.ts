@@ -97,10 +97,18 @@ test('a rumor claiming another author than its seal is refused', async () => {
 test('a sender writes from its npub address and from the names declared for it', async () => {
   const { repo, owner, domain, alice, aliceAddress } = await setup()
   await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: alice.pubkey, ownerPubkey: owner.pubkey })
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'shop',
+    pubkey: alice.pubkey,
+    ownerPubkey: owner.pubkey,
+    private: true,
+  })
   const email = (mailFrom: string) => ({ senderPubkey: alice.pubkey, mailFrom, recipients: [], body: { mime: '' } })
 
   await expect(checkSender(repo, domain, email(aliceAddress))).resolves.toBeUndefined()
   await expect(checkSender(repo, domain, email('Alice@Example.com'))).resolves.toBeUndefined()
+  await expect(checkSender(repo, domain, email('shop@example.com'))).resolves.toBeUndefined()
   await expect(checkSender(repo, domain, email(`${npubEncode(owner.pubkey)}@example.com`))).rejects.toThrow(Refusal)
   await expect(checkSender(repo, domain, email('nobody@example.com'))).rejects.toThrow(Refusal)
   await expect(checkSender(repo, domain, email(`${npubEncode(alice.pubkey)}@other.example`))).rejects.toThrow(Refusal)

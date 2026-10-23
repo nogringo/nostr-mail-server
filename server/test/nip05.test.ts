@@ -21,7 +21,7 @@ async function setup() {
   const owner = signer()
   await verifyDomain(repo, 'example.com', owner.pubkey)
   await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: PUBKEY, ownerPubkey: owner.pubkey })
-  return { repo, app }
+  return { repo, app, owner }
 }
 
 function lookup(app: App, host: string, query: string) {
@@ -62,6 +62,24 @@ test('an npub local part resolves without a stored address', async () => {
   const response = await lookup(app, 'example.com', `?name=${name}`)
 
   expect(response.json()).toEqual({ names: { [name]: PUBKEY } })
+
+  await app.close()
+})
+
+test('a private address does not show its pubkey', async () => {
+  const { repo, app, owner } = await setup()
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'shop',
+    pubkey: PUBKEY,
+    ownerPubkey: owner.pubkey,
+    private: true,
+  })
+
+  const response = await lookup(app, 'example.com', '?name=shop')
+
+  expect(response.statusCode).toBe(200)
+  expect(response.json()).toEqual({ names: {} })
 
   await app.close()
 })

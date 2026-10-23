@@ -67,6 +67,8 @@ export interface Address {
   localPart: string
   address: string
   pubkey: string
+  // NIP-05 does not show which key it reaches.
+  private: boolean
   createdAt: string
 }
 
@@ -177,8 +179,8 @@ export function createApi(
       (await call('PUT', `${domainPath(name)}/key`, key)).domain,
     listAddresses: async (name: string): Promise<Address[]> =>
       (await call('GET', `${domainPath(name)}/addresses`)).addresses,
-    putAddress: async (name: string, localPart: string, pubkey: string): Promise<Address> =>
-      (await call('PUT', addressPath(name, localPart), { pubkey })).address,
+    putAddress: async (name: string, localPart: string, pubkey: string, isPrivate: boolean): Promise<Address> =>
+      (await call('PUT', addressPath(name, localPart), { pubkey, private: isPrivate })).address,
     removeAddress: async (name: string, localPart: string): Promise<void> => {
       await call('DELETE', addressPath(name, localPart))
     },

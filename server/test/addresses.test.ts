@@ -35,10 +35,42 @@ test('PUT creates an address from an npub and stores the hex pubkey', async () =
       localPart: 'bob',
       address: 'bob@example.com',
       pubkey: bob.pubkey,
+      private: false,
       createdAt: expect.any(String),
     },
   })
   expect((await repo.findAddress('example.com', 'bob'))?.ownerPubkey).toBe(owner.pubkey)
+
+  await app.close()
+})
+
+test('PUT makes an address private, then public again when private is left out', async () => {
+  const { repo, app, owner } = await setup()
+  const path = '/domains/example.com/addresses/shop'
+
+  const hidden = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey, private: true })
+  expect(hidden.statusCode).toBe(201)
+  expect(hidden.json().address.private).toBe(true)
+  expect((await repo.findAddress('example.com', 'shop'))?.private).toBe(true)
+
+  const shown = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey })
+  expect(shown.statusCode).toBe(200)
+  expect(shown.json().address.private).toBe(false)
+
+  await app.close()
+})
+
+test.each(['yes', 1, {}])('PUT refuses private %j with invalid_private', async (value) => {
+  const { repo, app, owner } = await setup()
+
+  const response = await request(app, owner, 'PUT', '/domains/example.com/addresses/shop', {
+    pubkey: owner.pubkey,
+    private: value,
+  })
+
+  expect(response.statusCode).toBe(400)
+  expect(response.json()).toEqual({ error: 'invalid_private' })
+  expect(await repo.findAddress('example.com', 'shop')).toBeNull()
 
   await app.close()
 })

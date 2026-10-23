@@ -9,11 +9,12 @@ type DomainRequest = FastifyRequest<{ Params: { domain: string } }>
 
 type AddressRequest = FastifyRequest<{
   Params: { domain: string; localPart: string }
-  Body: { pubkey?: unknown } | undefined
+  Body: { pubkey?: unknown; private?: unknown } | undefined
 }>
 
 // Addresses on a domain, managed with NIP-98 by its verified owner. Each one
-// points a local part at a pubkey, which NIP-05 then serves on the domain.
+// points a local part at a pubkey, which NIP-05 then serves on the domain
+// unless the address is private.
 export function registerAddressRoutes(app: FastifyInstance, repo: DomainRepository): void {
   app.get('/domains/:domain/addresses', async (request: DomainRequest, reply) => {
     const pubkey = authenticate(request, reply)
@@ -40,8 +41,17 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
     const target = parsePubkey(request.body?.pubkey)
     if (!target) return reply.code(400).send({ error: 'invalid_pubkey' })
 
+    const isPrivate = request.body?.private ?? false
+    if (typeof isPrivate !== 'boolean') return reply.code(400).send({ error: 'invalid_private' })
+
     const existing = await repo.findAddress(domain.domain, localPart)
-    const address = await repo.putAddress({ domain: domain.domain, localPart, pubkey: target, ownerPubkey: pubkey })
+    const address = await repo.putAddress({
+      domain: domain.domain,
+      localPart,
+      pubkey: target,
+      ownerPubkey: pubkey,
+      private: isPrivate,
+    })
     return reply.code(existing ? 200 : 201).send({ address: present(address) })
   })
 
@@ -92,6 +102,7 @@ function present(address: Address) {
     localPart: address.localPart,
     address: `${address.localPart}@${address.domain}`,
     pubkey: address.pubkey,
+    private: address.private,
     createdAt: address.createdAt,
   }
 }

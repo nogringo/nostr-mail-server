@@ -27,7 +27,7 @@ const DOMAIN_COLUMNS = `
   bridge_pubkey, bridge_private_key, bridge_bunker, blossom_servers, checks, checked_at, verified_at, created_at
 `
 
-const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, created_at'
+const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, private, created_at'
 
 const ABUSE_REPORT_COLUMNS = 'id, domain, mail_from, header_from, subject, octet_length(message) as size, received_at'
 
@@ -55,6 +55,7 @@ interface AddressRow {
   local_part: string
   pubkey: string
   owner_pubkey: string
+  private: boolean
   created_at: Date
 }
 
@@ -364,13 +365,13 @@ export class PgDomainRepository implements DomainRepository {
   async putAddress(input: NewAddress): Promise<Address> {
     const result = await this.pool.query<AddressRow>(
       `
-        insert into addresses (domain, local_part, pubkey, owner_pubkey)
-        values ($1, $2, $3, $4)
+        insert into addresses (domain, local_part, pubkey, owner_pubkey, private)
+        values ($1, $2, $3, $4, $5)
         on conflict (domain, local_part) do update
-        set pubkey = excluded.pubkey, owner_pubkey = excluded.owner_pubkey
+        set pubkey = excluded.pubkey, owner_pubkey = excluded.owner_pubkey, private = excluded.private
         returning ${ADDRESS_COLUMNS}
       `,
-      [input.domain, input.localPart, input.pubkey, input.ownerPubkey],
+      [input.domain, input.localPart, input.pubkey, input.ownerPubkey, input.private ?? false],
     )
     return toAddress(result.rows[0])
   }
@@ -586,6 +587,7 @@ function toAddress(row: AddressRow): Address {
     localPart: row.local_part,
     pubkey: row.pubkey,
     ownerPubkey: row.owner_pubkey,
+    private: row.private,
     createdAt: row.created_at.toISOString(),
   }
 }
