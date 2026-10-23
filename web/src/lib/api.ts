@@ -186,8 +186,15 @@ export function createApi(
     },
     abuseMessage: async (name: string, id: number): Promise<Blob> =>
       (await send('GET', `${domainPath(name)}/abuse-reports/${id}`)).blob(),
+    // The admins keep the reports the owner deletes, and the other way around.
+    deleteAbuseReport: async (name: string, id: number): Promise<void> => {
+      await call('DELETE', `${domainPath(name)}/abuse-reports/${id}`)
+    },
     adminOverview: (): Promise<AdminOverview> => call('GET', '/admin/domains'),
     adminAbuseMessage: async (id: number): Promise<Blob> => (await send('GET', `/admin/abuse-reports/${id}`)).blob(),
+    adminDeleteAbuseReport: async (id: number): Promise<void> => {
+      await call('DELETE', `/admin/abuse-reports/${id}`)
+    },
     suspendDomain: async (name: string): Promise<Suspension> =>
       (await call('PUT', `/admin${domainPath(name)}/suspension`)).suspension,
     liftSuspension: async (name: string): Promise<void> => {

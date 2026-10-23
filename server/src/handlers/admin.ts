@@ -37,7 +37,7 @@ export function registerAdminRoutes(
       repo.listAllDomains(),
       repo.listSuspensions(),
       repo.listAllowedKeys(),
-      repo.listAbuseReports(),
+      repo.listAbuseReports('admin'),
       checkServerRecords(config, dns),
     ])
     return reply.send({

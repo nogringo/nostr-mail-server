@@ -209,6 +209,7 @@ same NIP-98 authentication. Any other key gets `403 not_admin`.
 |--------|------|--------|
 | `GET` | `/admin/domains` | `{"domains": [...], "suspensions": [...], "allowedKeys": [...], "settings": {...}, "abuseReports": [...], "serverRecords": [...]}`: every claim of every key, verified or not, sorted by domain then by age, every suspended domain, the [allowed keys](#allowed-keys), the [settings](#settings), every [abuse report](#abuse-reports), newest first, and the [server's own records](#server-records) |
 | `GET` | `/admin/abuse-reports/{id}` | The message of any abuse report, or `404 abuse_report_not_found` |
+| `DELETE` | `/admin/abuse-reports/{id}` | [Delete the abuse report](#abuse-reports) for the admins: `204`, or `404 abuse_report_not_found` |
 | `PUT` | `/admin/domains/{domain}/suspension` | Suspend the domain, claimed or not: `201` when suspended, `200` when it already was, `400 invalid_domain` |
 | `DELETE` | `/admin/domains/{domain}/suspension` | Lift the suspension: `204`, or `404 suspension_not_found` |
 | `PUT` | `/admin/allowed-keys/{npub or hex}` | Let the key [claim domains](#who-can-claim): `201` when added, `200` when it already was, `400 invalid_pubkey` |
@@ -403,7 +404,15 @@ as `message/rfc822` from `GET /admin/abuse-reports/{id}` by an admin, or from
 `GET /domains/{domain}/abuse-reports/{id}` by the owner of the domain, with the
 same NIP-98 authentication. The owner gets `404 domain_not_found` without a
 claim on the domain and `404 abuse_report_not_found` for a report that is not
-in its list. Reports are not deleted yet.
+in its list.
+
+The admins and the owner each delete a report for themselves, with `DELETE` on
+the same paths: `204`, or the same `404` errors. The admins keep the reports
+the owner deletes, so a domain cannot hide the complaints about it, and the
+owner keeps the reports the admins delete. The message is dropped from the
+server once nobody reads it any more: both deleted it, or the admins did and
+no owner gets it (a report received before the current claim, or none). The
+wraps already delivered over Nostr stay with their recipients.
 
 ### Large messages
 

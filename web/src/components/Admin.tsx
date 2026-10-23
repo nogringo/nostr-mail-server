@@ -102,6 +102,14 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
     }))
   }
 
+  async function deleteReport(id: number) {
+    await api.adminDeleteAbuseReport(id)
+    setOverview((current) => ({
+      ...current,
+      abuseReports: current.abuseReports.filter((other) => other.id !== id),
+    }))
+  }
+
   async function changeSettings(changes: Partial<ServerSettings>) {
     const saved = await api.updateSettings(changes)
     setOverview((current) => ({ ...current, settings: saved }))
@@ -185,7 +193,9 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
     ),
     abuse: (
       <>
-        <p className="text-muted text-sm">Mail sent to abuse@ of the domains, newest first. Their owners get it too.</p>
+        <p className="text-muted text-sm">
+          Mail sent to abuse@ of the domains, newest first. Their owners get it too, and keep the reports you delete.
+        </p>
         {abuseReports.length === 0 ? (
           <p className="mt-3 text-sm">No report yet.</p>
         ) : (
@@ -195,6 +205,7 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
                 key={report.id}
                 report={report}
                 load={() => api.adminAbuseMessage(report.id)}
+                onDelete={() => deleteReport(report.id)}
                 showDomain
               />
             ))}

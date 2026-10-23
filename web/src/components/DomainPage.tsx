@@ -67,10 +67,18 @@ function DomainView({ initial, api, ownPubkey }: { initial: Domain; api: Api; ow
     document.title = `${domain.domain} on Nostr Mail`
   }, [domain.domain])
 
+  async function deleteReport(id: number) {
+    await api.deleteAbuseReport(domain.domain, id)
+    setDomain((current) => ({
+      ...current,
+      abuseReports: current.abuseReports.filter((other) => other.id !== id),
+    }))
+  }
+
   const panels: Record<Tab, ReactNode> = {
     addresses: <Addresses domain={domain.domain} api={api} ownPubkey={ownPubkey} />,
     dns: <DnsPanel domain={domain} api={api} onChange={setDomain} />,
-    abuse: <AbusePanel domain={domain} api={api} />,
+    abuse: <AbusePanel domain={domain} api={api} onDelete={deleteReport} />,
     settings: <SettingsPanel domain={domain} api={api} onChange={setDomain} />,
   }
 
@@ -138,18 +146,24 @@ function DnsPanel({ domain, api, onChange }: { domain: Domain; api: Api; onChang
   )
 }
 
-function AbusePanel({ domain, api }: { domain: Domain; api: Api }) {
+function AbusePanel({ domain, api, onDelete }: { domain: Domain; api: Api; onDelete: (id: number) => Promise<void> }) {
   return (
     <>
       <p className="text-muted text-sm">
-        Mail sent to abuse@{domain.domain}, newest first. The admins of this server get it too.
+        Mail sent to abuse@{domain.domain}, newest first. The admins of this server get it too, and keep the reports you
+        delete.
       </p>
       {domain.abuseReports.length === 0 ? (
         <p className="mt-3 text-sm">No report yet.</p>
       ) : (
         <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
           {domain.abuseReports.map((report) => (
-            <AbuseReportRow key={report.id} report={report} load={() => api.abuseMessage(domain.domain, report.id)} />
+            <AbuseReportRow
+              key={report.id}
+              report={report}
+              load={() => api.abuseMessage(domain.domain, report.id)}
+              onDelete={() => onDelete(report.id)}
+            />
           ))}
         </ul>
       )}

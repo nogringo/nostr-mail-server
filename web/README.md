@@ -13,7 +13,8 @@ connects a new domain and opens its page.
   show the key it reaches.
 - DNS: the records to publish, and their check.
 - Abuse reports: the mail sent to `abuse@<domain>` since the owner verified
-  it, each message shown or downloaded as `.eml`.
+  it, each message shown or downloaded as `.eml`. A report the owner deletes
+  stays with the admins.
 - Settings: the domain key (`_smtp@<domain>`), whose nsec the owner can show,
   replace with one of their own or hand to their bunker with a `bunker://`
   link, and removing the domain.
@@ -31,7 +32,8 @@ Addresses. Each tab has its own URL fragment (`#dns`, `#abuse`, etc.).
   its domains page and on `/connect`, that the server is private, with its
   npub to send to the admin.
 - Suspended: the suspended domains, and the lifting of a suspension.
-- Abuse: the mail sent to `abuse@` of every domain.
+- Abuse: the mail sent to `abuse@` of every domain. A report the admin
+  deletes stays with the domain owner.
 - Server: the server's own DNS records (A, PTR and SPF), checked each time the
   page loads. The page opens on this tab while a record needs fixing.
 - Settings: the largest message, the Blossom servers given to new domains, the

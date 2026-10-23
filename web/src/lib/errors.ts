@@ -20,6 +20,7 @@ const MESSAGES: Record<string, string> = {
   suspension_not_found: 'This domain is no longer suspended. Reload the page.',
   not_allowed: 'This server is private: its admin chooses the keys that connect domains.',
   allowed_key_not_found: 'This key is no longer allowed. Reload the page.',
+  abuse_report_not_found: 'This report no longer exists. Reload the page.',
   invalid_max_message_bytes: 'Enter a size between 1 and 1024 MB.',
   invalid_blossom_servers: 'Enter at least one https:// URL of a public server, one per line.',
   invalid_domain_relays: 'Enter at least one wss:// URL of a public relay, one per line.',

@@ -12,13 +12,16 @@ interface Props {
   load: () => Promise<Blob>
   // The admin lists the reports of every domain.
   showDomain?: boolean
+  onDelete?: () => Promise<void>
 }
 
 // The message is fetched once opened: listing the reports reads none.
-export default function AbuseReportRow({ report, load, showDomain = false }: Props) {
+export default function AbuseReportRow({ report, load, showDomain = false, onDelete }: Props) {
   const [message, setMessage] = useState<{ url: string; text: string } | null>(null)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const id = `abuse-report-${report.id}`
 
@@ -39,6 +42,17 @@ export default function AbuseReportRow({ report, load, showDomain = false }: Pro
       setError(describeError(failure))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function remove(onDelete: () => Promise<void>) {
+    setDeleting(true)
+    setError(null)
+    try {
+      await onDelete()
+    } catch (failure) {
+      setError(describeError(failure))
+      setDeleting(false)
     }
   }
 
@@ -68,6 +82,22 @@ export default function AbuseReportRow({ report, load, showDomain = false }: Pro
             Download .eml
           </a>
         )}
+        {onDelete &&
+          (confirming ? (
+            <>
+              <span>Delete this report?</span>
+              <Button variant="quiet" className="text-bad" onClick={() => remove(onDelete)} disabled={deleting}>
+                {deleting ? 'Deleting' : 'Delete'}
+              </Button>
+              <Button variant="quiet" onClick={() => setConfirming(false)} disabled={deleting}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button variant="quiet" onClick={() => setConfirming(true)}>
+              Delete
+            </Button>
+          ))}
         <ErrorText>{error}</ErrorText>
       </div>
       {open && message && (

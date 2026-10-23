@@ -190,3 +190,15 @@ test('turns an error answer to a message read into an ApiError', async () => {
 
   await expect(api.adminAbuseMessage(9)).rejects.toMatchObject({ code: 'abuse_report_not_found', status: 404 })
 })
+
+test('deletes an abuse report as the owner or as an admin', async () => {
+  const { api, requests } = recordingApi(() => new Response(null, { status: 204 }))
+
+  await api.deleteAbuseReport('example.com', 3)
+  await api.adminDeleteAbuseReport(4)
+
+  expect(requests.map(({ url, init }) => [init.method, url])).toEqual([
+    ['DELETE', `${ORIGIN}/domains/example.com/abuse-reports/3`],
+    ['DELETE', `${ORIGIN}/admin/abuse-reports/4`],
+  ])
+})

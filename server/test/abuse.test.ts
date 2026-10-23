@@ -78,15 +78,74 @@ test('an admin reads the message of any abuse report', async () => {
   await app.close()
 })
 
-test('only an admin reads the message of an abuse report through the admin route', async () => {
+test('only an admin reads or deletes an abuse report through the admin routes', async () => {
   const { repo, app } = setup()
   const alice = signer()
   await verifyDomain(repo, 'example.com', alice.pubkey)
   await report(repo, 'example.com')
 
-  const response = await request(app, alice, 'GET', '/admin/abuse-reports/1')
+  const read = await request(app, alice, 'GET', '/admin/abuse-reports/1')
+  const deleted = await request(app, alice, 'DELETE', '/admin/abuse-reports/1')
 
-  expect(response.statusCode).toBe(403)
+  expect(read.statusCode).toBe(403)
+  expect(deleted.statusCode).toBe(403)
+  expect(repo.abuseReports[0].adminDeleted).toBe(false)
+
+  await app.close()
+})
+
+test('an admin deletes an abuse report for the admins only', async () => {
+  const { repo, app, admin } = setup()
+  const alice = signer()
+  await verifyDomain(repo, 'example.com', alice.pubkey)
+  await report(repo, 'example.com', 'one')
+  await report(repo, 'example.com', 'two')
+
+  const deleted = await request(app, admin, 'DELETE', '/admin/abuse-reports/1')
+  const again = await request(app, admin, 'DELETE', '/admin/abuse-reports/1')
+  const invalid = await request(app, admin, 'DELETE', '/admin/abuse-reports/0')
+  const listed = await request(app, admin, 'GET', '/admin/domains')
+  const read = await request(app, admin, 'GET', '/admin/abuse-reports/1')
+  const owned = await request(app, alice, 'GET', '/domains/example.com')
+  const ownerRead = await request(app, alice, 'GET', '/domains/example.com/abuse-reports/1')
+
+  expect(deleted.statusCode).toBe(204)
+  expect(again.statusCode).toBe(404)
+  expect(again.json()).toEqual({ error: 'abuse_report_not_found' })
+  expect(invalid.statusCode).toBe(404)
+  expect(listed.json().abuseReports.map((kept: { id: number }) => kept.id)).toEqual([2])
+  expect(read.statusCode).toBe(404)
+  expect(owned.json().domain.abuseReports.map((kept: { id: number }) => kept.id)).toEqual([2, 1])
+  expect(ownerRead.rawPayload).toEqual(MESSAGE)
+
+  await app.close()
+})
+
+test('the owner deletes an abuse report of its domain for itself only', async () => {
+  const { repo, app, admin } = setup()
+  const alice = signer()
+  await verifyDomain(repo, 'example.com', alice.pubkey)
+  await verifyDomain(repo, 'other.example', signer().pubkey)
+  await report(repo, 'example.com')
+  await report(repo, 'other.example')
+
+  const deleted = await request(app, alice, 'DELETE', '/domains/example.com/abuse-reports/1')
+  const again = await request(app, alice, 'DELETE', '/domains/example.com/abuse-reports/1')
+  const other = await request(app, alice, 'DELETE', '/domains/example.com/abuse-reports/2')
+  const owned = await request(app, alice, 'GET', '/domains/example.com')
+  const read = await request(app, alice, 'GET', '/domains/example.com/abuse-reports/1')
+  const listed = await request(app, admin, 'GET', '/admin/domains')
+  const adminRead = await request(app, admin, 'GET', '/admin/abuse-reports/1')
+
+  expect(deleted.statusCode).toBe(204)
+  expect(again.statusCode).toBe(404)
+  expect(again.json()).toEqual({ error: 'abuse_report_not_found' })
+  expect(other.statusCode).toBe(404)
+  expect(owned.json().domain.abuseReports).toEqual([])
+  expect(read.statusCode).toBe(404)
+  expect(listed.json().abuseReports.map((kept: { id: number }) => kept.id)).toEqual([2, 1])
+  expect(adminRead.rawPayload).toEqual(MESSAGE)
+  expect(repo.abuseReports.map((stored) => stored.ownerDeleted)).toEqual([true, false])
 
   await app.close()
 })
@@ -121,9 +180,12 @@ test('a key that takes a domain over does not see what was reported before', asy
 
   const listed = await request(app, alice, 'GET', '/domains/example.com')
   const read = await request(app, alice, 'GET', '/domains/example.com/abuse-reports/1')
+  const deleted = await request(app, alice, 'DELETE', '/domains/example.com/abuse-reports/1')
 
   expect(listed.json().domain.abuseReports).toEqual([])
   expect(read.statusCode).toBe(404)
+  expect(deleted.statusCode).toBe(404)
+  expect(repo.abuseReports[0].ownerDeleted).toBe(false)
 
   await app.close()
 })
@@ -133,10 +195,12 @@ test('a key without a claim on the domain reads no report of it', async () => {
   await verifyDomain(repo, 'example.com', signer().pubkey)
   await report(repo, 'example.com')
 
-  const response = await request(app, signer(), 'GET', '/domains/example.com/abuse-reports/1')
+  const read = await request(app, signer(), 'GET', '/domains/example.com/abuse-reports/1')
+  const deleted = await request(app, signer(), 'DELETE', '/domains/example.com/abuse-reports/1')
 
-  expect(response.statusCode).toBe(404)
-  expect(response.json()).toEqual({ error: 'domain_not_found' })
+  expect(read.statusCode).toBe(404)
+  expect(read.json()).toEqual({ error: 'domain_not_found' })
+  expect(deleted.json()).toEqual({ error: 'domain_not_found' })
 
   await app.close()
 })

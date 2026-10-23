@@ -18,6 +18,7 @@ import { SettingsStore } from '../src/settings.js'
 import { type KeySigner, localSigner } from '../src/signer.js'
 import { readTls, type TlsCredentials } from '../src/tls.js'
 import type {
+  AbuseReader,
   AbuseReport,
   Address,
   AllowedKey,
@@ -83,6 +84,15 @@ export interface StoredOutboundMessage {
   recipients: Map<string, StoredRecipient>
 }
 
+// Never dropped: a report both sides deleted only leaves their lists.
+export interface StoredAbuseReport {
+  report: AbuseReport
+  emailId: string
+  message: Buffer
+  adminDeleted: boolean
+  ownerDeleted: boolean
+}
+
 export class MemoryDomainRepository implements DomainRepository {
   readonly domains = new Map<string, Domain>()
   readonly addresses = new Map<string, Address>()
@@ -92,7 +102,7 @@ export class MemoryDomainRepository implements DomainRepository {
   storedSettings: StoredSettings = { ...testSettings, retiredDomainRelays: {} }
   readonly servedDomains = new Set<string>()
   serverKey: KeyPair | null = null
-  readonly abuseReports: { report: AbuseReport; emailId: string; message: Buffer }[] = []
+  readonly abuseReports: StoredAbuseReport[] = []
   fail = false
 
   async findDomain(domain: string, pubkey: string): Promise<Domain | null> {
@@ -379,21 +389,30 @@ export class MemoryDomainRepository implements DomainRepository {
       size: message.length,
       receivedAt: new Date().toISOString(),
     }
-    this.abuseReports.push({ report, emailId, message })
+    this.abuseReports.push({ report, emailId, message, adminDeleted: false, ownerDeleted: false })
   }
 
-  async listAbuseReports(filter?: { domain: string; since: string }): Promise<AbuseReport[]> {
+  async listAbuseReports(reader: AbuseReader): Promise<AbuseReport[]> {
     this.assertAvailable()
     return this.abuseReports
+      .filter((stored) => keptBy(stored, reader))
       .map(({ report }) => report)
-      .filter((report) => !filter || (report.domain === filter.domain && report.receivedAt >= filter.since))
       .reverse()
   }
 
-  async findAbuseReport(id: number): Promise<{ report: AbuseReport; message: Buffer } | null> {
+  async findAbuseMessage(id: number, reader: AbuseReader): Promise<Buffer | null> {
     this.assertAvailable()
-    const kept = this.abuseReports.find(({ report }) => report.id === id)
-    return kept ? { report: kept.report, message: kept.message } : null
+    return this.abuseReports.find((stored) => stored.report.id === id && keptBy(stored, reader))?.message ?? null
+  }
+
+  async deleteAbuseReport(id: number, reader: AbuseReader): Promise<boolean> {
+    this.assertAvailable()
+    const kept = this.abuseReports.find((stored) => stored.report.id === id && keptBy(stored, reader))
+    if (!kept) return false
+
+    if (reader === 'admin') kept.adminDeleted = true
+    else kept.ownerDeleted = true
+    return true
   }
 
   async findOrCreateServerKey(generated: KeyPair): Promise<KeyPair> {
@@ -769,6 +788,11 @@ export function request(
 
 function key(domain: string, id: string): string {
   return `${domain}:${id}`
+}
+
+function keptBy(stored: StoredAbuseReport, reader: AbuseReader): boolean {
+  if (reader === 'admin') return !stored.adminDeleted
+  return !stored.ownerDeleted && stored.report.domain === reader.domain && stored.report.receivedAt >= reader.since
 }
 
 const FINAL_LINE = /^\d{3} .*\r\n/m

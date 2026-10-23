@@ -80,6 +80,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '012_create_server_settings.sql',
       '013_add_service_settings.sql',
       '014_add_private_addresses.sql',
+      '015_add_abuse_report_deletions.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -384,7 +385,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     await repo.addAbuseReport({ ...report, domain: 'example.com', emailId: 'one' })
     await repo.addAbuseReport({ ...report, domain: 'other.example', emailId: 'one' })
 
-    const listed = await repo.listAbuseReports()
+    const listed = await repo.listAbuseReports('admin')
     expect(listed.map((kept) => kept.domain)).toEqual(['other.example', 'example.com'])
     expect(listed[1]).toEqual({
       id: expect.any(Number),
@@ -395,12 +396,60 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       size: message.length,
       receivedAt: expect.any(String),
     })
-    expect(await repo.listAbuseReports({ domain: 'example.com', since: listed[1].receivedAt })).toEqual([listed[1]])
+    const owner = { domain: 'example.com', since: listed[1].receivedAt }
+    expect(await repo.listAbuseReports(owner)).toEqual([listed[1]])
     expect(
       await repo.listAbuseReports({ domain: 'example.com', since: new Date(Date.now() + 60_000).toISOString() }),
     ).toEqual([])
-    expect(await repo.findAbuseReport(listed[1].id)).toEqual({ report: listed[1], message })
-    expect(await repo.findAbuseReport(0)).toBeNull()
+    expect(await repo.findAbuseMessage(listed[1].id, 'admin')).toEqual(message)
+    expect(await repo.findAbuseMessage(listed[1].id, owner)).toEqual(message)
+    expect(await repo.findAbuseMessage(listed[0].id, owner)).toBeNull()
+    expect(await repo.findAbuseMessage(0, 'admin')).toBeNull()
+  })
+
+  test('deletes an abuse report for one reader, and for good once nobody reads it', async () => {
+    const message = Buffer.from('Subject: Spam\r\n\r\nHello\r\n')
+    const receive = (emailId: string) =>
+      repo.addAbuseReport({ domain: 'reported.example', emailId, mailFrom: '', from: '', subject: emailId, message })
+    const subjects = (reports: { domain: string; subject: string }[]) =>
+      reports.filter((report) => report.domain === 'reported.example').map((report) => report.subject)
+    const idOf = async (subject: string) =>
+      (await repo.listAbuseReports('admin')).find((report) => report.subject === subject)?.id ?? 0
+    const stored = async () =>
+      subjects((await admin.query(`select domain, subject from ${schema}.abuse_reports order by id desc`)).rows)
+
+    await repo.createDomain(claim('reported.example', CAROL))
+    const carol = await repo.recordChecks('reported.example', CAROL, checks, true)
+    const owner = { domain: 'reported.example', since: carol?.verifiedAt ?? '' }
+    for (const emailId of ['one', 'two', 'three']) await receive(emailId)
+    const [three, two, one] = await repo.listAbuseReports(owner)
+
+    expect(await repo.deleteAbuseReport(one.id, 'admin')).toBe(true)
+    expect(await repo.deleteAbuseReport(one.id, 'admin')).toBe(false)
+    expect(await repo.deleteAbuseReport(two.id, owner)).toBe(true)
+    expect(subjects(await repo.listAbuseReports('admin'))).toEqual(['three', 'two'])
+    expect(subjects(await repo.listAbuseReports(owner))).toEqual(['three', 'one'])
+    expect(await repo.findAbuseMessage(one.id, 'admin')).toBeNull()
+    expect(await repo.findAbuseMessage(one.id, owner)).toEqual(message)
+
+    await repo.deleteAbuseReport(one.id, owner)
+    await repo.deleteAbuseReport(two.id, 'admin')
+    await repo.deleteAbuseReport(three.id, 'admin')
+    expect(await stored()).toEqual(['three'])
+
+    await repo.createDomain(claim('reported.example', BOB))
+    await repo.recordChecks('reported.example', BOB, checks, true)
+    expect(await stored()).toEqual([])
+
+    await receive('four')
+    await repo.deleteAbuseReport(await idOf('four'), 'admin')
+    expect(await stored()).toEqual(['four'])
+    await repo.deleteDomain('reported.example', BOB)
+    expect(await stored()).toEqual([])
+
+    await receive('five')
+    await repo.deleteAbuseReport(await idOf('five'), 'admin')
+    expect(await stored()).toEqual([])
   })
 
   test('remembers a domain once a claim on it is verified, also after it is released', async () => {

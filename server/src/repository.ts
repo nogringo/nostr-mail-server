@@ -1,6 +1,7 @@
 import type { NostrEvent } from 'nostr-tools/pure'
 import pg from 'pg'
 import type {
+  AbuseReader,
   AbuseReport,
   Address,
   AllowedKey,
@@ -216,14 +217,18 @@ export class PgDomainRepository implements DomainRepository {
       )
       if (verified && result.rows[0]) {
         await client.query('insert into served_domains (domain) values ($1) on conflict (domain) do nothing', [domain])
+        await purgeAbuseReports(client, domain)
       }
       return result.rows[0] ? toDomain(result.rows[0]) : null
     })
   }
 
   async deleteDomain(domain: string, pubkey: string): Promise<boolean> {
-    const result = await this.pool.query('delete from domains where domain = $1 and pubkey = $2', [domain, pubkey])
-    return (result.rowCount ?? 0) > 0
+    return this.transaction(async (client) => {
+      const result = await client.query('delete from domains where domain = $1 and pubkey = $2', [domain, pubkey])
+      await purgeAbuseReports(client, domain)
+      return (result.rowCount ?? 0) > 0
+    })
   }
 
   async hasBridgeKey(bridgePubkey: string): Promise<boolean> {
@@ -485,29 +490,37 @@ export class PgDomainRepository implements DomainRepository {
     )
   }
 
-  async listAbuseReports(filter?: { domain: string; since: string }): Promise<AbuseReport[]> {
-    const result = filter
-      ? await this.pool.query<AbuseReportRow>(
-          `
-            select ${ABUSE_REPORT_COLUMNS} from abuse_reports
-            where domain = $1 and received_at >= $2
-            order by received_at desc, id desc
-          `,
-          [filter.domain, filter.since],
-        )
-      : await this.pool.query<AbuseReportRow>(
-          `select ${ABUSE_REPORT_COLUMNS} from abuse_reports order by received_at desc, id desc`,
-        )
+  async listAbuseReports(reader: AbuseReader): Promise<AbuseReport[]> {
+    const { condition, values } = keptBy(reader, 1)
+    const result = await this.pool.query<AbuseReportRow>(
+      `select ${ABUSE_REPORT_COLUMNS} from abuse_reports where ${condition} order by received_at desc, id desc`,
+      values,
+    )
     return result.rows.map(toAbuseReport)
   }
 
-  async findAbuseReport(id: number): Promise<{ report: AbuseReport; message: Buffer } | null> {
-    const result = await this.pool.query<AbuseReportRow & { message: Buffer }>(
-      `select ${ABUSE_REPORT_COLUMNS}, message from abuse_reports where id = $1`,
-      [id],
+  async findAbuseMessage(id: number, reader: AbuseReader): Promise<Buffer | null> {
+    const { condition, values } = keptBy(reader, 2)
+    const result = await this.pool.query<{ message: Buffer }>(
+      `select message from abuse_reports where id = $1 and ${condition}`,
+      [id, ...values],
     )
-    const row = result.rows[0]
-    return row ? { report: toAbuseReport(row), message: row.message } : null
+    return result.rows[0]?.message ?? null
+  }
+
+  async deleteAbuseReport(id: number, reader: AbuseReader): Promise<boolean> {
+    const { condition, values } = keptBy(reader, 2)
+    const column = reader === 'admin' ? 'admin_deleted_at' : 'owner_deleted_at'
+    return this.transaction(async (client) => {
+      const result = await client.query<{ domain: string }>(
+        `update abuse_reports set ${column} = now() where id = $1 and ${condition} returning domain`,
+        [id, ...values],
+      )
+      if (!result.rows[0]) return false
+
+      await purgeAbuseReports(client, result.rows[0].domain)
+      return true
+    })
   }
 
   async findOrCreateServerKey(generated: KeyPair): Promise<KeyPair> {
@@ -579,6 +592,31 @@ function toAbuseReport(row: AbuseReportRow): AbuseReport {
     size: row.size,
     receivedAt: row.received_at.toISOString(),
   }
+}
+
+// The reports the reader has not deleted, with the values of the condition numbered from `from`.
+function keptBy(reader: AbuseReader, from: number): { condition: string; values: string[] } {
+  if (reader === 'admin') return { condition: 'admin_deleted_at is null', values: [] }
+  return {
+    condition: `owner_deleted_at is null and domain = $${from} and received_at >= $${from + 1}`,
+    values: [reader.domain, reader.since],
+  }
+}
+
+// Drops the reports of the domain the admins deleted and no owner reads any more: deleted by the owner too,
+// or received before the claim that owns the domain now, if any.
+async function purgeAbuseReports(client: pg.PoolClient, domain: string): Promise<void> {
+  await client.query(
+    `
+      delete from abuse_reports r
+      where r.domain = $1 and r.admin_deleted_at is not null
+        and (
+          r.owner_deleted_at is not null
+          or not exists (select 1 from domains d where d.domain = r.domain and d.verified_at <= r.received_at)
+        )
+    `,
+    [domain],
+  )
 }
 
 function toAddress(row: AddressRow): Address {

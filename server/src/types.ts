@@ -179,6 +179,10 @@ export type NewAbuseReport = Pick<AbuseReport, 'domain' | 'mailFrom' | 'from' | 
   message: Buffer
 }
 
+// The admins read the reports of every domain, the owner of a domain those received since its claim was
+// verified. Each deletes a report for itself only.
+export type AbuseReader = 'admin' | { domain: string; since: string }
+
 export interface KeyPair {
   pubkey: string
   privateKey: string
@@ -240,9 +244,10 @@ export interface DomainRepository {
   pruneOutboundMessages(before: Date): Promise<number>
   // Does nothing when the domain already has this message.
   addAbuseReport(input: NewAbuseReport): Promise<void>
-  // Newest first, every domain's without a filter.
-  listAbuseReports(filter?: { domain: string; since: string }): Promise<AbuseReport[]>
-  findAbuseReport(id: number): Promise<{ report: AbuseReport; message: Buffer } | null>
+  // Newest first, without those the reader deleted.
+  listAbuseReports(reader: AbuseReader): Promise<AbuseReport[]>
+  findAbuseMessage(id: number, reader: AbuseReader): Promise<Buffer | null>
+  deleteAbuseReport(id: number, reader: AbuseReader): Promise<boolean>
   // Stores `generated` as the server's key unless it already has one, and returns the stored key.
   findOrCreateServerKey(generated: KeyPair): Promise<KeyPair>
 }
