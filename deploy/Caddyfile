@@ -33,7 +33,8 @@ https:// {
 		reverse_proxy server:3000
 	}
 
+	# Temporary, so browsers drop it once the owner serves NIP-05 from their own website.
 	handle {
-		respond 404
+		redir https://{$SITE_HOST}/ 302
 	}
 }
