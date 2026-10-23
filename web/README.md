@@ -10,7 +10,8 @@ connects a new domain and opens its page.
 - Addresses, once the domain is verified: `npub...@<domain>`, always
   available, and the named ones the owner adds, each pointing at an npub or a
   hex public key. A named address can be made private, so that NIP-05 does not
-  show the key it reaches.
+  show the key it reaches, and disabled, so that its mail is dropped while it
+  still sends.
 - DNS: the records to publish, and their check.
 - Abuse reports: the mail sent to `abuse@<domain>` since the owner verified
   it, each message shown or downloaded as `.eml`. A report the owner deletes

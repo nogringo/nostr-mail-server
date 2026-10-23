@@ -38,6 +38,7 @@ test('PUT creates an address from an npub and stores the hex pubkey', async () =
       pubkey: bob.pubkey,
       createdBy: owner.pubkey,
       private: false,
+      enabled: true,
       createdAt: expect.any(String),
     },
   })
@@ -72,6 +73,37 @@ test.each(['yes', 1, {}])('PUT refuses private %j with invalid_private', async (
 
   expect(response.statusCode).toBe(400)
   expect(response.json()).toEqual({ error: 'invalid_private' })
+  expect(await repo.findAddress('example.com', 'shop')).toBeNull()
+
+  await app.close()
+})
+
+test('PUT disables an address, then enables it again when enabled is left out', async () => {
+  const { repo, app, owner } = await setup()
+  const path = '/domains/example.com/addresses/shop'
+
+  const disabled = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey, private: true, enabled: false })
+  expect(disabled.statusCode).toBe(201)
+  expect(disabled.json().address).toMatchObject({ private: true, enabled: false })
+  expect((await repo.findAddress('example.com', 'shop'))?.enabled).toBe(false)
+
+  const enabled = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey, private: true })
+  expect(enabled.statusCode).toBe(200)
+  expect(enabled.json().address).toMatchObject({ private: true, enabled: true })
+
+  await app.close()
+})
+
+test.each(['no', 0, {}])('PUT refuses enabled %j with invalid_enabled', async (value) => {
+  const { repo, app, owner } = await setup()
+
+  const response = await request(app, owner, 'PUT', '/domains/example.com/addresses/shop', {
+    pubkey: owner.pubkey,
+    enabled: value,
+  })
+
+  expect(response.statusCode).toBe(400)
+  expect(response.json()).toEqual({ error: 'invalid_enabled' })
   expect(await repo.findAddress('example.com', 'shop')).toBeNull()
 
   await app.close()

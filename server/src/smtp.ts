@@ -6,7 +6,7 @@ import {
   type SMTPServerEnvelope,
   type SMTPServerSession,
 } from 'smtp-server'
-import { ABUSE_LOCAL_PART, catchAddress, findAddressPubkey, parseEmailAddress } from './address.js'
+import { ABUSE_LOCAL_PART, catchAddress, findMailbox, parseEmailAddress } from './address.js'
 import { authenticateMessage, dmarcRejection, removeForgedResults, summarize } from './authentication.js'
 import { type BlobStore, type EncryptedBlob, encryptBlob } from './blossom.js'
 import { DomainSigners } from './bunker.js'
@@ -129,8 +129,10 @@ export function createSmtpServer(
     const domain = await repo.findVerifiedDomain(name)
     if (!domain) return null
 
-    const pubkey = (await findAddressPubkey(repo, name, localPart)) ?? (await catchAddress(repo, domain, localPart))
-    return pubkey ? [{ writer: domainWriter(domain), pubkey }] : null
+    const mailbox = (await findMailbox(repo, name, localPart)) ?? (await catchAddress(repo, domain, localPart))
+    if (!mailbox) return null
+    // Accepted like the others, so the sender cannot tell the address is disabled.
+    return mailbox.enabled ? [{ writer: domainWriter(domain), pubkey: mailbox.pubkey }] : []
   }
 
   // A complaint reaches the admins, and the owner of the domain while it has one,
@@ -139,8 +141,10 @@ export function createSmtpServer(
   async function findComplaintTargets(name: string): Promise<Target[] | null> {
     const owned = await repo.findOwnedDomain(name)
     if (owned) {
-      const declared = await findAddressPubkey(repo, name, ABUSE_LOCAL_PART)
-      const pubkeys = [declared, owned.pubkey, ...adminPubkeys].filter((pubkey) => pubkey !== null)
+      const declared = await repo.findAddress(name, ABUSE_LOCAL_PART)
+      const pubkeys = [declared?.enabled ? declared.pubkey : null, owned.pubkey, ...adminPubkeys].filter(
+        (pubkey) => pubkey !== null,
+      )
       return [...new Set(pubkeys)].map((pubkey) => ({ writer: domainWriter(owned), pubkey }))
     }
     if (name !== mxHost && !(await repo.hasServedDomain(name)) && !(await repo.findSuspension(name))) return null
@@ -189,8 +193,13 @@ export function createSmtpServer(
       })
       logger.info({ session: session.id, domain, emailId }, 'Kept an abuse report')
     }
-    // Only a complaint can reach nobody over Nostr: the copy above is then all there is.
-    if (!targets.length) return 'Kept on this server'
+    if (!targets.length) {
+      // Only a complaint can reach nobody over Nostr: the copy above is then all there is.
+      if (abuseDomains.has(session.envelope)) return 'Kept on this server'
+
+      logger.info({ session: session.id, emailId }, 'Dropped an email for a disabled address')
+      return 'Delivered over Nostr'
+    }
 
     const maxInlineBytes = Math.min(...targets.map((target) => target.writer.maxInlineMimeBytes))
     const email: InboundEmail = {

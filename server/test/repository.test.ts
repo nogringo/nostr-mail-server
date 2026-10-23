@@ -84,6 +84,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '016_add_nip05_host.sql',
       '017_add_shared_domains.sql',
       '018_add_catch_all.sql',
+      '019_add_address_enabled.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -167,11 +168,12 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       ownerPubkey: ALICE,
       createdBy: ALICE,
       private: false,
+      enabled: true,
       createdAt: expect.any(String),
     })
 
-    const repointed = await repo.putAddress({ ...created, pubkey: CAROL, private: true })
-    expect(repointed).toEqual({ ...created, pubkey: CAROL, private: true })
+    const repointed = await repo.putAddress({ ...created, pubkey: CAROL, private: true, enabled: false })
+    expect(repointed).toEqual({ ...created, pubkey: CAROL, private: true, enabled: false })
     expect(await repo.findAddress('example.com', 'bob')).toEqual(repointed)
 
     await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: ALICE, ownerPubkey: ALICE })
@@ -192,7 +194,13 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect(await repo.createCatchAllAddress(owner, 'alice')).toBeNull()
 
     const caught = await repo.createCatchAllAddress(owner, 'alice+shop')
-    expect(caught).toMatchObject({ localPart: 'alice+shop', pubkey: ALICE, createdBy: ALICE, private: true })
+    expect(caught).toMatchObject({
+      localPart: 'alice+shop',
+      pubkey: ALICE,
+      createdBy: ALICE,
+      private: true,
+      enabled: true,
+    })
     expect(await repo.createCatchAllAddress(owner, 'bob')).toEqual(await repo.findAddress('example.com', 'bob'))
 
     expect(await repo.deleteAddress('example.com', 'alice+shop')).toBe(true)
@@ -507,15 +515,16 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
 
     const member = { domain: 'shared.example', pubkey: ALICE, ownerPubkey: CAROL, createdBy: ALICE }
     const zoe = await repo.putCreatedAddress({ ...member, localPart: 'zoe' })
-    expect(zoe).toMatchObject({ ...member, localPart: 'zoe', private: false })
+    expect(zoe).toMatchObject({ ...member, localPart: 'zoe', private: false, enabled: true })
     await repo.putCreatedAddress({ ...member, localPart: 'alice' })
     await repo.putAddress({ domain: 'shared.example', localPart: 'carol', pubkey: CAROL, ownerPubkey: CAROL })
     expect((await repo.listCreatedAddresses(ALICE)).map((address) => address.localPart)).toEqual(['alice', 'zoe'])
     expect(await repo.listCreatedAddresses(CAROL)).toEqual([])
 
-    expect(await repo.putCreatedAddress({ ...member, localPart: 'zoe', private: true })).toEqual({
+    expect(await repo.putCreatedAddress({ ...member, localPart: 'zoe', private: true, enabled: false })).toEqual({
       ...zoe,
       private: true,
+      enabled: false,
     })
     expect(await repo.putCreatedAddress({ ...member, localPart: 'carol' })).toBeNull()
     expect(await repo.putCreatedAddress({ ...member, pubkey: BOB, createdBy: BOB, localPart: 'zoe' })).toBeNull()

@@ -346,6 +346,7 @@ export class MemoryDomainRepository implements DomainRepository {
       ...input,
       createdBy: existing?.pubkey === input.pubkey ? existing.createdBy : (input.createdBy ?? input.ownerPubkey),
       private: input.private ?? false,
+      enabled: input.enabled ?? true,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
     }
     this.addresses.set(key(input.domain, input.localPart), address)
@@ -357,9 +358,10 @@ export class MemoryDomainRepository implements DomainRepository {
     const existing = this.addresses.get(key(input.domain, input.localPart))
     if (existing && existing.createdBy !== input.createdBy) return null
 
+    const settings = { private: input.private ?? false, enabled: input.enabled ?? true }
     const address = existing
-      ? { ...existing, private: input.private ?? false }
-      : { ...input, private: input.private ?? false, createdAt: new Date().toISOString() }
+      ? { ...existing, ...settings }
+      : { ...input, ...settings, createdAt: new Date().toISOString() }
     this.addresses.set(key(input.domain, input.localPart), address)
     return address
   }
@@ -377,6 +379,7 @@ export class MemoryDomainRepository implements DomainRepository {
       ownerPubkey: domain.pubkey,
       createdBy: domain.pubkey,
       private: true,
+      enabled: true,
       createdAt: new Date().toISOString(),
     }
     this.addresses.set(key(domain.domain, localPart), address)

@@ -67,6 +67,7 @@ test('a key creates an address for itself on a shared domain', async () => {
       pubkey: member.pubkey,
       createdBy: member.pubkey,
       private: true,
+      enabled: true,
       createdAt: expect.any(String),
     },
   })
@@ -152,11 +153,11 @@ test('a key keeps managing its address once the domain is no longer shared, but 
   await request(app, member, 'PUT', '/addresses/example.com/alice')
   await repo.setShared('example.com', owner.pubkey, false)
 
-  const hidden = await request(app, member, 'PUT', '/addresses/example.com/alice', { private: true })
+  const hidden = await request(app, member, 'PUT', '/addresses/example.com/alice', { private: true, enabled: false })
   const created = await request(app, member, 'PUT', '/addresses/example.com/alice2')
 
   expect(hidden.statusCode).toBe(200)
-  expect(hidden.json().address.private).toBe(true)
+  expect(hidden.json().address).toMatchObject({ private: true, enabled: false })
   expect(created.statusCode).toBe(403)
 
   await app.close()

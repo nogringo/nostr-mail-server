@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Address, Api } from '../lib/api'
+import type { Address, AddressSettings, Api } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { AddressForm, AddressRow, type NewAddress } from './Addresses'
 import { ErrorText } from './ui'
@@ -26,13 +26,19 @@ export default function SharedAddresses({
   }
 
   async function add({ domain, localPart, isPrivate }: NewAddress) {
-    keep(await api.putCreatedAddress(domain, localPart, isPrivate))
+    keep(await api.putCreatedAddress(domain, localPart, { private: isPrivate }))
   }
 
-  async function togglePrivacy(address: Address) {
+  async function change(address: Address, settings: AddressSettings) {
     setError(null)
     try {
-      keep(await api.putCreatedAddress(address.domain, address.localPart, !address.private))
+      keep(
+        await api.putCreatedAddress(address.domain, address.localPart, {
+          private: address.private,
+          enabled: address.enabled,
+          ...settings,
+        }),
+      )
     } catch (failure) {
       setError(describeError(failure))
     }
@@ -65,7 +71,9 @@ export default function SharedAddresses({
               address={address.address}
               deliveredTo="your key"
               isPrivate={address.private}
-              onTogglePrivacy={() => togglePrivacy(address)}
+              enabled={address.enabled}
+              onTogglePrivacy={() => change(address, { private: !address.private })}
+              onToggleEnabled={() => change(address, { enabled: !address.enabled })}
               onRemove={() => remove(address)}
             />
           ))}

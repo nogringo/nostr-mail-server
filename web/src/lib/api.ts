@@ -85,8 +85,13 @@ export interface Address {
   createdBy: string
   // NIP-05 does not show which key it reaches.
   private: boolean
+  // Mail to it is taken and dropped, without the sender knowing. It still sends.
+  enabled: boolean
   createdAt: string
 }
+
+// Left out, an address is public and enabled.
+export type AddressSettings = Partial<Pick<Address, 'private' | 'enabled'>>
 
 // Nothing creates it again until the owner of the domain allows it.
 export interface DeletedAddress {
@@ -217,8 +222,8 @@ export function createApi(
     replaceDomainKey: async (name: string, key: { nsec: string } | { bunker: string }): Promise<Domain> =>
       (await call('PUT', `${domainPath(name)}/key`, key)).domain,
     listAddresses: (name: string): Promise<AddressList> => call('GET', `${domainPath(name)}/addresses`),
-    putAddress: async (name: string, localPart: string, pubkey: string, isPrivate: boolean): Promise<Address> =>
-      (await call('PUT', addressPath(name, localPart), { pubkey, private: isPrivate })).address,
+    putAddress: async (name: string, localPart: string, pubkey: string, settings: AddressSettings): Promise<Address> =>
+      (await call('PUT', addressPath(name, localPart), { pubkey, ...settings })).address,
     removeAddress: async (name: string, localPart: string): Promise<void> => {
       await call('DELETE', addressPath(name, localPart))
     },
@@ -228,8 +233,8 @@ export function createApi(
       await call('DELETE', localPart === undefined ? path : `${path}/${encodeURIComponent(localPart)}`)
     },
     // An address on a shared domain, delivered to the signing key.
-    putCreatedAddress: async (name: string, localPart: string, isPrivate: boolean): Promise<Address> =>
-      (await call('PUT', createdAddressPath(name, localPart), { private: isPrivate })).address,
+    putCreatedAddress: async (name: string, localPart: string, settings: AddressSettings): Promise<Address> =>
+      (await call('PUT', createdAddressPath(name, localPart), settings)).address,
     removeCreatedAddress: async (name: string, localPart: string): Promise<void> => {
       await call('DELETE', createdAddressPath(name, localPart))
     },

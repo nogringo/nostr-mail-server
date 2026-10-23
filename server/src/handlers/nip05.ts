@@ -41,6 +41,7 @@ async function resolve(repo: DomainRepository, domain: string, localPart: string
   const npubPubkey = decodeNpub(localPart)
   if (npubPubkey) return npubPubkey
 
+  // A disabled address is hidden too, or Nostr clients would write to its key around it.
   const address = await repo.findAddress(domain, localPart)
-  return address && !address.private ? address.pubkey : null
+  return address && !address.private && address.enabled ? address.pubkey : null
 }

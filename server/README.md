@@ -164,7 +164,7 @@ part at a pubkey. Same NIP-98 authentication as the domain routes.
 | Method | Path | Action |
 |--------|------|--------|
 | `GET` | `/domains/{domain}/addresses` | `{"addresses": [...], "deletedAddresses": [...]}`: the addresses of the domain and the [deleted](#deleted-addresses) ones |
-| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkey": "<hex or npub>", "private": false}`: `201` when created, `200` when an existing address now points at this pubkey with this privacy, `409 address_deleted` for a deleted one |
+| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkey": "<hex or npub>", "private": false, "enabled": true}`: `201` when created, `200` when an existing address now points at this pubkey with this privacy and state, `409 address_deleted` for a deleted one |
 | `DELETE` | `/domains/{domain}/addresses/{localPart}` | `204`, or `404 address_not_found`. The address joins the deleted ones |
 | `DELETE` | `/domains/{domain}/deleted-addresses/{localPart}` | Let a deleted address be created again: `204`, or `404 deleted_address_not_found` |
 | `DELETE` | `/domains/{domain}/deleted-addresses` | Let every deleted address be created again: `204` |
@@ -173,7 +173,7 @@ Every route answers `404 domain_not_found` when the caller has no claim on the
 domain, `409 domain_not_verified` while its claim is not verified and
 `403 domain_suspended` while the domain is [suspended](#suspension). `PUT`
 also answers `400` with `invalid_local_part`, `reserved_local_part`,
-`invalid_pubkey` or `invalid_private`.
+`invalid_pubkey`, `invalid_private` or `invalid_enabled`.
 
 An address is returned as:
 
@@ -183,6 +183,7 @@ An address is returned as:
   "address": "alice@example.com",
   "pubkey": "<hex>",
   "private": false,
+  "enabled": true,
   "createdAt": "2026-10-20T12:00:00.000Z"
 }
 ```
@@ -191,6 +192,13 @@ An address is public unless `private` is `true`. A private address receives
 and sends like a public one, but [NIP-05](#nip-05) does not show its pubkey:
 nobody can link the address to the key it reaches. `PUT` without `private`
 makes the address public.
+
+An address is enabled unless `enabled` is `false`. A disabled address takes
+its mail and drops it, answering `250` like a delivery so the sender cannot
+tell, as SimpleLogin does. NIP-05 hides it too, or Nostr clients would write to
+its key around it. It still sends, and the catch-all does not create it again,
+since it exists. A disabled `abuse` still brings complaints to the owner and the
+admins, just not to its own pubkey. `PUT` without `enabled` enables the address.
 
 A local part is lowercased and keeps to the NIP-05 characters: dot-separated
 runs of `a-z`, `0-9`, `-` and `_`, 64 characters at most. The
@@ -350,13 +358,13 @@ On a verified domain, `name` resolves to:
 |--------|--------|
 | `_smtp` | The domain's own key, which clients wrap the mail they send from the domain to |
 | `npub1...` | The pubkey it encodes |
-| A declared address that is not private | Its pubkey |
+| A declared address that is neither private nor disabled | Its pubkey |
 
 ```json
 { "names": { "alice": "<hex>" } }
 ```
 
-An unknown or private name, or any name on a domain that is not verified or is suspended, returns
+An unknown, private or disabled name, or any name on a domain that is not verified or is suspended, returns
 `{"names": {}}`. A missing `name` is `400 name_required`. There is no `relays`
 field: Nostr Mail finds relays through kind 10050.
 
@@ -377,6 +385,7 @@ answered with a temporary error so the sending server retries.
 |------|--------|
 | `RCPT TO` on a domain that is not verified or is suspended, or a local part that is neither a declared address, an npub, `abuse`, nor one the [catch-all](#catch-all) creates (`abuse` is taken on a suspended domain, on one the server served once, and on `MX_HOST`) | `550 5.1.1` |
 | `RCPT TO` with a pubkey that has no inbox relays (neither DM relays in a kind 10050 nor read relays in a kind 10002), except to `abuse` | `450 4.2.0` |
+| `RCPT TO` on a [disabled](#addresses) address | `250`, and the message is dropped for it |
 | More than 50 recipients | `452 4.5.3` |
 | Message above [`maxMessageBytes`](#settings) | `552 5.3.4` |
 | Message failing DMARC from a domain whose policy is `reject` | `550 5.7.1` |

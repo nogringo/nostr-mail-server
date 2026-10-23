@@ -133,6 +133,27 @@ test('a private address is delivered like a public one', async () => {
   expect(openWrap(network.published[0].event, bob.sk).rumor.kind).toBe(1301)
 })
 
+test('a disabled address takes the mail and drops it, answered like a delivery', async () => {
+  const { repo, network, owner, bob, send } = await setup()
+  // No inbox relays: a disabled address does not need any.
+  const carol = signer()
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'shop',
+    pubkey: carol.pubkey,
+    ownerPubkey: owner.pubkey,
+    enabled: false,
+  })
+
+  const dropped = await send(['shop@example.com'])
+  const mixed = await send(['shop@example.com', 'bob@example.com'])
+
+  expect(dropped.rejected).toEqual([])
+  expect(dropped.response).toMatch(/Delivered over Nostr/)
+  expect(mixed.response).toMatch(/Delivered over Nostr/)
+  expect(network.published.map((entry) => entry.event.tags[0][1])).toEqual([bob.pubkey])
+})
+
 test('an npub address is delivered without being declared', async () => {
   const { network, send } = await setup()
   const carol = signer()
@@ -159,6 +180,24 @@ test('a catch-all domain creates the address it does not know for its owner, pri
   expect((await repo.findAddress('example.com', 'shop'))?.pubkey).toBe(owner.pubkey)
   expect(network.published).toHaveLength(1)
   expect(openWrap(network.published[0].event, owner.sk).rumor.kind).toBe(1301)
+})
+
+test('a catch-all does not take a disabled address back', async () => {
+  const { repo, network, owner, send } = await setup()
+  await repo.setCatchAll('example.com', owner.pubkey, true)
+  network.inboxRelays.set(owner.pubkey, ['wss://inbox.owner.example/'])
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'shop',
+    pubkey: owner.pubkey,
+    ownerPubkey: owner.pubkey,
+    enabled: false,
+  })
+
+  await send(['shop@example.com'])
+
+  expect(network.published).toEqual([])
+  expect((await repo.findAddress('example.com', 'shop'))?.enabled).toBe(false)
 })
 
 test('a catch-all creates no deleted, reserved or shared address', async () => {
@@ -363,6 +402,22 @@ test('a declared abuse@ reaches its pubkey too, and each pubkey once', async () 
   await send(['abuse@example.com', 'bob@example.com'])
 
   expect(network.published.map((entry) => entry.event.tags[0][1])).toEqual([bob.pubkey, owner.pubkey])
+})
+
+test('a disabled abuse@ still reaches the owner, but not its own pubkey', async () => {
+  const { repo, network, owner, bob, send } = await setup()
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'abuse',
+    pubkey: bob.pubkey,
+    ownerPubkey: owner.pubkey,
+    enabled: false,
+  })
+  network.inboxRelays.set(owner.pubkey, ['wss://inbox.owner.example/'])
+
+  await send(['abuse@example.com'])
+
+  expect(network.published.map((entry) => entry.event.tags[0][1])).toEqual([owner.pubkey])
 })
 
 test('abuse@ goes on to the pubkeys with inbox relays and is kept anyway', async () => {

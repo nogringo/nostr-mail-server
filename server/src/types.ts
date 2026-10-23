@@ -152,12 +152,14 @@ export interface Address {
   createdBy: string
   // NIP-05 does not serve it: mail still reaches the pubkey, which nobody can look up.
   private: boolean
+  // Mail to it is taken and dropped, so the sender cannot tell. It still sends.
+  enabled: boolean
   createdAt: string
 }
 
-// Public and created by the owner unless said otherwise.
+// Public, enabled and created by the owner unless said otherwise.
 export type NewAddress = Pick<Address, 'domain' | 'localPart' | 'pubkey' | 'ownerPubkey'> &
-  Partial<Pick<Address, 'createdBy' | 'private'>>
+  Partial<Pick<Address, 'createdBy' | 'private' | 'enabled'>>
 
 // Nothing creates it again until the owner of the domain allows it.
 export interface DeletedAddress {
@@ -257,10 +259,10 @@ export interface DomainRepository {
   findAddress(domain: string, localPart: string): Promise<Address | null>
   // The addresses a key created on the domains of other keys.
   listCreatedAddresses(createdBy: string): Promise<Address[]>
-  // Creates the address, or gives an existing one the new pubkey and privacy. An address pointed at
+  // Creates the address, or gives an existing one the new pubkey, privacy and state. An address pointed at
   // another pubkey is managed by `createdBy` from then on, one that keeps its pubkey by the same key.
   putAddress(input: NewAddress): Promise<Address>
-  // Creates the address, or changes the privacy of one the same key created. Returns null when it is
+  // Creates the address, or changes the privacy and state of one the same key created. Returns null when it is
   // another key's.
   putCreatedAddress(input: NewAddress & { createdBy: string }): Promise<Address | null>
   // Creates the address for the owner of the domain, private, or returns the existing one. Returns null

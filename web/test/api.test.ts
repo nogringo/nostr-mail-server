@@ -60,10 +60,10 @@ test('accepts the empty answer of a removal', async () => {
 test('creates and removes an address on a shared domain, without naming a key', async () => {
   const { api, requests } = recordingApi(() => Response.json({ address: { address: 'alice@example.com' } }))
 
-  await api.putCreatedAddress('example.com', 'alice', true)
+  await api.putCreatedAddress('example.com', 'alice', { private: true, enabled: false })
 
   expect(requests[0].url).toBe(`${ORIGIN}/addresses/example.com/alice`)
-  expect(requests[0].init.body).toBe(JSON.stringify({ private: true }))
+  expect(requests[0].init.body).toBe(JSON.stringify({ private: true, enabled: false }))
 
   const removal = recordingApi(() => new Response(null, { status: 204 }))
   await removal.api.removeCreatedAddress('example.com', 'alice')
@@ -87,11 +87,12 @@ test('sends a body as JSON and signs its hash', async () => {
     address: 'alice@example.com',
     pubkey: 'ab'.repeat(32),
     private: true,
+    enabled: true,
     createdAt: '',
   }
   const { api, requests } = recordingApi(() => Response.json({ address }, { status: 201 }))
 
-  expect(await api.putAddress('example.com', 'alice', 'npub1alice', true)).toEqual(address)
+  expect(await api.putAddress('example.com', 'alice', 'npub1alice', { private: true })).toEqual(address)
 
   const [{ url, init }] = requests
   expect(url).toBe(`${ORIGIN}/domains/example.com/addresses/alice`)

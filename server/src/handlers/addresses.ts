@@ -9,12 +9,13 @@ type DomainRequest = FastifyRequest<{ Params: { domain: string } }>
 
 type AddressRequest = FastifyRequest<{
   Params: { domain: string; localPart: string }
-  Body: { pubkey?: unknown; private?: unknown } | undefined
+  Body: { pubkey?: unknown; private?: unknown; enabled?: unknown } | undefined
 }>
 
 // Addresses on a domain, managed with NIP-98 by its verified owner, and on a
 // shared domain by the keys that created them. Each one points a local part at
-// a pubkey, which NIP-05 then serves on the domain unless the address is private.
+// a pubkey, which NIP-05 then serves on the domain unless the address is private or disabled.
+// A disabled address takes its mail and drops it.
 // A deleted address is kept aside, and nothing creates it again until the owner allows it.
 export function registerAddressRoutes(app: FastifyInstance, repo: DomainRepository): void {
   app.get('/domains/:domain/addresses', async (request: DomainRequest, reply) => {
@@ -50,6 +51,8 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
 
     const isPrivate = request.body?.private ?? false
     if (typeof isPrivate !== 'boolean') return reply.code(400).send({ error: 'invalid_private' })
+    const enabled = request.body?.enabled ?? true
+    if (typeof enabled !== 'boolean') return reply.code(400).send({ error: 'invalid_enabled' })
 
     // The owner creates NIP-05 names only, and manages the addresses the catch-all created too.
     const existing = await repo.findAddress(domain.domain, localPart)
@@ -64,6 +67,7 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
       pubkey: target,
       ownerPubkey: pubkey,
       private: isPrivate,
+      enabled,
     })
     return reply.code(existing ? 200 : 201).send({ address: presentAddress(address) })
   })
@@ -123,6 +127,8 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
 
     const isPrivate = request.body?.private ?? false
     if (typeof isPrivate !== 'boolean') return reply.code(400).send({ error: 'invalid_private' })
+    const enabled = request.body?.enabled ?? true
+    if (typeof enabled !== 'boolean') return reply.code(400).send({ error: 'invalid_enabled' })
 
     const name = normalizeDomain(request.params.domain)
     const domain = name ? await repo.findVerifiedDomain(name) : null
@@ -140,6 +146,7 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
       ownerPubkey: domain.pubkey,
       createdBy: pubkey,
       private: isPrivate,
+      enabled,
     })
     if (!address) return reply.code(409).send({ error: 'address_taken' })
 
@@ -194,6 +201,7 @@ export function presentAddress(address: Address) {
     pubkey: address.pubkey,
     createdBy: address.createdBy,
     private: address.private,
+    enabled: address.enabled,
     createdAt: address.createdAt,
   }
 }

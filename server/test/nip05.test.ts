@@ -66,14 +66,14 @@ test('an npub local part resolves without a stored address', async () => {
   await app.close()
 })
 
-test('a private address does not show its pubkey', async () => {
+test.each([{ private: true }, { enabled: false }])('an address with %j does not show its pubkey', async (settings) => {
   const { repo, app, owner } = await setup()
   await repo.putAddress({
     domain: 'example.com',
     localPart: 'shop',
     pubkey: PUBKEY,
     ownerPubkey: owner.pubkey,
-    private: true,
+    ...settings,
   })
 
   const response = await lookup(app, 'example.com', '?name=shop')

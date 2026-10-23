@@ -1,5 +1,5 @@
 import { type SubmitEvent, useEffect, useId, useState } from 'react'
-import type { Address, Api, DeletedAddress } from '../lib/api'
+import type { Address, AddressSettings, Api, DeletedAddress } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { npubOf, shortNpub } from '../lib/format'
 import { Button, CopyButton, ErrorText } from './ui'
@@ -38,13 +38,19 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
   }
 
   async function add({ localPart, pubkey, isPrivate }: NewAddress) {
-    keep(await api.putAddress(domain, localPart, pubkey, isPrivate))
+    keep(await api.putAddress(domain, localPart, pubkey, { private: isPrivate }))
   }
 
-  async function togglePrivacy(address: Address) {
+  async function change(address: Address, settings: AddressSettings) {
     setError(null)
     try {
-      keep(await api.putAddress(domain, address.localPart, address.pubkey, !address.private))
+      keep(
+        await api.putAddress(domain, address.localPart, address.pubkey, {
+          private: address.private,
+          enabled: address.enabled,
+          ...settings,
+        }),
+      )
     } catch (failure) {
       setError(describeError(failure))
     }
@@ -82,7 +88,8 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
     <div>
       <p className="text-muted text-sm">
         Mail sent to an address reaches the Nostr key it points at. Anyone can look up the key of a public address
-        (NIP-05), while a private one keeps it hidden.
+        (NIP-05), while a private one keeps it hidden. A disabled address drops its mail without the sender knowing, and
+        can still send.
       </p>
       <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
         <AddressRow address={`${ownNpub}@${domain}`} deliveredTo="your key, always available" />
@@ -92,7 +99,9 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
             address={address.address}
             deliveredTo={deliveredTo(address)}
             isPrivate={address.private}
-            onTogglePrivacy={() => togglePrivacy(address)}
+            enabled={address.enabled}
+            onTogglePrivacy={() => change(address, { private: !address.private })}
+            onToggleEnabled={() => change(address, { enabled: !address.enabled })}
             onRemove={() => remove(address.localPart)}
           />
         ))}
@@ -169,18 +178,22 @@ export function AddressRow({
   address,
   deliveredTo,
   isPrivate = false,
+  enabled = true,
   onTogglePrivacy,
+  onToggleEnabled,
   onRemove,
 }: {
   address: string
   deliveredTo: string
   isPrivate?: boolean
+  enabled?: boolean
   onTogglePrivacy?: () => Promise<void>
+  onToggleEnabled?: () => Promise<void>
   onRemove?: () => Promise<void>
 }) {
-  const [pending, setPending] = useState<'privacy' | 'removal' | null>(null)
+  const [pending, setPending] = useState<'privacy' | 'state' | 'removal' | null>(null)
 
-  async function run(action: 'privacy' | 'removal', task: () => Promise<void>) {
+  async function run(action: 'privacy' | 'state' | 'removal', task: () => Promise<void>) {
     setPending(action)
     await task()
     setPending(null)
@@ -191,11 +204,8 @@ export function AddressRow({
       <div className="min-w-0">
         <p className="break-all font-mono text-sm leading-6">
           {address}
-          {isPrivate && (
-            <span className="ml-2 whitespace-nowrap rounded border border-rule px-1.5 py-px font-sans text-muted text-xs">
-              Private
-            </span>
-          )}
+          {isPrivate && <Tag>Private</Tag>}
+          {!enabled && <Tag>Disabled</Tag>}
         </p>
         <p className="text-muted text-sm">Delivered to {deliveredTo}</p>
       </div>
@@ -212,6 +222,17 @@ export function AddressRow({
             {pending === 'privacy' ? 'Saving' : isPrivate ? 'Make public' : 'Make private'}
           </button>
         )}
+        {onToggleEnabled && (
+          <button
+            type="button"
+            onClick={() => run('state', onToggleEnabled)}
+            disabled={pending !== null}
+            aria-label={`${enabled ? 'Disable' : 'Enable'} ${address}`}
+            className={`${ACTION} hover:text-ink`}
+          >
+            {pending === 'state' ? 'Saving' : enabled ? 'Disable' : 'Enable'}
+          </button>
+        )}
         {onRemove && (
           <button
             type="button"
@@ -225,6 +246,14 @@ export function AddressRow({
         )}
       </div>
     </li>
+  )
+}
+
+function Tag({ children }: { children: string }) {
+  return (
+    <span className="ml-2 whitespace-nowrap rounded border border-rule px-1.5 py-px font-sans text-muted text-xs">
+      {children}
+    </span>
   )
 }
 

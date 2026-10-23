@@ -94,7 +94,7 @@ test('a rumor claiming another author than its seal is refused', async () => {
   await expect(openOutboundWrap(wrap, heldKey(domain))).rejects.toThrow(Refusal)
 })
 
-test('a sender writes from its npub address and from the names declared for it', async () => {
+test('a sender writes from its npub address and from the names declared for it, even disabled', async () => {
   const { repo, owner, domain, alice, aliceAddress } = await setup()
   await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: alice.pubkey, ownerPubkey: owner.pubkey })
   await repo.putAddress({
@@ -103,6 +103,7 @@ test('a sender writes from its npub address and from the names declared for it',
     pubkey: alice.pubkey,
     ownerPubkey: owner.pubkey,
     private: true,
+    enabled: false,
   })
   const email = (mailFrom: string) => ({ senderPubkey: alice.pubkey, mailFrom, recipients: [], body: { mime: '' } })
 

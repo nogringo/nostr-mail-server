@@ -31,7 +31,7 @@ const DOMAIN_COLUMNS = `
   verified_at, created_at
 `
 
-const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, created_by, private, created_at'
+const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, created_by, private, enabled, created_at'
 
 const ABUSE_REPORT_COLUMNS = 'id, domain, mail_from, header_from, subject, octet_length(message) as size, received_at'
 
@@ -64,6 +64,7 @@ interface AddressRow {
   owner_pubkey: string
   created_by: string
   private: boolean
+  enabled: boolean
   created_at: Date
 }
 
@@ -426,10 +427,11 @@ export class PgDomainRepository implements DomainRepository {
   async putAddress(input: NewAddress): Promise<Address> {
     const result = await this.pool.query<AddressRow>(
       `
-        insert into addresses (domain, local_part, pubkey, owner_pubkey, created_by, private)
-        values ($1, $2, $3, $4, $5, $6)
+        insert into addresses (domain, local_part, pubkey, owner_pubkey, created_by, private, enabled)
+        values ($1, $2, $3, $4, $5, $6, $7)
         on conflict (domain, local_part) do update
         set pubkey = excluded.pubkey, owner_pubkey = excluded.owner_pubkey, private = excluded.private,
+            enabled = excluded.enabled,
             created_by = case when addresses.pubkey = excluded.pubkey then addresses.created_by
                               else excluded.created_by end
         returning ${ADDRESS_COLUMNS}
@@ -441,6 +443,7 @@ export class PgDomainRepository implements DomainRepository {
         input.ownerPubkey,
         input.createdBy ?? input.ownerPubkey,
         input.private ?? false,
+        input.enabled ?? true,
       ],
     )
     return toAddress(result.rows[0])
@@ -449,14 +452,22 @@ export class PgDomainRepository implements DomainRepository {
   async putCreatedAddress(input: NewAddress & { createdBy: string }): Promise<Address | null> {
     const result = await this.pool.query<AddressRow>(
       `
-        insert into addresses (domain, local_part, pubkey, owner_pubkey, created_by, private)
-        values ($1, $2, $3, $4, $5, $6)
+        insert into addresses (domain, local_part, pubkey, owner_pubkey, created_by, private, enabled)
+        values ($1, $2, $3, $4, $5, $6, $7)
         on conflict (domain, local_part) do update
-        set private = excluded.private
+        set private = excluded.private, enabled = excluded.enabled
         where addresses.created_by = excluded.created_by
         returning ${ADDRESS_COLUMNS}
       `,
-      [input.domain, input.localPart, input.pubkey, input.ownerPubkey, input.createdBy, input.private ?? false],
+      [
+        input.domain,
+        input.localPart,
+        input.pubkey,
+        input.ownerPubkey,
+        input.createdBy,
+        input.private ?? false,
+        input.enabled ?? true,
+      ],
     )
     return result.rows[0] ? toAddress(result.rows[0]) : null
   }
@@ -761,6 +772,7 @@ function toAddress(row: AddressRow): Address {
     ownerPubkey: row.owner_pubkey,
     createdBy: row.created_by,
     private: row.private,
+    enabled: row.enabled,
     createdAt: row.created_at.toISOString(),
   }
 }
