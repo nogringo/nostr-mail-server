@@ -1,4 +1,5 @@
 import { type ReactNode, type SubmitEvent, useState } from 'react'
+import { useMessages } from '../i18n'
 import type { ServerSettings } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { Button, ErrorText } from './ui'
@@ -12,6 +13,7 @@ interface Props {
 
 // Each setting is keyed by its value, so that a save shows what the server stored.
 export default function ServiceSettings({ settings, onSave }: Props) {
+  const t = useMessages().settings
   const { maxMessageBytes, blossomServers, domainRelays, indexerRelays } = settings
 
   return (
@@ -24,8 +26,8 @@ export default function ServiceSettings({ settings, onSave }: Props) {
       <UrlsSetting
         key={`blossom ${blossomServers.join(' ')}`}
         id="blossom-servers"
-        title="Blossom servers"
-        note="Given to new domains for the mail too large for a gift wrap, and used by the server's own key. Connected domains keep theirs."
+        title={t.blossom.title}
+        note={t.blossom.note}
         placeholder="https://"
         urls={blossomServers}
         onSave={(urls) => onSave({ blossomServers: urls })}
@@ -33,8 +35,8 @@ export default function ServiceSettings({ settings, onSave }: Props) {
       <UrlsSetting
         key={`domain ${domainRelays.join(' ')}`}
         id="domain-relays"
-        title="Domain relays"
-        note="Every domain key announces them, and the mail to send reaches the server there. Saving publishes the lists of every domain key again. The server keeps listening to a removed relay for seven days, for the clients that have not seen the change."
+        title={t.domainRelays.title}
+        note={t.domainRelays.note}
         placeholder="wss://"
         urls={domainRelays}
         onSave={(urls) => onSave({ domainRelays: urls })}
@@ -42,8 +44,8 @@ export default function ServiceSettings({ settings, onSave }: Props) {
       <UrlsSetting
         key={`indexer ${indexerRelays.join(' ')}`}
         id="indexer-relays"
-        title="Indexer relays"
-        note="Where the server looks up the relays and Blossom servers of other keys. Domain keys publish their lists there too."
+        title={t.indexerRelays.title}
+        note={t.indexerRelays.note}
         placeholder="wss://"
         urls={indexerRelays}
         onSave={(urls) => onSave({ indexerRelays: urls })}
@@ -55,16 +57,17 @@ export default function ServiceSettings({ settings, onSave }: Props) {
 function SizeSetting({ bytes, onSave }: { bytes: number; onSave: (bytes: number) => Promise<void> }) {
   const current = String(Math.round((bytes / MEGABYTE) * 100) / 100)
   const [megabytes, setMegabytes] = useState(current)
+  const t = useMessages().settings.size
 
   return (
     <SettingForm
-      title="Largest message"
-      note="Mail over this size is refused when it arrives, and is not sent when a client hands it over."
+      title={t.title}
+      note={t.note}
       changed={megabytes.trim() !== current && megabytes.trim() !== ''}
       onSave={() => onSave(Math.round(Number(megabytes) * MEGABYTE))}
     >
       <label htmlFor="max-message" className="sr-only">
-        Largest message, in MB
+        {t.label}
       </label>
       <div className="mt-3 flex items-baseline gap-2">
         <input
@@ -77,7 +80,7 @@ function SizeSetting({ bytes, onSave }: { bytes: number; onSave: (bytes: number)
           onChange={(event) => setMegabytes(event.target.value)}
           className="w-28 rounded-md border border-rule bg-surface px-3 py-2 text-sm"
         />
-        <span className="text-muted text-sm">MB</span>
+        <span className="text-muted text-sm">{t.unit}</span>
       </div>
     </SettingForm>
   )
@@ -98,6 +101,7 @@ function UrlsSetting({
   urls: string[]
   onSave: (urls: string[]) => Promise<void>
 }) {
+  const t = useMessages().settings
   const [text, setText] = useState(urls.join('\n'))
   const entered = text
     .split('\n')
@@ -112,7 +116,7 @@ function UrlsSetting({
       onSave={() => onSave(entered)}
     >
       <label htmlFor={id} className="sr-only">
-        {title}, one per line
+        {t.onePerLine(title)}
       </label>
       <textarea
         id={id}
@@ -142,6 +146,7 @@ function SettingForm({
   onSave: () => Promise<void>
   children: ReactNode
 }) {
+  const t = useMessages()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -152,7 +157,7 @@ function SettingForm({
     try {
       await onSave()
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
     } finally {
       setBusy(false)
     }
@@ -165,7 +170,7 @@ function SettingForm({
       {children}
       <div className="mt-3 flex flex-wrap items-center gap-4">
         <Button type="submit" variant="secondary" disabled={!changed || busy}>
-          {busy ? 'Saving' : 'Save'}
+          {busy ? t.common.saving : t.common.save}
         </Button>
         <ErrorText>{error}</ErrorText>
       </div>

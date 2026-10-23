@@ -1,6 +1,9 @@
 import { expect, test } from 'vitest'
+import { MESSAGES } from '../src/i18n'
 import type { Domain, RecordId } from '../src/lib/api'
 import { domainStatus } from '../src/lib/domain'
+
+const status = (domain: Domain) => domainStatus(domain, MESSAGES.en.domainStatus)
 
 const IDS: RecordId[] = ['ownership', 'mx', 'nip05', 'spf', 'dkim', 'dmarc']
 
@@ -31,26 +34,31 @@ function domainWith(found: RecordId[], fields: Partial<Domain> = {}): Domain {
 }
 
 test('names what a domain waits for next', () => {
-  expect(domainStatus(domainWith([], { checkedAt: null, verifiedAt: null })).text).toBe(
+  expect(status(domainWith([], { checkedAt: null, verifiedAt: null })).text).toBe(
     'Publish the DNS records, then check them',
   )
-  expect(domainStatus(domainWith([], { verifiedAt: null })).text).toBe('Waiting for the ownership record')
-  expect(domainStatus(domainWith(['ownership'])).text).toBe('Verified, waiting for the MX record')
-  expect(domainStatus(domainWith(['ownership', 'mx'])).text).toBe('Receiving mail, waiting for the A record')
-  expect(domainStatus(domainWith(['ownership', 'mx'], { nip05: 'owner' })).text).toBe(
+  expect(status(domainWith([], { verifiedAt: null })).text).toBe('Waiting for the ownership record')
+  expect(status(domainWith(['ownership'])).text).toBe('Verified, waiting for the MX record')
+  expect(status(domainWith(['ownership', 'mx'])).text).toBe('Receiving mail, waiting for the A record')
+  expect(status(domainWith(['ownership', 'mx'], { nip05: 'owner' })).text).toBe(
     'Receiving mail, waiting for _smtp in your NIP-05',
   )
-  expect(domainStatus(domainWith(['ownership', 'mx', 'nip05'])).text).toBe(
-    'Receiving mail, waiting for SPF and DKIM to send',
-  )
-  expect(domainStatus(domainWith(['ownership', 'mx', 'nip05', 'spf', 'dkim']))).toEqual({
+  expect(status(domainWith(['ownership', 'mx', 'nip05'])).text).toBe('Receiving mail, waiting for SPF and DKIM to send')
+  expect(status(domainWith(['ownership', 'mx', 'nip05', 'spf', 'dkim']))).toEqual({
     tone: 'ok',
     text: 'Sending and receiving mail',
   })
 })
 
 test('puts a suspension before the records', () => {
-  const status = domainStatus(domainWith(IDS, { suspendedAt: '2026-10-20T11:00:00Z' }))
+  expect(status(domainWith(IDS, { suspendedAt: '2026-10-20T11:00:00Z' }))).toEqual({
+    tone: 'bad',
+    text: 'Suspended by the admin of this server',
+  })
+})
 
-  expect(status).toEqual({ tone: 'bad', text: 'Suspended by the admin of this server' })
+test('names the domain status in French', () => {
+  expect(domainStatus(domainWith(['ownership', 'mx']), MESSAGES.fr.domainStatus).text).toBe(
+    "Reçoit les e-mails, en attente de l'enregistrement A",
+  )
 })

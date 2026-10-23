@@ -1,20 +1,21 @@
 import type { Tone } from '../components/ui'
+import { type Locale, localize } from '../i18n'
+import type { Messages } from '../i18n/en'
 import type { Domain, RecordId } from './api'
 
-export function domainHref(name: string): string {
-  return `/domain?name=${encodeURIComponent(name)}`
+export function domainHref(name: string, locale: Locale): string {
+  return `${localize('/domain', locale)}?name=${encodeURIComponent(name)}`
 }
 
-export function domainStatus(domain: Domain): { tone: Tone; text: string } {
+export function domainStatus(domain: Domain, messages: Messages['domainStatus']): { tone: Tone; text: string } {
   const found = (id: RecordId) => domain.records.find((record) => record.id === id)?.check?.status === 'ok'
-  if (domain.suspendedAt) return { tone: 'bad', text: 'Suspended by the admin of this server' }
-  if (!domain.checkedAt) return { tone: 'wait', text: 'Publish the DNS records, then check them' }
-  if (!domain.verifiedAt) return { tone: 'wait', text: 'Waiting for the ownership record' }
-  if (!found('mx')) return { tone: 'wait', text: 'Verified, waiting for the MX record' }
+  if (domain.suspendedAt) return { tone: 'bad', text: messages.suspended }
+  if (!domain.checkedAt) return { tone: 'wait', text: messages.unchecked }
+  if (!domain.verifiedAt) return { tone: 'wait', text: messages.unverified }
+  if (!found('mx')) return { tone: 'wait', text: messages.noMx }
   if (!found('nip05')) {
-    const awaited = domain.nip05 === 'server' ? 'the A record' : '_smtp in your NIP-05'
-    return { tone: 'wait', text: `Receiving mail, waiting for ${awaited}` }
+    return { tone: 'wait', text: domain.nip05 === 'server' ? messages.waitingForA : messages.waitingForNip05 }
   }
-  if (!found('spf') || !found('dkim')) return { tone: 'wait', text: 'Receiving mail, waiting for SPF and DKIM to send' }
-  return { tone: 'ok', text: 'Sending and receiving mail' }
+  if (!found('spf') || !found('dkim')) return { tone: 'wait', text: messages.waitingForSending }
+  return { tone: 'ok', text: messages.ok }
 }

@@ -1,4 +1,5 @@
 import { type SubmitEvent, useEffect, useId, useState } from 'react'
+import { useMessages } from '../i18n'
 import type { Address, AddressSettings, Api, DeletedAddress } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { npubOf, shortNpub } from '../lib/format'
@@ -16,6 +17,7 @@ const byLocalPart = (left: { localPart: string }, right: { localPart: string }) 
   left.localPart.localeCompare(right.localPart)
 
 export default function Addresses({ domain, api, ownPubkey }: Props) {
+  const t = useMessages()
   const [addresses, setAddresses] = useState<Address[]>([])
   const [deleted, setDeleted] = useState<DeletedAddress[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -27,9 +29,9 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
         setAddresses(list.addresses)
         setDeleted(list.deletedAddresses)
       },
-      (failure) => setError(describeError(failure)),
+      (failure) => setError(describeError(failure, t.errors)),
     )
-  }, [api, domain])
+  }, [api, domain, t])
 
   function keep(address: Address) {
     setAddresses((list) =>
@@ -52,7 +54,7 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
         }),
       )
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
     }
   }
 
@@ -64,7 +66,7 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
       const entry = { domain, localPart, address: `${localPart}@${domain}`, deletedAt: new Date().toISOString() }
       setDeleted((list) => [...list, entry].sort(byLocalPart))
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
     }
   }
 
@@ -74,25 +76,21 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
       await api.allowDeletedAddresses(domain, localPart)
       setDeleted((list) => (localPart === undefined ? [] : list.filter((other) => other.localPart !== localPart)))
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
     }
   }
 
   function deliveredTo(address: Address) {
-    if (address.pubkey === ownPubkey) return 'your key'
+    if (address.pubkey === ownPubkey) return t.common.yourKey
     const key = shortNpub(npubOf(address.pubkey))
-    return address.createdBy === address.pubkey ? `${key}, who created it` : key
+    return address.createdBy === address.pubkey ? t.addresses.createdBy(key) : key
   }
 
   return (
     <div>
-      <p className="text-muted text-sm">
-        Mail sent to an address reaches the Nostr key it points at. Anyone can look up the key of a public address
-        (NIP-05), while a private one keeps it hidden. A disabled address drops its mail without the sender knowing, and
-        can still send.
-      </p>
+      <p className="text-muted text-sm">{t.addresses.intro}</p>
       <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
-        <AddressRow address={`${ownNpub}@${domain}`} deliveredTo="your key, always available" />
+        <AddressRow address={`${ownNpub}@${domain}`} deliveredTo={t.common.yourKeyAlwaysAvailable} />
         {addresses.map((address) => (
           <AddressRow
             key={address.localPart}
@@ -120,6 +118,7 @@ function DeletedAddresses({
   deleted: DeletedAddress[]
   onAllow: (localPart?: string) => Promise<void>
 }) {
+  const t = useMessages().addresses
   const [busy, setBusy] = useState(false)
 
   async function allowAll() {
@@ -130,11 +129,8 @@ function DeletedAddresses({
 
   return (
     <details className="mt-8 text-sm">
-      <summary className="w-fit cursor-pointer text-muted hover:text-ink">Deleted addresses ({deleted.length})</summary>
-      <p className="mt-2 max-w-xl text-muted">
-        Mail to them is refused, and nobody creates them again, neither by hand nor through the catch-all, until you
-        allow them.
-      </p>
+      <summary className="w-fit cursor-pointer text-muted hover:text-ink">{t.deleted(deleted.length)}</summary>
+      <p className="mt-2 max-w-xl text-muted">{t.deletedNote}</p>
       <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
         {deleted.map((entry) => (
           <DeletedRow key={entry.localPart} address={entry.address} onAllow={() => onAllow(entry.localPart)} />
@@ -142,7 +138,7 @@ function DeletedAddresses({
       </ul>
       {deleted.length > 1 && (
         <Button variant="quiet" className="mt-3" onClick={allowAll} disabled={busy}>
-          {busy ? 'Allowing' : 'Allow them all'}
+          {busy ? t.allowing : t.allowAll}
         </Button>
       )}
     </details>
@@ -150,6 +146,7 @@ function DeletedAddresses({
 }
 
 function DeletedRow({ address, onAllow }: { address: string; onAllow: () => Promise<void> }) {
+  const t = useMessages().addresses
   const [busy, setBusy] = useState(false)
 
   async function allow() {
@@ -165,10 +162,10 @@ function DeletedRow({ address, onAllow }: { address: string; onAllow: () => Prom
         type="button"
         onClick={allow}
         disabled={busy}
-        aria-label={`Allow ${address} again`}
+        aria-label={t.allowAgainLabel(address)}
         className={`${ACTION} shrink-0 hover:text-ink`}
       >
-        {busy ? 'Allowing' : 'Allow again'}
+        {busy ? t.allowing : t.allowAgain}
       </button>
     </li>
   )
@@ -191,6 +188,7 @@ export function AddressRow({
   onToggleEnabled?: () => Promise<void>
   onRemove?: () => Promise<void>
 }) {
+  const t = useMessages()
   const [pending, setPending] = useState<'privacy' | 'state' | 'removal' | null>(null)
 
   async function run(action: 'privacy' | 'state' | 'removal', task: () => Promise<void>) {
@@ -204,10 +202,10 @@ export function AddressRow({
       <div className="min-w-0">
         <p className="break-all font-mono text-sm leading-6">
           {address}
-          {isPrivate && <Tag>Private</Tag>}
-          {!enabled && <Tag>Disabled</Tag>}
+          {isPrivate && <Tag>{t.addresses.private}</Tag>}
+          {!enabled && <Tag>{t.addresses.disabled}</Tag>}
         </p>
-        <p className="text-muted text-sm">Delivered to {deliveredTo}</p>
+        <p className="text-muted text-sm">{t.common.deliveredTo(deliveredTo)}</p>
       </div>
       <div className="-ml-1.5 flex shrink-0 items-center gap-1 sm:ml-0">
         <CopyButton text={address} label={address} />
@@ -216,10 +214,10 @@ export function AddressRow({
             type="button"
             onClick={() => run('privacy', onTogglePrivacy)}
             disabled={pending !== null}
-            aria-label={`Make ${address} ${isPrivate ? 'public' : 'private'}`}
+            aria-label={t.addresses.privacyLabel(address, isPrivate)}
             className={`${ACTION} hover:text-ink`}
           >
-            {pending === 'privacy' ? 'Saving' : isPrivate ? 'Make public' : 'Make private'}
+            {pending === 'privacy' ? t.common.saving : isPrivate ? t.addresses.makePublic : t.addresses.makePrivate}
           </button>
         )}
         {onToggleEnabled && (
@@ -227,10 +225,10 @@ export function AddressRow({
             type="button"
             onClick={() => run('state', onToggleEnabled)}
             disabled={pending !== null}
-            aria-label={`${enabled ? 'Disable' : 'Enable'} ${address}`}
+            aria-label={t.addresses.stateLabel(address, enabled)}
             className={`${ACTION} hover:text-ink`}
           >
-            {pending === 'state' ? 'Saving' : enabled ? 'Disable' : 'Enable'}
+            {pending === 'state' ? t.common.saving : enabled ? t.addresses.disable : t.addresses.enable}
           </button>
         )}
         {onRemove && (
@@ -238,10 +236,10 @@ export function AddressRow({
             type="button"
             onClick={() => run('removal', onRemove)}
             disabled={pending !== null}
-            aria-label={`Remove ${address}`}
+            aria-label={t.addresses.removeLabel(address)}
             className={`${ACTION} hover:text-bad`}
           >
-            {pending === 'removal' ? 'Removing' : 'Remove'}
+            {pending === 'removal' ? t.common.removing : t.common.remove}
           </button>
         )}
       </div>
@@ -274,6 +272,7 @@ export function AddressForm({
   defaultPubkey?: string
   onAdd: (address: NewAddress) => Promise<void>
 }) {
+  const t = useMessages()
   const [localPart, setLocalPart] = useState('')
   const [domain, setDomain] = useState(domains[0])
   const [pubkey, setPubkey] = useState(defaultPubkey ?? '')
@@ -294,7 +293,7 @@ export function AddressForm({
       await onAdd({ domain, localPart: localPart.trim().toLowerCase(), pubkey: pubkey.trim(), isPrivate })
       setLocalPart('')
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
     } finally {
       setBusy(false)
     }
@@ -304,7 +303,7 @@ export function AddressForm({
     <form onSubmit={submit} className="mt-5 space-y-3">
       <div>
         <label htmlFor={id} className="block text-sm">
-          New address
+          {t.addresses.newAddress}
         </label>
         <div className="mt-1 flex flex-wrap items-baseline font-mono">
           <input
@@ -313,7 +312,7 @@ export function AddressForm({
             autoCapitalize="none"
             autoComplete="off"
             spellCheck={false}
-            placeholder="name"
+            placeholder={t.addresses.namePlaceholder}
             size={Math.max(localPart.length, 4)}
             value={localPart}
             onChange={(event) => setLocalPart(event.target.value)}
@@ -323,7 +322,7 @@ export function AddressForm({
             <>
               <span className="text-muted">@</span>
               <select
-                aria-label="Domain"
+                aria-label={t.common.domain}
                 value={domain}
                 onChange={(event) => setDomain(event.target.value)}
                 className="min-w-0 cursor-pointer border-rule border-b-2 bg-transparent text-muted focus:border-accent focus:outline-none"
@@ -343,7 +342,7 @@ export function AddressForm({
       {asksPubkey && (
         <div>
           <label htmlFor={`${id}-pubkey`} className="block text-sm">
-            Delivered to
+            {t.addresses.deliveredTo}
           </label>
           <input
             id={`${id}-pubkey`}
@@ -366,13 +365,13 @@ export function AddressForm({
           className="mt-1 accent-accent"
         />
         <span>
-          Private
-          <span className="block text-muted">Mail still arrives, but nobody can look up the key it reaches.</span>
+          {t.addresses.private}
+          <span className="block text-muted">{t.addresses.privateNote}</span>
         </span>
       </label>
       <div className="flex flex-wrap items-center gap-4">
         <Button type="submit" variant="secondary" disabled={!ready || busy}>
-          {busy ? 'Adding' : 'Add address'}
+          {busy ? t.addresses.adding : t.addresses.add}
         </Button>
         <ErrorText>{error}</ErrorText>
       </div>

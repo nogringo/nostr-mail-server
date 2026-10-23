@@ -1,0 +1,16 @@
+---
+import App from '../../components/App'
+import { type Locale, localePaths } from '../../i18n'
+import Base from '../../layouts/Base.astro'
+
+interface Props {
+  locale: Locale
+}
+
+export const getStaticPaths = localePaths
+const { locale } = Astro.props
+---
+
+<Base locale={locale} page="admin">
+  <App client:only="react" view="admin" locale={locale} />
+</Base>

@@ -1,3 +1,5 @@
+import { useMessages } from '../i18n'
+import type { Messages } from '../i18n/en'
 import type { CheckStatus, RecordCheck } from '../lib/api'
 import { CopyButton, TONES, type Tone } from './ui'
 
@@ -13,19 +15,20 @@ interface RecordLine {
 }
 
 export default function RecordRow({ record }: { record: RecordLine }) {
-  const check = recordStatus(record)
+  const t = useMessages().record
+  const check = recordStatus(record, t)
   const failed = record.check && record.check.status !== 'ok' && record.check.found.length > 0
 
   return (
     <li className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 px-4 py-3 sm:grid-cols-[3.5rem_minmax(0,1fr)_9rem]">
       <span className="font-medium font-mono text-muted text-sm leading-6">{record.type}</span>
       <div className="min-w-0 space-y-1 font-mono text-sm leading-6">
-        <Field text={record.name} label={`${record.type} name`} />
-        <Field text={record.value} label={`${record.type} value`} />
-        {record.priority !== undefined && <p className="font-sans text-muted">Priority {record.priority}</p>}
+        <Field text={record.name} label={t.name(record.type)} />
+        <Field text={record.value} label={t.value(record.type)} />
+        {record.priority !== undefined && <p className="font-sans text-muted">{t.priority(record.priority)}</p>}
         {failed && (
           <p className="break-all font-sans text-bad">
-            Found: <span className="font-mono">{record.check?.found.join(', ')}</span>
+            {t.found} <span className="font-mono">{record.check?.found.join(', ')}</span>
           </p>
         )}
       </div>
@@ -43,15 +46,10 @@ function Field({ text, label }: { text: string; label: string }) {
   )
 }
 
-const CHECKS: Record<CheckStatus, { tone: Tone; text: string }> = {
-  ok: { tone: 'ok', text: 'Found' },
-  missing: { tone: 'wait', text: 'Missing' },
-  mismatch: { tone: 'bad', text: 'Different value' },
-  error: { tone: 'bad', text: 'Lookup failed' },
-}
+const TONE_OF: Record<CheckStatus, Tone> = { ok: 'ok', missing: 'wait', mismatch: 'bad', error: 'bad' }
 
-function recordStatus(record: RecordLine): { tone: Tone; text: string } {
-  if (!record.check) return { tone: 'none', text: 'Not checked' }
-  if (record.required === false && record.check.status !== 'ok') return { tone: 'none', text: 'Optional' }
-  return CHECKS[record.check.status]
+function recordStatus(record: RecordLine, t: Messages['record']): { tone: Tone; text: string } {
+  if (!record.check) return { tone: 'none', text: t.unchecked }
+  if (record.required === false && record.check.status !== 'ok') return { tone: 'none', text: t.optional }
+  return { tone: TONE_OF[record.check.status], text: t.status[record.check.status] }
 }

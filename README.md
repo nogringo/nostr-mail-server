@@ -32,6 +32,7 @@ The project is built in small steps. What exists today:
 | NIP-05 relayed by the owner's website to this server, private addresses included | done |
 | Catch-all: mail to a new address (`shop@`, `you+news@`) creates it; deleted addresses stay deleted | done |
 | Disable an address without deleting it: its mail is dropped, the sender cannot tell, and it still sends | done |
+| Website in English and French, opened in the browser's language | done |
 
 ## Layout
 

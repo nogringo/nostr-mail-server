@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { byteSize, plural, shortNpub, timeAgo } from '../src/lib/format'
+import { byteSize, shortNpub, timeAgo } from '../src/lib/format'
 
 test('shortens an npub to its start and end', () => {
   expect(shortNpub('npub1qy3qv9jtu7yfm0qnzv9x3n4v6pk0a8xfd7rm6ts2s0l4nx5ewjrq5p8f2k')).toBe('npub1qy3qv...8f2k')
@@ -8,20 +8,23 @@ test('shortens an npub to its start and end', () => {
 test('writes how long ago a check ran', () => {
   const now = Date.parse('2026-10-20T12:00:00Z')
 
-  expect(timeAgo('2026-10-20T11:59:30Z', now)).toBe('just now')
-  expect(timeAgo('2026-10-20T11:55:00Z', now)).toBe('5 minutes ago')
-  expect(timeAgo('2026-10-20T09:00:00Z', now)).toBe('3 hours ago')
-  expect(timeAgo('2026-10-19T12:00:00Z', now)).toBe('yesterday')
+  expect(timeAgo('2026-10-20T11:59:30Z', 'en', now)).toBe('just now')
+  expect(timeAgo('2026-10-20T11:55:00Z', 'en', now)).toBe('5 minutes ago')
+  expect(timeAgo('2026-10-20T09:00:00Z', 'en', now)).toBe('3 hours ago')
+  expect(timeAgo('2026-10-19T12:00:00Z', 'en', now)).toBe('yesterday')
 })
 
-test('writes a count with its noun', () => {
-  expect(plural(1, 'domain')).toBe('1 domain')
-  expect(plural(0, 'domain')).toBe('0 domains')
-  expect(plural(3, 'address', 'addresses')).toBe('3 addresses')
+test('writes how long ago in French', () => {
+  const now = Date.parse('2026-10-20T12:00:00Z')
+
+  expect(timeAgo('2026-10-20T11:59:30Z', 'fr', now)).toBe("à l'instant")
+  expect(timeAgo('2026-10-20T11:55:00Z', 'fr', now)).toBe('il y a 5 minutes')
+  expect(timeAgo('2026-10-19T12:00:00Z', 'fr', now)).toBe('hier')
 })
 
 test('writes the size of a message', () => {
-  expect(byteSize(200)).toBe('1 kB')
-  expect(byteSize(48_000)).toBe('47 kB')
-  expect(byteSize(25 * 1024 * 1024)).toBe('25 MB')
+  expect(byteSize(200, 'en')).toBe('1 kB')
+  expect(byteSize(48_000, 'en')).toBe('47 kB')
+  expect(byteSize(25 * 1024 * 1024, 'en')).toBe('25 MB')
+  expect(byteSize(48_000, 'fr')).toBe('47 ko')
 })

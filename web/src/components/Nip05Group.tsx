@@ -1,13 +1,11 @@
 import { useState } from 'react'
+import { useMessages } from '../i18n'
 import type { Api, Domain, Nip05Host } from '../lib/api'
 import { describeError } from '../lib/errors'
 import RecordRow from './RecordRow'
 import { CopyButton, ErrorText } from './ui'
 
-const HOSTS: [Nip05Host, string][] = [
-  ['server', 'This server, through an A record'],
-  ['owner', 'My own website'],
-]
+const HOSTS: Nip05Host[] = ['server', 'owner']
 
 // What NIP-05 allows: a catch-all address like you+news never resolves.
 const NIP05_NAME = /^[a-z0-9._-]+$/
@@ -21,20 +19,16 @@ export default function Nip05Group({
   api: Api
   onChange: (domain: Domain) => void
 }) {
+  const t = useMessages().nip05
   const record = domain.records.find(({ id }) => id === 'nip05')
 
   return (
     <div>
-      <h2 className="font-medium">For Nostr apps (NIP-05)</h2>
-      <p className="mt-1 text-muted text-sm">
-        Nostr apps look up the addresses of {domain.domain}, and the _smtp key they send its mail through, at https://
-        {domain.domain}/.well-known/nostr.json.
-      </p>
+      <h2 className="font-medium">{t.title}</h2>
+      <p className="mt-1 text-muted text-sm">{t.intro(domain.domain)}</p>
       <HostChoice domain={domain} api={api} onChange={onChange} />
       {domain.nip05 === 'server' ? (
-        <p className="mt-3 text-muted text-sm">
-          This server answers there once the A record points here, in place of any website on {domain.domain}.
-        </p>
+        <p className="mt-3 text-muted text-sm">{t.serverAnswers(domain.domain)}</p>
       ) : (
         <Relay domain={domain} api={api} />
       )}
@@ -48,6 +42,7 @@ export default function Nip05Group({
 }
 
 function HostChoice({ domain, api, onChange }: { domain: Domain; api: Api; onChange: (domain: Domain) => void }) {
+  const t = useMessages()
   const [pending, setPending] = useState<Nip05Host | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -57,7 +52,7 @@ function HostChoice({ domain, api, onChange }: { domain: Domain; api: Api; onCha
     try {
       onChange(await api.setNip05Host(domain.domain, nip05))
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
     } finally {
       setPending(null)
     }
@@ -65,9 +60,9 @@ function HostChoice({ domain, api, onChange }: { domain: Domain; api: Api; onCha
 
   return (
     <fieldset disabled={pending !== null} className="mt-3">
-      <legend className="sr-only">Who serves NIP-05 for {domain.domain}</legend>
+      <legend className="sr-only">{t.nip05.hostLegend(domain.domain)}</legend>
       <div className="space-y-1.5 text-sm">
-        {HOSTS.map(([value, label]) => (
+        {HOSTS.map((value) => (
           <label key={value} className="flex w-fit cursor-pointer items-center gap-2">
             <input
               type="radio"
@@ -76,7 +71,7 @@ function HostChoice({ domain, api, onChange }: { domain: Domain; api: Api; onCha
               onChange={() => choose(value)}
               className="accent-accent"
             />
-            {label}
+            {t.nip05.hosts[value]}
           </label>
         ))}
       </div>
@@ -86,23 +81,22 @@ function HostChoice({ domain, api, onChange }: { domain: Domain; api: Api; onCha
 }
 
 function Relay({ domain, api }: { domain: Domain; api: Api }) {
+  const t = useMessages().nip05
   const relayUrl = `${window.location.origin}/nip05/${domain.domain}`
 
   return (
     <div className="mt-3 space-y-3 text-sm">
-      <p className="text-muted">
-        Relay that path to this address with a proxy, not a redirect, which NIP-05 clients ignore. This server then
-        answers for every address of the domain and keeps the private ones hidden.
-      </p>
-      <Snippet text={relayUrl} label="relay address" />
-      <Example title="nginx, in the server block of the domain" text={nginxExample(relayUrl)} />
-      <Example title="Caddy, in the site block of the domain" text={caddyExample(relayUrl)} />
+      <p className="text-muted">{t.relay}</p>
+      <Snippet text={relayUrl} label={t.relayAddress} />
+      <Example title={t.nginx} text={nginxExample(relayUrl)} />
+      <Example title={t.caddy} text={caddyExample(relayUrl)} />
       <StaticNames domain={domain} api={api} />
     </div>
   )
 }
 
 function StaticNames({ domain, api }: { domain: Domain; api: Api }) {
+  const t = useMessages()
   const [listed, setListed] = useState<[string, string][]>([])
   const [error, setError] = useState<string | null>(null)
   const names = { _smtp: domain.bridgePubkey, ...Object.fromEntries(listed) }
@@ -119,19 +113,16 @@ function StaticNames({ domain, api }: { domain: Domain; api: Api }) {
           .map((address) => [address.localPart, address.pubkey]),
       )
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
     }
   }
 
   return (
     <details onToggle={(event) => event.currentTarget.open && load()}>
-      <summary className="w-fit cursor-pointer text-muted hover:text-ink">Without a relay</summary>
+      <summary className="w-fit cursor-pointer text-muted hover:text-ink">{t.nip05.withoutRelay}</summary>
       <div className="mt-2 space-y-2">
-        <p className="text-muted">
-          Add these names to the file, served with Access-Control-Allow-Origin: *, and update it whenever an address
-          changes. Private addresses stay out of it.
-        </p>
-        <Snippet text={JSON.stringify({ names }, null, 2)} label="nostr.json names" />
+        <p className="text-muted">{t.nip05.staticNote}</p>
+        <Snippet text={JSON.stringify({ names }, null, 2)} label={t.nip05.names} />
         <ErrorText>{error}</ErrorText>
       </div>
     </details>

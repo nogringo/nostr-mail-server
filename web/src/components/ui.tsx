@@ -1,4 +1,5 @@
 import { type AnchorHTMLAttributes, type ButtonHTMLAttributes, useEffect, useState } from 'react'
+import { type Locale, MESSAGES, useMessages } from '../i18n'
 
 export const TONES = { ok: 'text-ok', wait: 'text-wait', bad: 'text-bad', none: 'text-muted' }
 
@@ -38,6 +39,7 @@ export function BackLink({ href, children }: { href: string; children: string })
 }
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
+  const t = useMessages().copy
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
 
   useEffect(() => {
@@ -59,11 +61,20 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
     <button
       type="button"
       onClick={copy}
-      aria-label={`Copy ${label}`}
+      aria-label={t.label(label)}
       className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 font-sans text-muted text-sm hover:bg-rule/60 hover:text-ink"
     >
-      {state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : 'Copy'}
+      {state === 'copied' ? t.done : state === 'failed' ? t.failed : t.action}
     </button>
+  )
+}
+
+// Named in its own language, for a reader who does not understand the current one.
+export function LanguageLink({ locale, href }: { locale: Locale; href: string }) {
+  return (
+    <a href={href} lang={locale} hrefLang={locale} className="text-muted hover:text-ink">
+      {MESSAGES[locale].language}
+    </a>
   )
 }
 

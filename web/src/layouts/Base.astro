@@ -3,23 +3,43 @@ import '@fontsource-variable/instrument-sans'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
 import '../styles/global.css'
+import { LOCALES, type Locale, localize, MESSAGES } from '../i18n'
+import type { Messages } from '../i18n/en'
 
 interface Props {
-  title: string
-  description: string
+  locale: Locale
+  page: keyof Messages['pages']
 }
 
-const { title, description } = Astro.props
+const { locale, page } = Astro.props
+const { title, description } = MESSAGES[locale].pages[page]
+const path = page === 'index' ? '/' : `/${page}`
+// Links inside the site keep their language, so arriving from the site means this language was picked. An English
+// page reached from elsewhere opens in the language picked last, or else the browser's.
+const paths = Object.fromEntries(LOCALES.map((code) => [code, localize(path, code)]))
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang={locale}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content={description} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>{title}</title>
+    <script is:inline define:vars={{ locale, paths }}>
+      try {
+        if (document.referrer.startsWith(`${location.origin}/`)) {
+          localStorage.setItem('nostr-mail.locale', locale)
+        } else if (locale === 'en') {
+          const wanted =
+            localStorage.getItem('nostr-mail.locale') ??
+            navigator.languages.map((tag) => tag.slice(0, 2).toLowerCase()).find((code) => code in paths) ??
+            'en'
+          if (wanted !== locale && wanted in paths) location.replace(paths[wanted] + location.search + location.hash)
+        }
+      } catch {}
+    </script>
   </head>
   <body>
     <slot />

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useMessages } from '../i18n'
 import type { Address, AddressSettings, Api } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { AddressForm, AddressRow, type NewAddress } from './Addresses'
@@ -14,6 +15,7 @@ export default function SharedAddresses({
   domains: string[]
   initial: Address[]
 }) {
+  const t = useMessages()
   const [addresses, setAddresses] = useState(initial)
   const [error, setError] = useState<string | null>(null)
 
@@ -40,7 +42,7 @@ export default function SharedAddresses({
         }),
       )
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
     }
   }
 
@@ -50,26 +52,23 @@ export default function SharedAddresses({
       await api.removeCreatedAddress(address.domain, address.localPart)
       setAddresses((list) => list.filter((other) => other.address !== address.address))
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
     }
   }
 
   return (
     <section aria-labelledby="shared-addresses" className="mt-14">
       <h2 id="shared-addresses" className="font-semibold text-xl tracking-tight">
-        Addresses on shared domains
+        {t.sharedAddresses.title}
       </h2>
-      <p className="mt-1 max-w-xl text-muted text-sm">
-        Their owners let anyone create addresses that deliver to their own key. The owner of a domain can still remove
-        any address on it.
-      </p>
+      <p className="mt-1 max-w-xl text-muted text-sm">{t.sharedAddresses.intro}</p>
       {addresses.length > 0 && (
         <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
           {addresses.map((address) => (
             <AddressRow
               key={address.address}
               address={address.address}
-              deliveredTo="your key"
+              deliveredTo={t.common.yourKey}
               isPrivate={address.private}
               enabled={address.enabled}
               onTogglePrivacy={() => change(address, { private: !address.private })}

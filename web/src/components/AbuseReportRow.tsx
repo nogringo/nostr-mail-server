@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useLocale, useMessages } from '../i18n'
 import type { AbuseReport } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { byteSize, timeAgo } from '../lib/format'
@@ -17,6 +18,8 @@ interface Props {
 
 // The message is fetched once opened: listing the reports reads none.
 export default function AbuseReportRow({ report, load, showDomain = false, onDelete }: Props) {
+  const t = useMessages()
+  const locale = useLocale()
   const [message, setMessage] = useState<{ url: string; text: string } | null>(null)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -39,7 +42,7 @@ export default function AbuseReportRow({ report, load, showDomain = false, onDel
       setMessage({ url: URL.createObjectURL(blob), text: await blob.text() })
       setOpen(true)
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
     } finally {
       setBusy(false)
     }
@@ -51,7 +54,7 @@ export default function AbuseReportRow({ report, load, showDomain = false, onDel
     try {
       await onDelete()
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
       setDeleting(false)
     }
   }
@@ -59,19 +62,21 @@ export default function AbuseReportRow({ report, load, showDomain = false, onDel
   return (
     <li className="px-4 py-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <p className="min-w-0 break-words font-medium">{report.subject || '(no subject)'}</p>
-        <p className="text-muted text-sm" title={new Date(report.receivedAt).toLocaleString()}>
-          {timeAgo(report.receivedAt)}
+        <p className="min-w-0 break-words font-medium">{report.subject || t.abuseReport.noSubject}</p>
+        <p className="text-muted text-sm" title={new Date(report.receivedAt).toLocaleString(locale)}>
+          {timeAgo(report.receivedAt, locale)}
         </p>
       </div>
       <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-muted text-sm">
-        <span className="break-words">From {report.from || report.mailFrom || 'an empty sender'}</span>
-        {showDomain && <span className="break-all">to abuse@{report.domain}</span>}
-        <span>{byteSize(report.size)}</span>
+        <span className="break-words">
+          {t.abuseReport.from(report.from || report.mailFrom || t.abuseReport.emptySender)}
+        </span>
+        {showDomain && <span className="break-all">{t.abuseReport.to(report.domain)}</span>}
+        <span>{byteSize(report.size, locale)}</span>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
         <Button variant="quiet" aria-expanded={open} aria-controls={id} onClick={toggle} disabled={busy}>
-          {busy ? 'Loading' : open ? 'Hide message' : 'Show message'}
+          {busy ? t.common.loading : open ? t.abuseReport.hide : t.abuseReport.show}
         </Button>
         {message && (
           <a
@@ -79,23 +84,23 @@ export default function AbuseReportRow({ report, load, showDomain = false, onDel
             download={`abuse-${report.domain}-${report.id}.eml`}
             className="text-muted underline decoration-rule underline-offset-4 hover:text-ink hover:decoration-muted"
           >
-            Download .eml
+            {t.abuseReport.download}
           </a>
         )}
         {onDelete &&
           (confirming ? (
             <>
-              <span>Delete this report?</span>
+              <span>{t.abuseReport.confirm}</span>
               <Button variant="quiet" className="text-bad" onClick={() => remove(onDelete)} disabled={deleting}>
-                {deleting ? 'Deleting' : 'Delete'}
+                {deleting ? t.abuseReport.deleting : t.abuseReport.delete}
               </Button>
               <Button variant="quiet" onClick={() => setConfirming(false)} disabled={deleting}>
-                Cancel
+                {t.common.cancel}
               </Button>
             </>
           ) : (
             <Button variant="quiet" onClick={() => setConfirming(true)}>
-              Delete
+              {t.abuseReport.delete}
             </Button>
           ))}
         <ErrorText>{error}</ErrorText>
@@ -105,9 +110,7 @@ export default function AbuseReportRow({ report, load, showDomain = false, onDel
           <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-rule bg-paper p-3 font-mono text-xs leading-5">
             {message.text.slice(0, MAX_SHOWN_CHARS)}
           </pre>
-          {message.text.length > MAX_SHOWN_CHARS && (
-            <p className="mt-1 text-muted text-sm">Cut short here: download the .eml to read the rest.</p>
-          )}
+          {message.text.length > MAX_SHOWN_CHARS && <p className="mt-1 text-muted text-sm">{t.abuseReport.cutShort}</p>}
         </div>
       )}
     </li>

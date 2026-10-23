@@ -1,7 +1,7 @@
 # nostr-mail-server website
 
 `/` is the home page: what the service does and how it works, rendered at
-build time with no script. The other pages ask for a Nostr key first.
+build time. The other pages ask for a Nostr key first.
 `/dashboard` lists the domains of the key with the state of each. `/connect`
 connects a new domain and opens its page.
 
@@ -62,8 +62,17 @@ restart of the browser. Every API call is signed with
 [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) for the
 page's own origin, so the site and the API must be served on the same origin.
 
-Astro builds a static site, one `<name>.html` per page, each mounting the same
-React app on its own view.
+The site speaks English and French. English pages sit at the root, French
+ones under `/fr` (`/fr`, `/fr/dashboard`, `/fr/domain?name=<domain>`, etc.),
+and the header of every page links to the same page in the other language.
+An English page reached from outside the site opens in the language picked
+last on the site (`localStorage`), or else in the browser's, while a `/fr`
+link stays in French. The texts live in
+`src/i18n/en.ts` and `src/i18n/fr.ts`, and TypeScript refuses a French file
+that misses a text of the English one.
+
+Astro builds a static site, one `<name>.html` per page and per language, each
+mounting the same React app on its own view.
 
 ## Development
 
@@ -80,5 +89,5 @@ npm run dev         # http://localhost:4321, /domains and /admin/* proxied to th
 npm run check       # Biome
 npm run typecheck   # astro check
 npm test            # Vitest
-npm run build       # static site in dist/, each page as <name>.html
+npm run build       # static site in dist/, each page as <name>.html and fr/<name>.html
 ```

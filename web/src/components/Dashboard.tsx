@@ -1,29 +1,32 @@
 import { useEffect, useMemo, useState } from 'react'
+import { localize, useLocale, useMessages } from '../i18n'
 import { createApi, type Domain, type DomainList } from '../lib/api'
 import { domainHref, domainStatus } from '../lib/domain'
 import { describeError } from '../lib/errors'
-import { plural, timeAgo } from '../lib/format'
+import { timeAgo } from '../lib/format'
 import type { Signer } from '../lib/signer'
 import PrivateServer from './PrivateServer'
 import SharedAddresses from './SharedAddresses'
 import { ButtonLink, ErrorText, TONES } from './ui'
 
 export default function Dashboard({ signer }: { signer: Signer }) {
+  const t = useMessages()
+  const locale = useLocale()
   const api = useMemo(() => createApi(signer), [signer])
   const [list, setList] = useState<DomainList | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    api.listDomains().then(setList, (failure) => setError(describeError(failure)))
-  }, [api])
+    api.listDomains().then(setList, (failure) => setError(describeError(failure, t.errors)))
+  }, [api, t])
 
   const domains = list?.domains
 
   return (
     <div className="pt-10 sm:pt-16">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="font-semibold text-3xl tracking-tight">Your domains</h1>
-        {list?.canClaim && <ButtonLink href="/connect">Connect a domain</ButtonLink>}
+        <h1 className="font-semibold text-3xl tracking-tight">{t.common.yourDomains}</h1>
+        {list?.canClaim && <ButtonLink href={localize('/connect', locale)}>{t.dashboard.connect}</ButtonLink>}
       </div>
       {error && (
         <div className="mt-6">
@@ -35,11 +38,7 @@ export default function Dashboard({ signer }: { signer: Signer }) {
           <PrivateServer pubkey={signer.pubkey} />
         </div>
       )}
-      {list?.canClaim && domains?.length === 0 && (
-        <p className="mt-6 max-w-xl text-muted">
-          No domain yet. Connect one you own to receive its mail in Nostr Mail.
-        </p>
-      )}
+      {list?.canClaim && domains?.length === 0 && <p className="mt-6 max-w-xl text-muted">{t.dashboard.empty}</p>}
       {domains && domains.length > 0 && (
         <ul className="mt-8 divide-y divide-rule overflow-hidden rounded-lg border border-rule bg-surface">
           {domains.map((domain) => (
@@ -55,20 +54,22 @@ export default function Dashboard({ signer }: { signer: Signer }) {
 }
 
 function DomainRow({ domain }: { domain: Domain }) {
-  const status = domainStatus(domain)
+  const t = useMessages()
+  const locale = useLocale()
+  const status = domainStatus(domain, t.domainStatus)
   const reports = domain.abuseReports.length
 
   return (
     <li>
-      <a href={domainHref(domain.domain)} className="block px-4 py-4 hover:bg-paper">
+      <a href={domainHref(domain.domain, locale)} className="block px-4 py-4 hover:bg-paper">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
           <p className="break-all font-medium">{domain.domain}</p>
           <p className={`text-sm ${TONES[status.tone]}`}>{status.text}</p>
         </div>
         {(domain.checkedAt || reports > 0) && (
           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-muted text-sm">
-            {domain.checkedAt && <span>checked {timeAgo(domain.checkedAt)}</span>}
-            {reports > 0 && <span>{plural(reports, 'abuse report')}</span>}
+            {domain.checkedAt && <span>{t.common.checked(timeAgo(domain.checkedAt, locale))}</span>}
+            {reports > 0 && <span>{t.dashboard.abuseReports(reports)}</span>}
           </div>
         )}
       </a>

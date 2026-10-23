@@ -1,14 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { useMessages } from '../i18n'
 import { describeError } from '../lib/errors'
 import { npubOf, shortNpub } from '../lib/format'
-import { type Account, listAccounts } from '../lib/signer'
+import { listAccounts } from '../lib/signer'
 import { ErrorText } from './ui'
-
-const METHODS: Record<Account['method'], string> = {
-  extension: 'Extension',
-  bunker: 'Remote signer',
-  key: 'Secret key',
-}
 
 const ITEM =
   'flex w-full cursor-pointer flex-col items-start rounded px-2 py-1.5 text-left hover:bg-rule/60 disabled:cursor-default disabled:opacity-50'
@@ -21,6 +16,7 @@ interface Props {
 }
 
 export default function AccountMenu({ pubkey, onSwitch, onAdd, onSignOut }: Props) {
+  const t = useMessages()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -55,7 +51,7 @@ export default function AccountMenu({ pubkey, onSwitch, onAdd, onSignOut }: Prop
       await action()
       setOpen(false)
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
     } finally {
       setBusy(null)
     }
@@ -79,7 +75,7 @@ export default function AccountMenu({ pubkey, onSwitch, onAdd, onSignOut }: Prop
         }}
         className="flex cursor-pointer items-center gap-1.5 text-muted hover:text-ink"
       >
-        <span className="sm:hidden">Account</span>
+        <span className="sm:hidden">{t.account.menu}</span>
         <span className="hidden font-mono sm:inline">{shortNpub(npubOf(pubkey))}</span>
         <span aria-hidden="true">▾</span>
       </button>
@@ -89,13 +85,13 @@ export default function AccountMenu({ pubkey, onSwitch, onAdd, onSignOut }: Prop
           className="absolute top-full right-0 z-10 mt-2 w-72 space-y-2 rounded-md border border-rule bg-surface p-2 shadow-lg"
         >
           <div className="px-2 py-1.5">
-            <p className="text-muted text-xs">Signed in as</p>
+            <p className="text-muted text-xs">{t.account.signedInAs}</p>
             <p className="font-mono">{shortNpub(npubOf(pubkey))}</p>
-            {method && <p className="text-muted text-xs">{METHODS[method]}</p>}
+            {method && <p className="text-muted text-xs">{t.account.methods[method]}</p>}
           </div>
           {others.length > 0 && (
             <div className="border-rule border-t pt-2">
-              <p className="px-2 pb-1 text-muted text-xs">Switch to</p>
+              <p className="px-2 pb-1 text-muted text-xs">{t.account.switchTo}</p>
               {others.map((other) => (
                 <button
                   key={other.pubkey}
@@ -106,7 +102,7 @@ export default function AccountMenu({ pubkey, onSwitch, onAdd, onSignOut }: Prop
                 >
                   <span className="font-mono">{shortNpub(npubOf(other.pubkey))}</span>
                   <span className="text-muted text-xs">
-                    {busy === other.pubkey ? 'Switching' : METHODS[other.method]}
+                    {busy === other.pubkey ? t.account.switching : t.account.methods[other.method]}
                   </span>
                 </button>
               ))}
@@ -114,10 +110,10 @@ export default function AccountMenu({ pubkey, onSwitch, onAdd, onSignOut }: Prop
           )}
           <div className="border-rule border-t pt-2">
             <button type="button" disabled={busy !== null} onClick={add} className={ITEM}>
-              Add an account
+              {t.app.addAccount}
             </button>
             <button type="button" disabled={busy !== null} onClick={() => run('sign-out', onSignOut)} className={ITEM}>
-              {busy === 'sign-out' ? 'Signing out' : 'Sign out'}
+              {busy === 'sign-out' ? t.account.signingOut : t.account.signOut}
             </button>
           </div>
           {error && (

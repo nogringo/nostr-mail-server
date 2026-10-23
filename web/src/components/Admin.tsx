@@ -1,4 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { useLocale, useMessages } from '../i18n'
+import type { Messages } from '../i18n/en'
 import { rememberAdmin } from '../lib/admins'
 import {
   type AdminDomain,
@@ -14,7 +16,7 @@ import {
   type Suspension,
 } from '../lib/api'
 import { describeError } from '../lib/errors'
-import { npubOf, plural, shortNpub, timeAgo } from '../lib/format'
+import { npubOf, shortNpub, timeAgo } from '../lib/format'
 import type { Signer } from '../lib/signer'
 import AbuseReportRow from './AbuseReportRow'
 import AllowedKeys from './AllowedKeys'
@@ -25,16 +27,10 @@ import { Button, CopyButton, ErrorText, TONES, type Tone } from './ui'
 
 type Tab = 'domains' | 'access' | 'suspended' | 'abuse' | 'server' | 'settings'
 
-const RECORDS: [RecordId, string][] = [
-  ['ownership', 'Ownership'],
-  ['mx', 'MX'],
-  ['nip05', 'NIP-05'],
-  ['spf', 'SPF'],
-  ['dkim', 'DKIM'],
-  ['dmarc', 'DMARC'],
-]
+const RECORDS: RecordId[] = ['ownership', 'mx', 'nip05', 'spf', 'dkim', 'dmarc']
 
 export default function Admin({ signer }: { signer: Signer }) {
+  const t = useMessages()
   const api = useMemo(() => createApi(signer), [signer])
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -47,10 +43,10 @@ export default function Admin({ signer }: { signer: Signer }) {
       },
       (failure) => {
         if (failure instanceof ApiError && failure.code === 'not_admin') rememberAdmin(signer.pubkey, false)
-        setError(describeError(failure))
+        setError(describeError(failure, t.errors))
       },
     )
-  }, [api, signer.pubkey])
+  }, [api, signer.pubkey, t])
 
   return (
     <div className="pt-10 sm:pt-16">
@@ -61,6 +57,7 @@ export default function Admin({ signer }: { signer: Signer }) {
 }
 
 function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
+  const t = useMessages()
   const [overview, setOverview] = useState(initial)
   // Picked once, like the tab of a domain's page.
   const [opening] = useState<Tab>(() => (problemsIn(initial.serverRecords) > 0 ? 'server' : 'domains'))
@@ -120,38 +117,34 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
   const served = domains.filter((domain) => !suspended.has(domain.domain))
   const verified = served.filter((domain) => domain.verifiedAt)
   const pending = served.filter((domain) => !domain.verifiedAt)
-  const sending = verified.filter((domain) => domainStatus(domain).tone === 'ok').length
+  const sending = verified.filter((domain) => domainStatus(domain, t.admin.status).tone === 'ok').length
   const addresses = verified.reduce((total, domain) => total + domain.addressCount, 0)
 
   const tabs: TabLink<Tab>[] = [
-    { id: 'domains', label: 'Domains' },
-    { id: 'access', label: 'Access', count: settings.openRegistration ? 0 : allowedKeys.length },
-    { id: 'suspended', label: 'Suspended', count: suspensions.length },
-    { id: 'abuse', label: 'Abuse', count: abuseReports.length },
-    { id: 'server', label: 'Server', count: problemsIn(serverRecords), tone: 'bad' },
-    { id: 'settings', label: 'Settings' },
+    { id: 'domains', label: t.admin.tabs.domains },
+    { id: 'access', label: t.admin.tabs.access, count: settings.openRegistration ? 0 : allowedKeys.length },
+    { id: 'suspended', label: t.admin.tabs.suspended, count: suspensions.length },
+    { id: 'abuse', label: t.admin.tabs.abuse, count: abuseReports.length },
+    { id: 'server', label: t.admin.tabs.server, count: problemsIn(serverRecords), tone: 'bad' },
+    { id: 'settings', label: t.admin.tabs.settings },
   ]
   const tab = tabs.find(({ id }) => id === hash)?.id ?? opening
 
   const panels: Record<Tab, ReactNode> = {
     domains:
       served.length === 0 ? (
-        <p className="text-sm">No domain is connected yet.</p>
+        <p className="text-sm">{t.admin.noDomain}</p>
       ) : (
         <div className="space-y-10">
           {verified.length > 0 && (
-            <Section title="Connected" count={verified.length}>
+            <Section title={t.admin.connected} count={verified.length}>
               {verified.map((domain) => (
                 <DomainRow key={`${domain.domain} ${domain.pubkey}`} domain={domain} onSuspend={suspend} />
               ))}
             </Section>
           )}
           {pending.length > 0 && (
-            <Section
-              title="Not verified"
-              count={pending.length}
-              note="Claims whose ownership record was never found. The first key whose record is found owns the domain, the other claims are then dropped."
-            >
+            <Section title={t.admin.notVerified} count={pending.length} note={t.admin.notVerifiedNote}>
               {pending.map((domain) => (
                 <DomainRow key={`${domain.domain} ${domain.pubkey}`} domain={domain} onSuspend={suspend} />
               ))}
@@ -171,12 +164,9 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
     ),
     suspended: (
       <>
-        <p className="text-muted text-sm">
-          The server neither receives, sends nor serves NIP-05 for these domains, and no key can claim them. Their
-          abuse@ still reaches you, with the other abuse reports.
-        </p>
+        <p className="text-muted text-sm">{t.admin.suspendedNote}</p>
         {suspensions.length === 0 ? (
-          <p className="mt-3 text-sm">No domain is suspended.</p>
+          <p className="mt-3 text-sm">{t.admin.noSuspension}</p>
         ) : (
           <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
             {suspensions.map((suspension) => (
@@ -193,11 +183,9 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
     ),
     abuse: (
       <>
-        <p className="text-muted text-sm">
-          Mail sent to abuse@ of the domains, newest first. Their owners get it too, and keep the reports you delete.
-        </p>
+        <p className="text-muted text-sm">{t.admin.abuseNote}</p>
         {abuseReports.length === 0 ? (
-          <p className="mt-3 text-sm">No report yet.</p>
+          <p className="mt-3 text-sm">{t.common.noReport}</p>
         ) : (
           <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
             {abuseReports.map((report) => (
@@ -222,10 +210,10 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
       <h1 className="break-all font-semibold text-3xl tracking-tight">{window.location.hostname}</h1>
       <p className="mt-2 text-muted">
         {domains.length === 0 && suspensions.length === 0
-          ? 'No domain is connected yet.'
-          : `${plural(verified.length, 'domain')} connected, ${sending} sending and receiving${suspensions.length ? `, ${suspensions.length} suspended` : ''}. ${plural(addresses, 'named address', 'named addresses')}.`}
+          ? t.admin.noDomain
+          : t.admin.summary(verified.length, sending, suspensions.length, addresses)}
       </p>
-      <Tabs label="Sections of the admin" tabs={tabs} current={tab} />
+      <Tabs label={t.admin.sections} tabs={tabs} current={tab} />
       {tabs.map(({ id, label }) => (
         <section key={id} aria-label={label} hidden={id !== tab} className="mt-8">
           {panels[id]}
@@ -258,18 +246,13 @@ function Section({
 }
 
 function ServerDns({ records }: { records: ServerRecord[] }) {
+  const t = useMessages().admin
   const problems = problemsIn(records)
 
   return (
     <>
-      <p className={`text-sm ${problems ? 'text-bad' : 'text-ok'}`}>
-        {problems ? `${plural(problems, 'record')} to fix` : 'Every record found'}
-      </p>
-      <p className="mt-1 text-muted text-sm">
-        Checked when the page loads. Connected domains point their MX at the name of the A record and include the name
-        of the SPF record in their own. The PTR record is set at the hosting provider: receivers trust the mail this
-        server sends when its address names it back. The server works over IPv4, so its name should have no AAAA record.
-      </p>
+      <p className={`text-sm ${problems ? 'text-bad' : 'text-ok'}`}>{problems ? t.toFix(problems) : t.allFound}</p>
+      <p className="mt-1 text-muted text-sm">{t.serverNote}</p>
       <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
         {records.map((record) => (
           <RecordRow key={record.id} record={record} />
@@ -284,7 +267,9 @@ function problemsIn(records: ServerRecord[]): number {
 }
 
 function DomainRow({ domain, onSuspend }: { domain: AdminDomain; onSuspend: (name: string) => Promise<void> }) {
-  const status = domainStatus(domain)
+  const t = useMessages()
+  const locale = useLocale()
+  const status = domainStatus(domain, t.admin.status)
 
   return (
     <li className="px-4 py-4">
@@ -294,10 +279,10 @@ function DomainRow({ domain, onSuspend }: { domain: AdminDomain; onSuspend: (nam
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-muted text-sm">
         <Owner domain={domain} />
-        {domain.verifiedAt && <span>{plural(domain.addressCount, 'named address', 'named addresses')}</span>}
-        {domain.shared && <span>open to everyone</span>}
-        <span>claimed {timeAgo(domain.createdAt)}</span>
-        {domain.checkedAt && <span>checked {timeAgo(domain.checkedAt)}</span>}
+        {domain.verifiedAt && <span>{t.admin.namedAddresses(domain.addressCount)}</span>}
+        {domain.shared && <span>{t.admin.openToEveryone}</span>}
+        <span>{t.admin.claimed(timeAgo(domain.createdAt, locale))}</span>
+        {domain.checkedAt && <span>{t.common.checked(timeAgo(domain.checkedAt, locale))}</span>}
       </div>
       {domain.checks && <Records checks={domain.checks} />}
       <SuspendAction name={domain.domain} onSuspend={onSuspend} />
@@ -314,6 +299,8 @@ function SuspendedRow({
   claims: AdminDomain[]
   onLift: (name: string) => Promise<void>
 }) {
+  const t = useMessages()
+  const locale = useLocale()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -323,7 +310,7 @@ function SuspendedRow({
     try {
       await onLift(suspension.domain)
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
       setBusy(false)
     }
   }
@@ -332,22 +319,18 @@ function SuspendedRow({
     <li className="px-4 py-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <p className="break-all font-medium">{suspension.domain}</p>
-        <p className="text-bad text-sm">Suspended {timeAgo(suspension.suspendedAt)}</p>
+        <p className="text-bad text-sm">{t.admin.suspendedSince(timeAgo(suspension.suspendedAt, locale))}</p>
       </div>
-      {claims.length === 0 && <p className="mt-1 text-muted text-sm">No key claims it.</p>}
+      {claims.length === 0 && <p className="mt-1 text-muted text-sm">{t.admin.noClaim}</p>}
       {claims.map((claim) => (
         <div key={claim.pubkey} className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-muted text-sm">
           <Owner domain={claim} />
-          <span>
-            {claim.verifiedAt
-              ? `verified, ${plural(claim.addressCount, 'named address', 'named addresses')}`
-              : 'not verified'}
-          </span>
+          <span>{claim.verifiedAt ? t.admin.verifiedWith(claim.addressCount) : t.admin.unverified}</span>
         </div>
       ))}
       <div className="mt-3 flex flex-wrap items-center gap-4 text-sm">
         <Button variant="quiet" onClick={lift} disabled={busy}>
-          {busy ? 'Lifting' : 'Lift suspension'}
+          {busy ? t.admin.lifting : t.admin.lift}
         </Button>
         <ErrorText>{error}</ErrorText>
       </div>
@@ -356,6 +339,7 @@ function SuspendedRow({
 }
 
 function SuspendAction({ name, onSuspend }: { name: string; onSuspend: (name: string) => Promise<void> }) {
+  const t = useMessages()
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -366,7 +350,7 @@ function SuspendAction({ name, onSuspend }: { name: string; onSuspend: (name: st
     try {
       await onSuspend(name)
     } catch (failure) {
-      setError(describeError(failure))
+      setError(describeError(failure, t.errors))
       setBusy(false)
     }
   }
@@ -375,17 +359,17 @@ function SuspendAction({ name, onSuspend }: { name: string; onSuspend: (name: st
     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
       {confirming ? (
         <>
-          <span>Suspend {name}? It stops receiving and sending mail at once, whichever key claims it.</span>
+          <span>{t.admin.suspendConfirm(name)}</span>
           <Button variant="quiet" className="text-bad" onClick={suspend} disabled={busy}>
-            {busy ? 'Suspending' : 'Suspend'}
+            {busy ? t.admin.suspending : t.admin.suspend}
           </Button>
           <Button variant="quiet" onClick={() => setConfirming(false)} disabled={busy}>
-            Cancel
+            {t.common.cancel}
           </Button>
         </>
       ) : (
         <Button variant="quiet" onClick={() => setConfirming(true)}>
-          Suspend domain
+          {t.admin.suspendDomain}
         </Button>
       )}
       <ErrorText>{error}</ErrorText>
@@ -394,25 +378,28 @@ function SuspendAction({ name, onSuspend }: { name: string; onSuspend: (name: st
 }
 
 function Owner({ domain }: { domain: AdminDomain }) {
+  const t = useMessages().admin
   const npub = npubOf(domain.pubkey)
   return (
     <span className="flex items-center gap-1">
       <span className="font-mono">{shortNpub(npub)}</span>
-      <CopyButton text={npub} label={`npub of the key that claims ${domain.domain}`} />
+      <CopyButton text={npub} label={t.ownerNpub(domain.domain)} />
     </span>
   )
 }
 
 function Records({ checks }: { checks: Record<RecordId, RecordCheck> }) {
+  const t = useMessages().admin
   return (
-    <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label="DNS records at the last check">
-      {RECORDS.map(([id, label]) => {
+    <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label={t.lastCheck}>
+      {RECORDS.map((id) => {
         const check = recordStatus(id, checks[id].status)
+        const text = t.checks[checks[id].status]
         const found = checks[id].found.join(', ')
         return (
-          <li key={id} className={TONES[check.tone]} title={found ? `${check.text}: ${found}` : check.text}>
-            <span aria-hidden="true">{check.glyph}</span> {label}
-            <span className="sr-only">, {check.text}</span>
+          <li key={id} className={TONES[check.tone]} title={found ? `${text}: ${found}` : text}>
+            <span aria-hidden="true">{check.glyph}</span> {t.recordNames[id]}
+            <span className="sr-only">, {text}</span>
           </li>
         )
       })}
@@ -420,19 +407,21 @@ function Records({ checks }: { checks: Record<RecordId, RecordCheck> }) {
   )
 }
 
-function domainStatus(domain: AdminDomain): { tone: Tone; text: string } {
+function domainStatus(domain: AdminDomain, messages: Messages['admin']['status']): { tone: Tone; text: string } {
   const found = (id: RecordId) => domain.checks?.[id].status === 'ok'
-  if (!domain.verifiedAt) return { tone: 'wait', text: domain.checkedAt ? 'Ownership not found' : 'Never checked' }
-  if (!found('mx')) return { tone: 'wait', text: 'Verified, no MX record' }
-  if (!found('nip05') || !found('spf') || !found('dkim')) return { tone: 'wait', text: 'Receiving only' }
-  return { tone: 'ok', text: 'Sending and receiving' }
+  if (!domain.verifiedAt) {
+    return { tone: 'wait', text: domain.checkedAt ? messages.ownershipNotFound : messages.neverChecked }
+  }
+  if (!found('mx')) return { tone: 'wait', text: messages.noMx }
+  if (!found('nip05') || !found('spf') || !found('dkim')) return { tone: 'wait', text: messages.receivingOnly }
+  return { tone: 'ok', text: messages.ok }
 }
 
-const CHECKS: Record<CheckStatus, { tone: Tone; text: string; glyph: string }> = {
-  ok: { tone: 'ok', text: 'found', glyph: '✓' },
-  missing: { tone: 'wait', text: 'missing', glyph: '○' },
-  mismatch: { tone: 'bad', text: 'different value', glyph: '✗' },
-  error: { tone: 'bad', text: 'lookup failed', glyph: '✗' },
+const CHECKS: Record<CheckStatus, { tone: Tone; glyph: string }> = {
+  ok: { tone: 'ok', glyph: '✓' },
+  missing: { tone: 'wait', glyph: '○' },
+  mismatch: { tone: 'bad', glyph: '✗' },
+  error: { tone: 'bad', glyph: '✗' },
 }
 
 // DMARC is recommended, not required.
