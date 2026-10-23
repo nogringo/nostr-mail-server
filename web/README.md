@@ -43,13 +43,21 @@ Addresses. Each tab has its own URL fragment (`#dns`, `#abuse`, etc.).
 the keys of the server's `ADMIN_PUBKEYS` can open the page.
 
 Signed in, the header of every page links to the key's domains. It links to
-`/admin` too once the key has opened it in this browser: the site remembers
-these keys in `localStorage` rather than asking the server on every page.
+`/admin` too once one of the signed-in keys has opened it in this browser: the
+site remembers these keys in `localStorage` rather than asking the server on
+every page, and `/admin` opens on such a key.
+
+Several keys can stay signed in at once. The account menu of the header
+switches between them, adds one and signs out of the one in use. Each tab
+keeps its own account, and a new tab opens on the last one picked. Only the
+account in use connects to its bunker. A browser holds one extension account:
+the one selected in the extension.
 
 Sign-in uses a NIP-07 extension, a NIP-46 signer app that scans a
 `nostrconnect://` QR code (Amber), a NIP-46 bunker (`bunker://` link or
-`name@domain`), or a secret key (`nsec` or NIP-49 `ncryptsec`). A secret key
-stays in `sessionStorage`: closing the tab signs out. Every API call is signed with
+`name@domain`), or a secret key (`nsec` or NIP-49 `ncryptsec`). Every session
+stays in `localStorage` until sign-out, a secret key too, so it survives a
+restart of the browser. Every API call is signed with
 [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) for the
 page's own origin, so the site and the API must be served on the same origin.
 

@@ -17,12 +17,13 @@ interface Props {
   title: string
   children: ReactNode
   onSignIn: (signer: Signer) => void
+  onCancel?: () => void
 }
 
 const INPUT =
   'min-w-0 flex-1 rounded-md border border-rule bg-surface px-3 py-2 font-mono text-sm placeholder:text-muted/70'
 
-export default function SignIn({ title, children, onSignIn }: Props) {
+export default function SignIn({ title, children, onSignIn, onCancel }: Props) {
   const [credential, setCredential] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState<'extension' | 'bunker' | 'key' | null>(null)
@@ -166,7 +167,7 @@ export default function SignIn({ title, children, onSignIn }: Props) {
           )}
           {secretKey && (
             <p className="text-muted text-sm">
-              The key stays in this tab and is never sent. Closing the tab signs you out.
+              The key stays in this browser and is never sent. Sign out to remove it.
             </p>
           )}
           {authUrl && (
@@ -180,6 +181,12 @@ export default function SignIn({ title, children, onSignIn }: Props) {
         </form>
 
         <ErrorText>{error}</ErrorText>
+
+        {onCancel && (
+          <Button variant="quiet" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
       </div>
     </section>
   )

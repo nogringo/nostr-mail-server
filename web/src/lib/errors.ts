@@ -34,6 +34,7 @@ const MESSAGES: Record<string, string> = {
   nostr_connect_closed: 'The relays closed the connection. Show the QR code again.',
   invalid_secret_key: 'Enter a secret key starting with nsec1 or ncryptsec1.',
   wrong_password: 'This password does not open this ncryptsec.',
+  account_signed_out: 'This account was signed out in another tab. Sign in with it again.',
 }
 
 export function describeError(error: unknown): string {

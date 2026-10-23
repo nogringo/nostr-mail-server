@@ -19,11 +19,14 @@ export interface Signer {
 }
 
 type Session =
-  | { method: 'extension' }
+  | { method: 'extension'; pubkey: string }
   | { method: 'bunker'; clientKey: string; pointer: BunkerPointer; pubkey: string }
-  | { method: 'key'; nsec: string }
+  | { method: 'key'; nsec: string; pubkey: string }
 
-const SESSION_KEY = 'nostr-mail.session'
+export type Account = Pick<Session, 'method' | 'pubkey'>
+
+const ACCOUNTS_KEY = 'nostr-mail.accounts'
+const ACTIVE_KEY = 'nostr-mail.active'
 // A bunker may wait for the user to approve the request on another device.
 const BUNKER_TIMEOUT_MS = 120_000
 const NOSTR_CONNECT_RELAYS = ['wss://relay.nmail.li/', 'wss://bucket.coracle.social/']
@@ -34,7 +37,7 @@ export function hasExtension(): boolean {
 
 export async function signInWithExtension(): Promise<Signer> {
   const signer = await extensionSigner()
-  save({ method: 'extension' })
+  save({ method: 'extension', pubkey: signer.pubkey })
   return signer
 }
 
@@ -90,30 +93,53 @@ export async function signInWithKey(input: string, password: string): Promise<Si
   return startKeySession(decodeNsec(key))
 }
 
-export async function restoreSession(): Promise<Signer | null> {
-  const session = load()
-  if (!session) return null
+export function listAccounts(): Account[] {
+  return load().map(({ method, pubkey }) => ({ method, pubkey }))
+}
 
-  try {
-    if (session.method === 'extension') {
-      // Some extensions inject window.nostr after the page scripts run.
-      await waitFor(hasExtension, 1000)
-      return await extensionSigner()
+// Opens the account this tab uses, or the first one `prefer` picks.
+export async function restoreSession(prefer: (pubkey: string) => boolean = () => false): Promise<Signer | null> {
+  const active = activePubkey()
+  const rank = (session: Session) => (prefer(session.pubkey) ? 2 : 0) + (session.pubkey === active ? 1 : 0)
+
+  for (const session of load().sort((a, b) => rank(b) - rank(a))) {
+    try {
+      return await openSession(session)
+    } catch {
+      forget(session.pubkey)
     }
-
-    if (session.method === 'key') return keySigner(decodeNsec(session.nsec))
-
-    const clientKey = nip19.decode(session.clientKey as `nsec1${string}`).data
-    return bunkerSigner(BunkerSigner.fromBunker(clientKey, session.pointer), session.pubkey)
-  } catch {
-    forget()
-    return null
   }
+  return null
+}
+
+export async function switchAccount(pubkey: string): Promise<Signer> {
+  const session = load().find((other) => other.pubkey === pubkey)
+  if (!session) throw new Error('account_signed_out')
+
+  const signer = await openSession(session)
+  setActive(signer.pubkey)
+  return signer
 }
 
 export async function signOut(signer: Signer): Promise<void> {
-  forget()
+  forget(signer.pubkey)
   await signer.close()
+}
+
+async function openSession(session: Session): Promise<Signer> {
+  if (session.method === 'extension') {
+    // Some extensions inject window.nostr after the page scripts run.
+    await waitFor(hasExtension, 1000)
+    const signer = await extensionSigner()
+    // The extension signs with the account selected in it, not the one saved here.
+    if (signer.pubkey !== session.pubkey) remember({ method: 'extension', pubkey: signer.pubkey })
+    return signer
+  }
+
+  if (session.method === 'key') return keySigner(decodeNsec(session.nsec))
+
+  const clientKey = nip19.decode(session.clientKey as `nsec1${string}`).data
+  return bunkerSigner(BunkerSigner.fromBunker(clientKey, session.pointer), session.pubkey)
 }
 
 async function extensionSigner(): Promise<Signer> {
@@ -140,8 +166,9 @@ async function startBunkerSession(bunker: BunkerSigner, clientKey: Uint8Array): 
 }
 
 function startKeySession(secretKey: Uint8Array): Signer {
-  save({ method: 'key', nsec: nip19.nsecEncode(secretKey) })
-  return keySigner(secretKey)
+  const signer = keySigner(secretKey)
+  save({ method: 'key', nsec: nip19.nsecEncode(secretKey), pubkey: signer.pubkey })
+  return signer
 }
 
 function decodeNsec(nsec: string): Uint8Array {
@@ -190,26 +217,49 @@ async function waitFor(condition: () => boolean, timeoutMs: number): Promise<voi
   }
 }
 
-// A secret key stays in this tab only: closing it signs out.
 function save(session: Session): void {
+  remember(session)
+  setActive(session.pubkey)
+}
+
+// A browser holds one extension account: signing in with it again replaces it.
+function remember(session: Session): void {
+  const replaced = (other: Session) =>
+    other.pubkey === session.pubkey || (session.method === 'extension' && other.method === 'extension')
+  write([...load().filter((other) => !replaced(other)), session])
+}
+
+function forget(pubkey: string): void {
+  write(load().filter((session) => session.pubkey !== pubkey))
+}
+
+function load(): Session[] {
   try {
-    const storage = session.method === 'key' ? sessionStorage : localStorage
-    storage.setItem(SESSION_KEY, JSON.stringify(session))
+    const sessions = JSON.parse(localStorage.getItem(ACCOUNTS_KEY) ?? '[]')
+    return Array.isArray(sessions) ? sessions : []
+  } catch {
+    return []
+  }
+}
+
+function write(sessions: Session[]): void {
+  try {
+    localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(sessions))
   } catch {}
 }
 
-function load(): Session | null {
+// Each tab keeps its own account, and a new tab opens on the last one picked.
+function activePubkey(): string | null {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY) ?? localStorage.getItem(SESSION_KEY)
-    return raw ? (JSON.parse(raw) as Session) : null
+    return sessionStorage.getItem(ACTIVE_KEY) ?? localStorage.getItem(ACTIVE_KEY)
   } catch {
     return null
   }
 }
 
-function forget(): void {
+function setActive(pubkey: string): void {
   try {
-    sessionStorage.removeItem(SESSION_KEY)
-    localStorage.removeItem(SESSION_KEY)
+    sessionStorage.setItem(ACTIVE_KEY, pubkey)
+    localStorage.setItem(ACTIVE_KEY, pubkey)
   } catch {}
 }
