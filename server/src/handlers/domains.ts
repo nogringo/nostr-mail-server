@@ -18,6 +18,7 @@ import type {
   Domain,
   DomainConfig,
   DomainRepository,
+  Nip05Lookup,
   Suspension,
 } from '../types.js'
 import { listOwnReports } from './abuse.js'
@@ -31,6 +32,8 @@ type DomainRequest = FastifyRequest<{ Params: DomainParams }>
 
 type KeyRequest = FastifyRequest<{ Params: DomainParams; Body: { nsec?: unknown; bunker?: unknown } | undefined }>
 
+type Nip05Request = FastifyRequest<{ Params: DomainParams; Body: { nip05?: unknown } | undefined }>
+
 // Domain lifecycle, authenticated with NIP-98: the signing pubkey owns the
 // claims it makes, and a claim becomes the domain's owner once its ownership
 // TXT record is found.
@@ -40,15 +43,34 @@ export function registerDomainRoutes(
   {
     config,
     dns,
+    nip05Lookup,
     relays,
     signers,
     settings,
-  }: { config: ApiConfig; dns: DnsLookup; relays: RelayNetwork; signers: DomainSigners; settings: SettingsStore },
+  }: {
+    config: ApiConfig
+    dns: DnsLookup
+    nip05Lookup: Nip05Lookup
+    relays: RelayNetwork
+    signers: DomainSigners
+    settings: SettingsStore
+  },
 ): void {
   const publishLists = (domain: Domain) =>
     publishDomainLists(relays, signers.forDomain(domain), domain.blossomServers, settings.current)
   const canClaim = async (pubkey: string) =>
     config.adminPubkeys.includes(pubkey) || settings.current.openRegistration || (await repo.isAllowedKey(pubkey))
+
+  // Every check of a verified domain republishes its lists, so checking again
+  // is how a failed publication is retried.
+  async function check(request: FastifyRequest, domain: Domain): Promise<Domain | null> {
+    const checks = await checkRecords(domain, config, dns, nip05Lookup)
+    const updated = await repo.recordChecks(domain.domain, domain.pubkey, checks, checks.ownership.status === 'ok')
+    if (updated?.verifiedAt && !(await publishLists(updated))) {
+      request.log.warn({ domain: updated.domain }, 'The lists of the domain key were not all published')
+    }
+    return updated
+  }
 
   app.get('/domains', async (request, reply) => {
     const pubkey = authenticate(request, reply)
@@ -120,15 +142,27 @@ export function registerDomainRoutes(
     if (!domain) return reply.code(404).send({ error: 'domain_not_found' })
     if (await repo.findSuspension(domain.domain)) return reply.code(403).send({ error: 'domain_suspended' })
 
-    const checks = await checkRecords(domain, config, dns)
-    const updated = await repo.recordChecks(domain.domain, pubkey, checks, checks.ownership.status === 'ok')
+    const updated = await check(request, domain)
     if (!updated) return reply.code(404).send({ error: 'domain_not_found' })
 
-    // Every check of a verified domain republishes its lists, so checking again
-    // is how a failed publication is retried.
-    if (updated.verifiedAt && !(await publishLists(updated))) {
-      request.log.warn({ domain: updated.domain }, 'The lists of the domain key were not all published')
-    }
+    return reply.send({ domain: present(updated, config, null, await listOwnReports(repo, updated)) })
+  })
+
+  // The NIP-05 check depends on who serves it, so a change checks the domain again.
+  app.put('/domains/:domain/nip05', async (request: Nip05Request, reply) => {
+    const pubkey = authenticate(request, reply)
+    if (pubkey === null) return reply
+
+    const domain = await findOwnDomain(repo, request, pubkey)
+    if (!domain) return reply.code(404).send({ error: 'domain_not_found' })
+    if (await repo.findSuspension(domain.domain)) return reply.code(403).send({ error: 'domain_suspended' })
+
+    const nip05 = request.body?.nip05
+    if (nip05 !== 'server' && nip05 !== 'owner') return reply.code(400).send({ error: 'invalid_nip05' })
+
+    const changed = await repo.setNip05Host(domain.domain, pubkey, nip05)
+    const updated = changed && (await check(request, changed))
+    if (!updated) return reply.code(404).send({ error: 'domain_not_found' })
 
     return reply.send({ domain: present(updated, config, null, await listOwnReports(repo, updated)) })
   })
@@ -213,6 +247,7 @@ function present(domain: Domain, config: DomainConfig, suspension: Suspension | 
     suspendedAt: suspension?.suspendedAt ?? null,
     checkedAt: domain.checkedAt,
     blossomServers: domain.blossomServers,
+    nip05: domain.nip05,
     createdAt: domain.createdAt,
     records: expectedRecords(domain, config).map((record) => ({
       ...record,

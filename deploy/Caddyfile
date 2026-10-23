@@ -10,7 +10,7 @@
 {$SITE_HOST} {
 	encode
 
-	@api path /domains /domains/* /admin/* /.well-known/nostr.json /healthz
+	@api path /domains /domains/* /admin/* /.well-known/nostr.json /nip05/* /healthz
 	handle @api {
 		reverse_proxy server:3000
 	}

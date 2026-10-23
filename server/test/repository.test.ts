@@ -18,7 +18,7 @@ const CAROL = 'c'.repeat(64)
 const checks: DomainChecks = {
   ownership: { status: 'ok', found: ['nostr-mail-verification=t'] },
   mx: { status: 'missing', found: [] },
-  https: { status: 'missing', found: [] },
+  nip05: { status: 'missing', found: [] },
   spf: { status: 'missing', found: [] },
   dkim: { status: 'missing', found: [] },
   dmarc: { status: 'missing', found: [] },
@@ -81,6 +81,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '013_add_service_settings.sql',
       '014_add_private_addresses.sql',
       '015_add_abuse_report_deletions.sql',
+      '016_add_nip05_host.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })

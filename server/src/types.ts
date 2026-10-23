@@ -25,7 +25,7 @@ export type DomainConfig = Pick<AppConfig, 'mxHost' | 'spfInclude' | 'publicIpv4
 
 export type ApiConfig = DomainConfig & Pick<AppConfig, 'adminPubkeys'>
 
-export type RecordId = 'ownership' | 'mx' | 'https' | 'spf' | 'dkim' | 'dmarc'
+export type RecordId = 'ownership' | 'mx' | 'nip05' | 'spf' | 'dkim' | 'dmarc'
 
 export type CheckStatus = 'ok' | 'missing' | 'mismatch' | 'error'
 
@@ -36,9 +36,10 @@ export interface RecordCheck {
 
 export type DomainChecks = Record<RecordId, RecordCheck>
 
+// A DNS record to publish, or the NIP-05 entry the owner's website lists.
 export interface DnsRecord {
   id: RecordId
-  type: 'MX' | 'TXT' | 'A'
+  type: 'MX' | 'TXT' | 'A' | 'NIP-05'
   name: string
   value: string
   priority?: number
@@ -68,11 +69,16 @@ export interface Domain {
   bridgeBunker: BunkerKey | null
   // Where the domain's large mail is stored, published as the kind 10063 of its key.
   blossomServers: string[]
+  nip05: Nip05Host
   checks: DomainChecks | null
   checkedAt: string | null
   verifiedAt: string | null
   createdAt: string
 }
+
+// Who serves https://<domain>/.well-known/nostr.json: this server, which the
+// domain's A record points to, or the owner's own website.
+export type Nip05Host = 'server' | 'owner'
 
 export type DomainSummary = Domain & {
   // The addresses its claim declared.
@@ -210,6 +216,7 @@ export interface DomainRepository {
   // A verified claim becomes the domain's owner: the other claims on it, and their addresses, are dropped.
   // The domain is then served for good.
   recordChecks(domain: string, pubkey: string, checks: DomainChecks, verified: boolean): Promise<Domain | null>
+  setNip05Host(domain: string, pubkey: string, nip05: Nip05Host): Promise<Domain | null>
   // Also drops the addresses the claim declared.
   deleteDomain(domain: string, pubkey: string): Promise<boolean>
   // Whether a claim on any domain has this key.
@@ -251,6 +258,10 @@ export interface DomainRepository {
   // Stores `generated` as the server's key unless it already has one, and returns the stored key.
   findOrCreateServerKey(generated: KeyPair): Promise<KeyPair>
 }
+
+// What https://<domain>/.well-known/nostr.json lists for a name. NIP-05 clients
+// ignore redirects, so a redirect is reported rather than followed.
+export type Nip05Lookup = (domain: string, name: string) => Promise<{ pubkey: string | null } | { redirect: string }>
 
 export interface MxRecord {
   exchange: string

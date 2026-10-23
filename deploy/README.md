@@ -10,13 +10,15 @@ One machine runs everything with Docker Compose:
 
 The site and the API share one origin, `SITE_HOST`, because NIP-98 binds each
 request to the URL the browser signs. Caddy sends `/domains`, `/domains/*`,
-`/admin/*`, `/.well-known/nostr.json` and `/healthz` to the server and keeps
+`/admin/*`, `/.well-known/nostr.json`, `/nip05/*` and `/healthz` to the server and keeps
 the `Host` header. The site's pages are built as `<name>.html`, so `/admin` is
 the admin page and `/admin/*` the API.
 
 The connected domains point their A record at `PUBLIC_IPV4`, this machine. For
 any other host name, Caddy gets a certificate on demand once the server says
-the domain is verified, and serves only `/.well-known/nostr.json` there.
+the domain is verified, and serves only `/.well-known/nostr.json` there. A
+domain that keeps its own website relays that path to
+`https://SITE_HOST/nip05/<domain>` instead.
 
 `SITE_HOST` is also the MX that connected domains point at, and for now the
 SPF include they are given. The SMTP server offers STARTTLS with the

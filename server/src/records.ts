@@ -1,7 +1,17 @@
 import { type DNSResolver, spf } from 'mailauth'
+import { SMTP_LOCAL_PART } from './address.js'
 import { SPF_TIME_LIMIT_MS } from './authentication.js'
 import { normalizeHostname } from './domain.js'
-import type { DnsLookup, DnsRecord, Domain, DomainChecks, DomainConfig, RecordCheck, ServerRecord } from './types.js'
+import type {
+  DnsLookup,
+  DnsRecord,
+  Domain,
+  DomainChecks,
+  DomainConfig,
+  Nip05Lookup,
+  RecordCheck,
+  ServerRecord,
+} from './types.js'
 
 export const OWNERSHIP_LABEL = '_nostr-mail'
 export const OWNERSHIP_PREFIX = 'nostr-mail-verification='
@@ -11,9 +21,9 @@ type RecordsConfig = Pick<DomainConfig, 'mxHost' | 'spfInclude' | 'publicIpv4'>
 // Reserved by RFC 6761, so it never names a real domain.
 const CONNECTED_DOMAIN = 'connected-domain.invalid'
 
-// The records a domain needs: ownership proves the claim, MX receives mail, A
-// brings its HTTPS (NIP-05) here, SPF and DKIM let it send. DMARC is
-// recommended rather than required.
+// The records a domain needs: ownership proves the claim, MX receives mail,
+// NIP-05 lets clients find its addresses and _smtp key, SPF and DKIM let it
+// send. DMARC is recommended rather than required.
 export function expectedRecords(domain: Domain, config: RecordsConfig): DnsRecord[] {
   const name = domain.domain
   return [
@@ -25,7 +35,9 @@ export function expectedRecords(domain: Domain, config: RecordsConfig): DnsRecor
       required: true,
     },
     { id: 'mx', type: 'MX', name, value: config.mxHost, priority: 10, required: true },
-    { id: 'https', type: 'A', name, value: config.publicIpv4, required: true },
+    domain.nip05 === 'server'
+      ? { id: 'nip05', type: 'A', name, value: config.publicIpv4, required: true }
+      : { id: 'nip05', type: 'NIP-05', name: `${SMTP_LOCAL_PART}@${name}`, value: domain.bridgePubkey, required: true },
     { id: 'spf', type: 'TXT', name, value: `v=spf1 include:${config.spfInclude} ~all`, required: true },
     {
       id: 'dkim',
@@ -38,10 +50,15 @@ export function expectedRecords(domain: Domain, config: RecordsConfig): DnsRecor
   ]
 }
 
-export async function checkRecords(domain: Domain, config: RecordsConfig, dns: DnsLookup): Promise<DomainChecks> {
+export async function checkRecords(
+  domain: Domain,
+  config: RecordsConfig,
+  dns: DnsLookup,
+  nip05Lookup: Nip05Lookup,
+): Promise<DomainChecks> {
   const name = domain.domain
 
-  const [ownership, mx, https, spf, dkim, dmarc] = await Promise.all([
+  const [ownership, mx, nip05, spf, dkim, dmarc] = await Promise.all([
     settle(async () => {
       const found = await dns.txt(`${OWNERSHIP_LABEL}.${name}`)
       const expected = OWNERSHIP_PREFIX + domain.verificationToken
@@ -58,7 +75,9 @@ export async function checkRecords(domain: Domain, config: RecordsConfig, dns: D
         records.every((record) => normalizeHostname(record.exchange) === config.mxHost),
       )
     }),
-    settle(() => checkPointsAt(dns, name, config.publicIpv4)),
+    settle(() =>
+      domain.nip05 === 'server' ? checkPointsAt(dns, name, config.publicIpv4) : checkSmtpKey(nip05Lookup, domain),
+    ),
     settle(async () => {
       // RFC 7208 3.2: more than one SPF record makes SPF fail, so it is a mismatch.
       const found = await spfRecords(dns, name)
@@ -77,7 +96,7 @@ export async function checkRecords(domain: Domain, config: RecordsConfig, dns: D
     }),
   ])
 
-  return { ownership, mx, https, spf, dkim, dmarc }
+  return { ownership, mx, nip05, spf, dkim, dmarc }
 }
 
 // What the server needs to receive and send for the connected domains: their MX
@@ -134,6 +153,14 @@ async function checkPointsAt(dns: DnsLookup, name: string, address: string): Pro
     found,
     found.every((other) => other === address),
   )
+}
+
+async function checkSmtpKey(lookup: Nip05Lookup, { domain, bridgePubkey }: Domain): Promise<RecordCheck> {
+  const answer = await lookup(domain, SMTP_LOCAL_PART)
+  if ('redirect' in answer) return { status: 'mismatch', found: [`Redirect to ${answer.redirect}`] }
+
+  const found = answer.pubkey === null ? [] : [answer.pubkey]
+  return verdict(found, answer.pubkey === bridgePubkey)
 }
 
 async function spfRecords(dns: DnsLookup, name: string): Promise<string[]> {

@@ -7,6 +7,7 @@ import type { Signer } from '../lib/signer'
 import AbuseReportRow from './AbuseReportRow'
 import Addresses from './Addresses'
 import DomainKey from './DomainKey'
+import Nip05Group from './Nip05Group'
 import RecordRow from './RecordRow'
 import { type TabLink, Tabs, useHash } from './Tabs'
 import { BackLink, Button, ErrorText, TONES } from './ui'
@@ -20,7 +21,7 @@ const TABS: Record<Tab, { label: string; shown: (domain: Domain) => boolean }> =
   settings: { label: 'Settings', shown: () => true },
 }
 
-const RECEIVE: RecordId[] = ['ownership', 'mx', 'https']
+const RECEIVE: RecordId[] = ['ownership', 'mx']
 const SEND: RecordId[] = ['spf', 'dkim', 'dmarc']
 
 export default function DomainPage({ signer }: { signer: Signer }) {
@@ -128,9 +129,10 @@ function DnsPanel({ domain, api, onChange }: { domain: Domain; api: Api; onChang
     <div className="space-y-8">
       <RecordGroup
         title="To receive mail"
-        note="The MX record sends all mail for the domain here, the A record lets apps find its addresses. Some DNS providers want only the part of the name before your domain, like _nostr-mail, and nothing for the domain itself."
+        note="The MX record sends all mail for the domain here. Some DNS providers want only the part of the name before your domain, like _nostr-mail, and nothing for the domain itself."
         records={pick(domain, RECEIVE)}
       />
+      <Nip05Group domain={domain} api={api} onChange={onChange} />
       <RecordGroup
         title="To send mail"
         note="SPF and DKIM prove that mail from the domain really comes from it. If the domain already has an SPF record, add the include to it rather than publishing a second one."

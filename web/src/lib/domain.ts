@@ -11,7 +11,10 @@ export function domainStatus(domain: Domain): { tone: Tone; text: string } {
   if (!domain.checkedAt) return { tone: 'wait', text: 'Publish the DNS records, then check them' }
   if (!domain.verifiedAt) return { tone: 'wait', text: 'Waiting for the ownership record' }
   if (!found('mx')) return { tone: 'wait', text: 'Verified, waiting for the MX record' }
-  if (!found('https')) return { tone: 'wait', text: 'Receiving mail, waiting for the A record' }
+  if (!found('nip05')) {
+    const awaited = domain.nip05 === 'server' ? 'the A record' : '_smtp in your NIP-05'
+    return { tone: 'wait', text: `Receiving mail, waiting for ${awaited}` }
+  }
   if (!found('spf') || !found('dkim')) return { tone: 'wait', text: 'Receiving mail, waiting for SPF and DKIM to send' }
   return { tone: 'ok', text: 'Sending and receiving mail' }
 }

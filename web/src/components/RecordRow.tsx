@@ -17,7 +17,7 @@ export default function RecordRow({ record }: { record: RecordLine }) {
   const failed = record.check && record.check.status !== 'ok' && record.check.found.length > 0
 
   return (
-    <li className="grid grid-cols-[3rem_minmax(0,1fr)] gap-x-3 gap-y-1 px-4 py-3 sm:grid-cols-[3rem_minmax(0,1fr)_9rem]">
+    <li className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 px-4 py-3 sm:grid-cols-[3.5rem_minmax(0,1fr)_9rem]">
       <span className="font-medium font-mono text-muted text-sm leading-6">{record.type}</span>
       <div className="min-w-0 space-y-1 font-mono text-sm leading-6">
         <Field text={record.name} label={`${record.type} name`} />

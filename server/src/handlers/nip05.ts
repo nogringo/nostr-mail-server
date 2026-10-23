@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { normalizeLocalPart, SMTP_LOCAL_PART } from '../address.js'
 import { normalizeDomain, normalizeHost } from '../domain.js'
 import { decodeNpub } from '../nostr.js'
@@ -6,22 +6,31 @@ import type { DomainRepository } from '../types.js'
 
 type Nip05Request = FastifyRequest<{ Querystring: { name?: unknown } }>
 
-// NIP-05 for the connected domains, whose HTTPS points at this server: the
-// domain is the Host header, and only a verified domain resolves names.
+type RelayedRequest = FastifyRequest<{ Params: { domain: string }; Querystring: { name?: unknown } }>
+
+// NIP-05 for the connected domains: only a verified domain resolves names.
 export function registerNip05Routes(app: FastifyInstance, repo: DomainRepository): void {
-  app.get('/.well-known/nostr.json', async (request: Nip05Request, reply) => {
-    reply.header('access-control-allow-origin', '*')
+  // A domain whose A record points here: the domain is the Host header.
+  app.get('/.well-known/nostr.json', (request: Nip05Request, reply) =>
+    answer(repo, normalizeHost(request.headers.host ?? ''), request, reply),
+  )
 
-    const { name } = request.query
-    if (typeof name !== 'string' || !name.trim()) return reply.code(400).send({ error: 'name_required' })
+  // A domain whose own website relays its nostr.json here, often with this server as the Host.
+  app.get('/nip05/:domain', (request: RelayedRequest, reply) => answer(repo, request.params.domain, request, reply))
+}
 
-    const domain = normalizeDomain(normalizeHost(request.headers.host ?? ''))
-    const localPart = normalizeLocalPart(name)
-    if (!domain || !localPart) return reply.send({ names: {} })
+async function answer(repo: DomainRepository, host: string, request: Nip05Request, reply: FastifyReply) {
+  reply.header('access-control-allow-origin', '*')
 
-    const pubkey = await resolve(repo, domain, localPart)
-    return reply.send({ names: pubkey ? { [localPart]: pubkey } : {} })
-  })
+  const { name } = request.query
+  if (typeof name !== 'string' || !name.trim()) return reply.code(400).send({ error: 'name_required' })
+
+  const domain = normalizeDomain(host)
+  const localPart = normalizeLocalPart(name)
+  if (!domain || !localPart) return reply.send({ names: {} })
+
+  const pubkey = await resolve(repo, domain, localPart)
+  return reply.send({ names: pubkey ? { [localPart]: pubkey } : {} })
 }
 
 async function resolve(repo: DomainRepository, domain: string, localPart: string): Promise<string | null> {

@@ -28,7 +28,7 @@ type Tab = 'domains' | 'access' | 'suspended' | 'abuse' | 'server' | 'settings'
 const RECORDS: [RecordId, string][] = [
   ['ownership', 'Ownership'],
   ['mx', 'MX'],
-  ['https', 'A'],
+  ['nip05', 'NIP-05'],
   ['spf', 'SPF'],
   ['dkim', 'DKIM'],
   ['dmarc', 'DMARC'],
@@ -423,7 +423,7 @@ function domainStatus(domain: AdminDomain): { tone: Tone; text: string } {
   const found = (id: RecordId) => domain.checks?.[id].status === 'ok'
   if (!domain.verifiedAt) return { tone: 'wait', text: domain.checkedAt ? 'Ownership not found' : 'Never checked' }
   if (!found('mx')) return { tone: 'wait', text: 'Verified, no MX record' }
-  if (!found('https') || !found('spf') || !found('dkim')) return { tone: 'wait', text: 'Receiving only' }
+  if (!found('nip05') || !found('spf') || !found('dkim')) return { tone: 'wait', text: 'Receiving only' }
   return { tone: 'ok', text: 'Sending and receiving' }
 }
 

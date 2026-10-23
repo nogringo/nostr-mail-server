@@ -12,7 +12,9 @@ import {
   FakeBunker,
   FakeDns,
   FakeRelayNetwork,
+  fakeNip05,
   MemoryDomainRepository,
+  type Nip05Answers,
   outboundWrap,
   privateKeyOf,
   request,
@@ -25,14 +27,22 @@ import {
 function setup(bunker = new FakeBunker()) {
   const repo = new MemoryDomainRepository()
   const dns = new FakeDns()
+  const nip05: Nip05Answers = {}
   const network = new FakeRelayNetwork()
   const signers = new DomainSigners({ open: bunker.open, timeoutMs: 50, connectTimeoutMs: 50 })
-  const app = buildApp(repo, apiConfig, dns, network, settingsStore(repo, { openRegistration: true }), { signers })
-  return { repo, dns, network, app }
+  const app = buildApp(repo, apiConfig, dns, network, settingsStore(repo, { openRegistration: true }), {
+    signers,
+    nip05Lookup: fakeNip05(nip05),
+  })
+  return { repo, dns, nip05, network, app }
 }
 
 function publishOwnership(dns: FakeDns, domain: string, value: string) {
   dns.txtRecords.set(`_nostr-mail.${domain}`, [...(dns.txtRecords.get(`_nostr-mail.${domain}`) ?? []), value])
+}
+
+function recordOf(body: { domain: { records: { id: string }[] } }, id: string) {
+  return body.domain.records.find((record) => record.id === id)
 }
 
 function ownershipValue(body: { domain: { records: { id: string; value: string }[] } }): string {
@@ -55,7 +65,7 @@ test('PUT claims a domain and returns the records to publish', async () => {
   expect(domain.records.map((record: { id: string }) => record.id)).toEqual([
     'ownership',
     'mx',
-    'https',
+    'nip05',
     'spf',
     'dkim',
     'dmarc',
@@ -339,6 +349,56 @@ test('check of an unknown claim returns 404', async () => {
   const response = await request(app, signer(), 'POST', '/domains/example.com/check')
 
   expect(response.statusCode).toBe(404)
+
+  await app.close()
+})
+
+test('the owner serves NIP-05 from their own website, then _smtp is checked instead of the A record', async () => {
+  const { repo, dns, nip05, app } = setup()
+  const alice = signer()
+  await request(app, alice, 'PUT', '/domains/example.com')
+  const bridgePubkey = (await repo.findDomain('example.com', alice.pubkey))?.bridgePubkey ?? ''
+  dns.addressRecords.set('example.com', [apiConfig.publicIpv4])
+  nip05['_smtp@example.com'] = { pubkey: bridgePubkey }
+
+  const owner = await request(app, alice, 'PUT', '/domains/example.com/nip05', { nip05: 'owner' })
+
+  expect(owner.statusCode).toBe(200)
+  expect(owner.json().domain.nip05).toBe('owner')
+  expect(recordOf(owner.json(), 'nip05')).toMatchObject({
+    type: 'NIP-05',
+    name: '_smtp@example.com',
+    value: bridgePubkey,
+    check: { status: 'ok', found: [bridgePubkey] },
+  })
+
+  const server = await request(app, alice, 'PUT', '/domains/example.com/nip05', { nip05: 'server' })
+
+  expect(server.json().domain.nip05).toBe('server')
+  expect(recordOf(server.json(), 'nip05')).toMatchObject({
+    type: 'A',
+    value: apiConfig.publicIpv4,
+    check: { status: 'ok', found: [apiConfig.publicIpv4] },
+  })
+
+  await app.close()
+})
+
+test('the NIP-05 host is server or owner, set by the key of an unsuspended claim', async () => {
+  const { repo, app } = setup()
+  const alice = signer()
+  await request(app, alice, 'PUT', '/domains/example.com')
+
+  const invalid = await request(app, alice, 'PUT', '/domains/example.com/nip05', { nip05: 'elsewhere' })
+  const other = await request(app, signer(), 'PUT', '/domains/example.com/nip05', { nip05: 'owner' })
+  await repo.suspendDomain('example.com')
+  const suspended = await request(app, alice, 'PUT', '/domains/example.com/nip05', { nip05: 'owner' })
+
+  expect(invalid.statusCode).toBe(400)
+  expect(invalid.json()).toEqual({ error: 'invalid_nip05' })
+  expect(other.statusCode).toBe(404)
+  expect(suspended.statusCode).toBe(403)
+  expect(await repo.findDomain('example.com', alice.pubkey)).toMatchObject({ nip05: 'server', checkedAt: null })
 
   await app.close()
 })

@@ -89,7 +89,7 @@ async function downloadFrom(server: string, sha256: string, maxBytes: number): P
   return null
 }
 
-async function readLimited(response: Response, maxBytes: number): Promise<Buffer | null> {
+export async function readLimited(response: Response, maxBytes: number): Promise<Buffer | null> {
   if (!response.body || Number(response.headers.get('content-length')) > maxBytes) return null
 
   const chunks: Uint8Array[] = []

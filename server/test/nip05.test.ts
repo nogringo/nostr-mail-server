@@ -120,6 +120,32 @@ test('a suspended domain resolves nothing', async () => {
   await app.close()
 })
 
+test('a domain relayed by its own website resolves on its path, whatever the Host', async () => {
+  const { repo, app, owner } = await setup()
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'shop',
+    pubkey: PUBKEY,
+    ownerPubkey: owner.pubkey,
+    private: true,
+  })
+  const relayed = (path: string) => app.inject({ method: 'GET', url: path, headers: { host: 'mail.example.org' } })
+
+  const alice = await relayed('/nip05/Example.com?name=alice')
+  const shop = await relayed('/nip05/example.com?name=shop')
+  const unknown = await relayed('/nip05/unknown.example?name=alice')
+  const unnamed = await relayed('/nip05/example.com')
+
+  expect(alice.statusCode).toBe(200)
+  expect(alice.headers['access-control-allow-origin']).toBe('*')
+  expect(alice.json()).toEqual({ names: { alice: PUBKEY } })
+  expect(shop.json()).toEqual({ names: {} })
+  expect(unknown.json()).toEqual({ names: {} })
+  expect(unnamed.statusCode).toBe(400)
+
+  await app.close()
+})
+
 test('the name is required', async () => {
   const { app } = await setup()
 

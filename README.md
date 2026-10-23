@@ -28,6 +28,8 @@ The project is built in small steps. What exists today:
 | Private addresses: they receive and send, but NIP-05 does not show their key | done |
 | Abuse reports: the admins and the domain owner each delete them for themselves | done |
 | Website: sign in with a signer app's QR code (Amber), an nsec or an ncryptsec | done |
+| NIP-05 served by the owner's own website instead, checked through `_smtp` | done |
+| NIP-05 relayed by the owner's website to this server, private addresses included | done |
 
 ## Layout
 
@@ -49,8 +51,11 @@ Each connected domain gets its own Nostr key, published as `_smtp@<domain>`.
   signed with the domain's DKIM key.
 
 Clients find both the addresses and the `_smtp` key through NIP-05 on the
-address domain, so a connected domain points its A record at this server,
-which serves its `/.well-known/nostr.json` over HTTPS.
+address domain. Either the domain points its A record at this server, which
+serves its `/.well-known/nostr.json` over HTTPS, or the owner's own website
+serves it and lists `_smtp` with the domain key, which the check then looks for.
+That website best relays the path to `/nip05/<domain>` on this server, which
+answers for every address and keeps the private ones hidden.
 
 ## License
 

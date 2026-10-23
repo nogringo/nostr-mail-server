@@ -16,6 +16,7 @@ import type {
   NewAddress,
   NewDomain,
   NewOutboundMessage,
+  Nip05Host,
   OutboundMessage,
   RecipientOutcome,
   RetiredRelays,
@@ -25,7 +26,7 @@ import type {
 
 const DOMAIN_COLUMNS = `
   domain, pubkey, verification_token, dkim_selector, dkim_public_key, dkim_private_key,
-  bridge_pubkey, bridge_private_key, bridge_bunker, blossom_servers, checks, checked_at, verified_at, created_at
+  bridge_pubkey, bridge_private_key, bridge_bunker, blossom_servers, nip05, checks, checked_at, verified_at, created_at
 `
 
 const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, private, created_at'
@@ -45,6 +46,7 @@ interface DomainRow {
   bridge_private_key: string | null
   bridge_bunker: BunkerKey | null
   blossom_servers: string[]
+  nip05: Nip05Host
   checks: DomainChecks | null
   checked_at: Date | null
   verified_at: Date | null
@@ -221,6 +223,14 @@ export class PgDomainRepository implements DomainRepository {
       }
       return result.rows[0] ? toDomain(result.rows[0]) : null
     })
+  }
+
+  async setNip05Host(domain: string, pubkey: string, nip05: Nip05Host): Promise<Domain | null> {
+    const result = await this.pool.query<DomainRow>(
+      `update domains set nip05 = $3 where domain = $1 and pubkey = $2 returning ${DOMAIN_COLUMNS}`,
+      [domain, pubkey, nip05],
+    )
+    return result.rows[0] ? toDomain(result.rows[0]) : null
   }
 
   async deleteDomain(domain: string, pubkey: string): Promise<boolean> {
@@ -567,6 +577,7 @@ function toDomain(row: DomainRow): Domain {
     bridgePrivateKey: row.bridge_private_key,
     bridgeBunker: row.bridge_bunker,
     blossomServers: row.blossom_servers,
+    nip05: row.nip05,
     checks: row.checks,
     checkedAt: row.checked_at?.toISOString() ?? null,
     verifiedAt: row.verified_at?.toISOString() ?? null,

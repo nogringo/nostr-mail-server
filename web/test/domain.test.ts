@@ -2,7 +2,7 @@ import { expect, test } from 'vitest'
 import type { Domain, RecordId } from '../src/lib/api'
 import { domainStatus } from '../src/lib/domain'
 
-const IDS: RecordId[] = ['ownership', 'mx', 'https', 'spf', 'dkim', 'dmarc']
+const IDS: RecordId[] = ['ownership', 'mx', 'nip05', 'spf', 'dkim', 'dmarc']
 
 function domainWith(found: RecordId[], fields: Partial<Domain> = {}): Domain {
   return {
@@ -13,6 +13,7 @@ function domainWith(found: RecordId[], fields: Partial<Domain> = {}): Domain {
     suspendedAt: null,
     checkedAt: '2026-10-20T10:00:00Z',
     blossomServers: [],
+    nip05: 'server',
     createdAt: '2026-10-20T09:00:00Z',
     records: IDS.map((id) => ({
       id,
@@ -33,10 +34,14 @@ test('names what a domain waits for next', () => {
   )
   expect(domainStatus(domainWith([], { verifiedAt: null })).text).toBe('Waiting for the ownership record')
   expect(domainStatus(domainWith(['ownership'])).text).toBe('Verified, waiting for the MX record')
-  expect(domainStatus(domainWith(['ownership', 'mx', 'https'])).text).toBe(
+  expect(domainStatus(domainWith(['ownership', 'mx'])).text).toBe('Receiving mail, waiting for the A record')
+  expect(domainStatus(domainWith(['ownership', 'mx'], { nip05: 'owner' })).text).toBe(
+    'Receiving mail, waiting for _smtp in your NIP-05',
+  )
+  expect(domainStatus(domainWith(['ownership', 'mx', 'nip05'])).text).toBe(
     'Receiving mail, waiting for SPF and DKIM to send',
   )
-  expect(domainStatus(domainWith(['ownership', 'mx', 'https', 'spf', 'dkim']))).toEqual({
+  expect(domainStatus(domainWith(['ownership', 'mx', 'nip05', 'spf', 'dkim']))).toEqual({
     tone: 'ok',
     text: 'Sending and receiving mail',
   })

@@ -1,7 +1,11 @@
 import { getToken } from 'nostr-tools/nip98'
 import type { Signer } from './signer'
 
-export type RecordId = 'ownership' | 'mx' | 'https' | 'spf' | 'dkim' | 'dmarc'
+export type RecordId = 'ownership' | 'mx' | 'nip05' | 'spf' | 'dkim' | 'dmarc'
+
+// Who serves https://<domain>/.well-known/nostr.json: this server, which the
+// domain's A record points to, or the owner's own website.
+export type Nip05Host = 'server' | 'owner'
 
 export type CheckStatus = 'ok' | 'missing' | 'mismatch' | 'error'
 
@@ -10,9 +14,10 @@ export interface RecordCheck {
   found: string[]
 }
 
+// A DNS record to publish, or the NIP-05 entry the owner's website lists.
 export interface DnsRecord {
   id: RecordId
-  type: 'MX' | 'TXT' | 'A'
+  type: 'MX' | 'TXT' | 'A' | 'NIP-05'
   name: string
   value: string
   priority?: number
@@ -39,6 +44,7 @@ export interface Domain {
   suspendedAt: string | null
   checkedAt: string | null
   blossomServers: string[]
+  nip05: Nip05Host
   createdAt: string
   records: DnsRecord[]
   // Sent to abuse@ since this key owns the domain.
@@ -171,6 +177,9 @@ export function createApi(
     getDomain: async (name: string): Promise<Domain> => (await call('GET', domainPath(name))).domain,
     connectDomain: async (name: string): Promise<Domain> => (await call('PUT', domainPath(name))).domain,
     checkDomain: async (name: string): Promise<Domain> => (await call('POST', `${domainPath(name)}/check`)).domain,
+    // Checks the domain again, since the NIP-05 check depends on who serves it.
+    setNip05Host: async (name: string, nip05: Nip05Host): Promise<Domain> =>
+      (await call('PUT', `${domainPath(name)}/nip05`, { nip05 })).domain,
     removeDomain: async (name: string): Promise<void> => {
       await call('DELETE', domainPath(name))
     },

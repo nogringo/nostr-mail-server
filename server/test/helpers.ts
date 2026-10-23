@@ -36,6 +36,8 @@ import type {
   NewAddress,
   NewDomain,
   NewOutboundMessage,
+  Nip05Host,
+  Nip05Lookup,
   OutboundMessage,
   RecipientOutcome,
   ServerSettings,
@@ -164,6 +166,7 @@ export class MemoryDomainRepository implements DomainRepository {
     const domain: Domain = {
       ...input,
       bridgeBunker: null,
+      nip05: 'server',
       checks: null,
       checkedAt: null,
       verifiedAt: null,
@@ -193,6 +196,16 @@ export class MemoryDomainRepository implements DomainRepository {
     }
     this.domains.set(key(domain, pubkey), next)
     if (verified) this.servedDomains.add(domain)
+    return next
+  }
+
+  async setNip05Host(domain: string, pubkey: string, nip05: Nip05Host): Promise<Domain | null> {
+    this.assertAvailable()
+    const current = this.domains.get(key(domain, pubkey))
+    if (!current) return null
+
+    const next = { ...current, nip05 }
+    this.domains.set(key(domain, pubkey), next)
     return next
   }
 
@@ -445,7 +458,7 @@ export class MemoryDomainRepository implements DomainRepository {
 const OWNERSHIP_ONLY: DomainChecks = {
   ownership: { status: 'ok', found: [] },
   mx: { status: 'missing', found: [] },
-  https: { status: 'missing', found: [] },
+  nip05: { status: 'missing', found: [] },
   spf: { status: 'missing', found: [] },
   dkim: { status: 'missing', found: [] },
   dmarc: { status: 'missing', found: [] },
@@ -555,6 +568,13 @@ export class FakeDns implements DnsLookup {
   private assertResolvable(name: string): void {
     if (this.failing.has(name)) throw Object.assign(new Error(`queryTxt ESERVFAIL ${name}`), { code: 'ESERVFAIL' })
   }
+}
+
+export type Nip05Answers = Record<string, Awaited<ReturnType<Nip05Lookup>>>
+
+// Answers the nostr.json of each domain, keyed by NIP-05 address: anything else lists nothing.
+export function fakeNip05(answers: Nip05Answers = {}): Nip05Lookup {
+  return async (domain, name) => answers[`${name}@${domain}`] ?? { pubkey: null }
 }
 
 // Answers the TXT lookups of mailauth like dns.promises.resolve, any other name does not exist.
