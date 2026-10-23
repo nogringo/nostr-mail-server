@@ -27,6 +27,7 @@ The project is built in small steps. What exists today:
 | Domain key held by the owner's bunker (NIP-46) instead of the server | done |
 | Private addresses: they receive and send, but NIP-05 does not show their key | done |
 | Abuse reports: the admins and the domain owner each delete them for themselves | done |
+| Website: sign in with a signer app's QR code (Amber), an nsec or an ncryptsec | done |
 
 ## Layout
 

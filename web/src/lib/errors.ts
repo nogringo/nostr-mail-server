@@ -26,8 +26,11 @@ const MESSAGES: Record<string, string> = {
   invalid_domain_relays: 'Enter at least one wss:// URL of a public relay, one per line.',
   invalid_indexer_relays: 'Enter at least one wss:// URL of a public relay, one per line.',
   no_extension: 'No Nostr extension found in this browser.',
-  invalid_bunker: 'Enter a bunker:// link or the name@domain of your bunker.',
+  invalid_bunker: 'Enter a bunker:// link, the name@domain of your bunker, an nsec or an ncryptsec.',
   bunker_timeout: 'Your bunker did not answer in time.',
+  nostr_connect_closed: 'The relays closed the connection. Show the QR code again.',
+  invalid_secret_key: 'Enter a secret key starting with nsec1 or ncryptsec1.',
+  wrong_password: 'This password does not open this ncryptsec.',
 }
 
 export function describeError(error: unknown): string {

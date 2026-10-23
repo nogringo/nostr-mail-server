@@ -46,8 +46,10 @@ Signed in, the header of every page links to the key's domains. It links to
 `/admin` too once the key has opened it in this browser: the site remembers
 these keys in `localStorage` rather than asking the server on every page.
 
-Sign-in uses a NIP-07 extension or a NIP-46 bunker (`bunker://` link or
-`name@domain`). Every API call is signed with
+Sign-in uses a NIP-07 extension, a NIP-46 signer app that scans a
+`nostrconnect://` QR code (Amber), a NIP-46 bunker (`bunker://` link or
+`name@domain`), or a secret key (`nsec` or NIP-49 `ncryptsec`). A secret key
+stays in `sessionStorage`: closing the tab signs out. Every API call is signed with
 [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) for the
 page's own origin, so the site and the API must be served on the same origin.
 
