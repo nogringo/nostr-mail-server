@@ -85,6 +85,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '017_add_shared_domains.sql',
       '018_add_catch_all.sql',
       '019_add_address_enabled.sql',
+      '020_add_quotas.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -288,6 +289,49 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect(await repo.listAllowedKeys()).toEqual([])
   })
 
+  test('gives a key quotas of its own, replaces them and takes them back', async () => {
+    const set = await repo.putKeyQuotas(CAROL, { addresses: 5, recipientsPerDay: null })
+    expect(set).toEqual({
+      pubkey: CAROL,
+      quotas: { addresses: 5, recipientsPerDay: null },
+      updatedAt: expect.any(String),
+    })
+    expect(await repo.findKeyQuotas(CAROL)).toEqual(set)
+
+    const replaced = await repo.putKeyQuotas(CAROL, { pendingDomains: 2 })
+    expect(replaced.quotas).toEqual({ pendingDomains: 2 })
+    expect(await repo.listKeyQuotas()).toEqual([replaced])
+
+    expect(await repo.deleteKeyQuotas(CAROL)).toBe(true)
+    expect(await repo.deleteKeyQuotas(CAROL)).toBe(false)
+    expect(await repo.findKeyQuotas(CAROL)).toBeNull()
+  })
+
+  test('counts the addresses a key created, on any domain', async () => {
+    await repo.putAddress({ domain: 'example.com', localPart: 'counted', pubkey: CAROL, ownerPubkey: BOB })
+
+    expect(await repo.countCreatedAddresses(BOB)).toBe(1)
+    expect(await repo.countCreatedAddresses(CAROL)).toBe(0)
+    await repo.deleteAddress('example.com', 'counted')
+    expect(await repo.countCreatedAddresses(BOB)).toBe(0)
+  })
+
+  test('sums the usage of a quota since a date, and prunes the old one', async () => {
+    const hourAgo = new Date(Date.now() - 3600_000)
+    await repo.addQuotaUsage('recipientsPerDay', 'example.com', 3)
+    await repo.addQuotaUsage('recipientsPerDay', 'example.com', 4)
+    await repo.addQuotaUsage('recipientsPerDay', 'other.example', 50)
+    await repo.addQuotaUsage('addressesPerHour', 'example.com', 1)
+
+    expect(await repo.countQuotaUsage('recipientsPerDay', 'example.com', hourAgo)).toBe(7)
+    expect(await repo.countQuotaUsage('addressesPerHour', ALICE, hourAgo)).toBe(0)
+    expect(await repo.countQuotaUsage('recipientsPerDay', 'example.com', new Date(Date.now() + 60_000))).toBe(0)
+
+    expect(await repo.pruneQuotaUsage(hourAgo)).toBe(0)
+    expect(await repo.pruneQuotaUsage(new Date(Date.now() + 60_000))).toBe(4)
+    expect(await repo.countQuotaUsage('recipientsPerDay', 'example.com', hourAgo)).toBe(0)
+  })
+
   test('starts with the defaults the environment variables had, then stores what an admin sets', async () => {
     const defaults = await repo.findSettings()
     expect(defaults).toEqual({
@@ -296,6 +340,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       blossomServers: ['https://blossom.nmail.li', 'https://blossom.yakihonne.com', 'https://blossom.ditto.pub'],
       domainRelays: ['wss://relay.nmail.li/', 'wss://relay.ditto.pub/', 'wss://nos.lol/', 'wss://relay.primal.net/'],
       indexerRelays: ['wss://purplepag.es/', 'wss://user.kindpag.es/', 'wss://indexer.coracle.social/'],
+      quotas: { addresses: null, addressesPerHour: null, pendingDomains: null, recipientsPerDay: null },
       retiredDomainRelays: {},
     })
 
@@ -305,6 +350,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       blossomServers: ['https://cdn.example.com/blossom'],
       domainRelays: ['wss://relay.example.com/'],
       indexerRelays: ['wss://indexer.example.com/'],
+      quotas: { addresses: 10, addressesPerHour: 5, pendingDomains: 0, recipientsPerDay: null },
       retiredDomainRelays: { 'wss://relay.nmail.li/': '2026-10-28T12:00:00.000Z' },
     }
     await repo.updateSettings(changed)

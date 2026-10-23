@@ -5,15 +5,18 @@ import { describeError } from '../lib/errors'
 import { AddressForm, AddressRow, type NewAddress } from './Addresses'
 import { ErrorText } from './ui'
 
-// The addresses this key creates for itself on the domains other keys share.
+// The addresses this key creates for itself on the domains other keys share. Each one it adds or removes
+// changes the count of its addresses.
 export default function SharedAddresses({
   api,
   domains,
   initial,
+  onCountChange,
 }: {
   api: Api
   domains: string[]
   initial: Address[]
+  onCountChange: (change: number) => void
 }) {
   const t = useMessages()
   const [addresses, setAddresses] = useState(initial)
@@ -28,7 +31,9 @@ export default function SharedAddresses({
   }
 
   async function add({ domain, localPart, isPrivate }: NewAddress) {
-    keep(await api.putCreatedAddress(domain, localPart, { private: isPrivate }))
+    const address = await api.putCreatedAddress(domain, localPart, { private: isPrivate })
+    if (!addresses.some((other) => other.address === address.address)) onCountChange(1)
+    keep(address)
   }
 
   async function change(address: Address, settings: AddressSettings) {
@@ -51,6 +56,7 @@ export default function SharedAddresses({
     try {
       await api.removeCreatedAddress(address.domain, address.localPart)
       setAddresses((list) => list.filter((other) => other.address !== address.address))
+      onCountChange(-1)
     } catch (failure) {
       setError(describeError(failure, t.errors))
     }

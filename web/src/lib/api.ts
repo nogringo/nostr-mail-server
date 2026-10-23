@@ -74,6 +74,27 @@ export interface DomainList {
   // The domains of other keys where this one creates addresses for itself, and those it created.
   sharedDomains: string[]
   addresses: Address[]
+  quotas: Quotas
+  usage: QuotaUsage
+}
+
+export type QuotaName = 'addresses' | 'addressesPerHour' | 'pendingDomains' | 'recipientsPerDay'
+
+export const QUOTA_NAMES: QuotaName[] = ['addresses', 'addressesPerHour', 'pendingDomains', 'recipientsPerDay']
+
+// What a key may do, null for no limit. The admins have none.
+export type Quotas = Record<QuotaName, number | null>
+
+// What a key uses of its quotas: the addresses it holds, on every domain.
+export interface QuotaUsage {
+  addresses: number
+}
+
+// The quotas an admin gave one key instead of the server's. A quota left out is the server's.
+export interface KeyQuotas {
+  pubkey: string
+  quotas: Partial<Quotas>
+  updatedAt: string
 }
 
 export interface Address {
@@ -139,12 +160,17 @@ export interface ServerSettings {
   domainRelays: string[]
   // Where the lists of other keys are looked up.
   indexerRelays: string[]
+  quotas: Quotas
 }
+
+// The quotas left out keep their value too.
+export type SettingsChanges = Partial<Omit<ServerSettings, 'quotas'>> & { quotas?: Partial<Quotas> }
 
 export interface AdminOverview {
   domains: AdminDomain[]
   suspensions: Suspension[]
   allowedKeys: AllowedKey[]
+  keyQuotas: KeyQuotas[]
   settings: ServerSettings
   abuseReports: AbuseReport[]
   serverRecords: ServerRecord[]
@@ -260,7 +286,13 @@ export function createApi(
       await call('DELETE', `/admin/allowed-keys/${pubkey}`)
     },
     // The settings left out keep their value.
-    updateSettings: async (changes: Partial<ServerSettings>): Promise<ServerSettings> =>
+    updateSettings: async (changes: SettingsChanges): Promise<ServerSettings> =>
       (await call('PATCH', '/admin/settings', changes)).settings,
+    // Replaces the quotas the key had of its own.
+    putKeyQuotas: async (key: string, quotas: Partial<Quotas>): Promise<KeyQuotas> =>
+      (await call('PUT', `/admin/key-quotas/${encodeURIComponent(key)}`, { quotas })).keyQuotas,
+    removeKeyQuotas: async (pubkey: string): Promise<void> => {
+      await call('DELETE', `/admin/key-quotas/${pubkey}`)
+    },
   }
 }

@@ -9,10 +9,11 @@ import {
   ApiError,
   type CheckStatus,
   createApi,
+  type Quotas,
   type RecordCheck,
   type RecordId,
   type ServerRecord,
-  type ServerSettings,
+  type SettingsChanges,
   type Suspension,
 } from '../lib/api'
 import { describeError } from '../lib/errors'
@@ -20,12 +21,13 @@ import { npubOf, shortNpub, timeAgo } from '../lib/format'
 import type { Signer } from '../lib/signer'
 import AbuseReportRow from './AbuseReportRow'
 import AllowedKeys from './AllowedKeys'
+import QuotaSettings from './QuotaSettings'
 import RecordRow from './RecordRow'
 import ServiceSettings from './ServiceSettings'
 import { type TabLink, Tabs, useHash } from './Tabs'
 import { Button, CopyButton, ErrorText, TONES, type Tone } from './ui'
 
-type Tab = 'domains' | 'access' | 'suspended' | 'abuse' | 'server' | 'settings'
+type Tab = 'domains' | 'access' | 'quotas' | 'suspended' | 'abuse' | 'server' | 'settings'
 
 const RECORDS: RecordId[] = ['ownership', 'mx', 'nip05', 'spf', 'dkim', 'dmarc']
 
@@ -107,12 +109,28 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
     }))
   }
 
-  async function changeSettings(changes: Partial<ServerSettings>) {
+  async function changeSettings(changes: SettingsChanges) {
     const saved = await api.updateSettings(changes)
     setOverview((current) => ({ ...current, settings: saved }))
   }
 
-  const { domains, suspensions, allowedKeys, settings, abuseReports, serverRecords } = overview
+  async function setKeyQuotas(key: string, quotas: Partial<Quotas>) {
+    const saved = await api.putKeyQuotas(key, quotas)
+    setOverview((current) => ({
+      ...current,
+      keyQuotas: [...current.keyQuotas.filter((other) => other.pubkey !== saved.pubkey), saved],
+    }))
+  }
+
+  async function removeKeyQuotas(pubkey: string) {
+    await api.removeKeyQuotas(pubkey)
+    setOverview((current) => ({
+      ...current,
+      keyQuotas: current.keyQuotas.filter((other) => other.pubkey !== pubkey),
+    }))
+  }
+
+  const { domains, suspensions, allowedKeys, keyQuotas, settings, abuseReports, serverRecords } = overview
   const suspended = new Set(suspensions.map((suspension) => suspension.domain))
   const served = domains.filter((domain) => !suspended.has(domain.domain))
   const verified = served.filter((domain) => domain.verifiedAt)
@@ -123,6 +141,7 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
   const tabs: TabLink<Tab>[] = [
     { id: 'domains', label: t.admin.tabs.domains },
     { id: 'access', label: t.admin.tabs.access, count: settings.openRegistration ? 0 : allowedKeys.length },
+    { id: 'quotas', label: t.admin.tabs.quotas, count: keyQuotas.length },
     { id: 'suspended', label: t.admin.tabs.suspended, count: suspensions.length },
     { id: 'abuse', label: t.admin.tabs.abuse, count: abuseReports.length },
     { id: 'server', label: t.admin.tabs.server, count: problemsIn(serverRecords), tone: 'bad' },
@@ -160,6 +179,15 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
         onAllow={allow}
         onDisallow={disallow}
         onOpenRegistration={(open) => changeSettings({ openRegistration: open })}
+      />
+    ),
+    quotas: (
+      <QuotaSettings
+        quotas={settings.quotas}
+        keyQuotas={keyQuotas}
+        onSave={(quotas) => changeSettings({ quotas })}
+        onSetKey={setKeyQuotas}
+        onRemoveKey={removeKeyQuotas}
       />
     ),
     suspended: (

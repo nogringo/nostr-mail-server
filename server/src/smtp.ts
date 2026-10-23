@@ -18,6 +18,7 @@ import {
   wrapInboundEmail,
 } from './inbound.js'
 import { decodedField } from './mime.js'
+import { QuotaKeeper } from './quotas.js'
 import type { Inbox, RelayNetwork } from './relays.js'
 import type { SettingsStore } from './settings.js'
 import { type KeySigner, localSigner, SignerRefusal, SignerUnavailable } from './signer.js'
@@ -72,7 +73,8 @@ export function createSmtpServer(
     logger = silent,
     tls,
     signers = new DomainSigners(),
-  }: { logger?: SmtpLogger; tls?: TlsCredentials; signers?: DomainSigners } = {},
+    quotas = new QuotaKeeper(repo, settings, adminPubkeys),
+  }: { logger?: SmtpLogger; tls?: TlsCredentials; signers?: DomainSigners; quotas?: QuotaKeeper } = {},
 ): SMTPServer {
   // Keyed by envelope, which the server replaces for every transaction.
   const recipients = new WeakMap<SMTPServerEnvelope, Recipient[]>()
@@ -129,7 +131,7 @@ export function createSmtpServer(
     const domain = await repo.findVerifiedDomain(name)
     if (!domain) return null
 
-    const mailbox = (await findMailbox(repo, name, localPart)) ?? (await catchAddress(repo, domain, localPart))
+    const mailbox = (await findMailbox(repo, name, localPart)) ?? (await catchAddress(repo, quotas, domain, localPart))
     if (!mailbox) return null
     // Accepted like the others, so the sender cannot tell the address is disabled.
     return mailbox.enabled ? [{ writer: domainWriter(domain), pubkey: mailbox.pubkey }] : []

@@ -4,6 +4,7 @@ import { DomainSigners } from './bunker.js'
 import type { DeliveryResult, MailTransport } from './delivery.js'
 import { signMessage } from './dkim.js'
 import { checkAuthor, checkSender, type OutboundEmail, openOutboundWrap, Refusal } from './outbound.js'
+import { QuotaKeeper } from './quotas.js'
 import type { RelayNetwork, Subscription } from './relays.js'
 import type { SettingsStore } from './settings.js'
 import type { KeySigner } from './signer.js'
@@ -54,6 +55,7 @@ export class Outbox {
     private readonly settings: SettingsStore,
     private readonly logger: OutboxLogger,
     private readonly signers = new DomainSigners(),
+    private readonly quotas = new QuotaKeeper(repo, settings, []),
   ) {}
 
   start(): void {
@@ -169,6 +171,8 @@ export class Outbox {
     try {
       email = await openOutboundWrap(wrap, this.signers.forDomain(domain))
       await checkSender(this.repo, domain, email)
+      const quota = await this.quotas.exceededRecipients(domain, email.recipients.length)
+      if (quota !== null) throw new Refusal(`${domain.domain} sends mail to ${quota} recipients a day at most`)
     } catch (error) {
       if (!(error instanceof Refusal)) throw error
 
@@ -178,6 +182,7 @@ export class Outbox {
     }
 
     await this.repo.addOutboundMessage({ wrapId: wrap.id, bridgePubkey, wrap, recipients: email.recipients })
+    await this.quotas.recordRecipients(domain, email.recipients.length)
     this.logger.info({ wrapId: wrap.id, domain: domain.domain, recipients: email.recipients.length }, 'Queued an email')
     void this.deliverDue().catch((error) => this.logger.error({ error }, 'The outbox could not deliver'))
   }

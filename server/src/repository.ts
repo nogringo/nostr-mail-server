@@ -13,12 +13,15 @@ import type {
   DomainRepository,
   DomainSummary,
   KeyPair,
+  KeyQuotas,
   NewAbuseReport,
   NewAddress,
   NewDomain,
   NewOutboundMessage,
   Nip05Host,
   OutboundMessage,
+  PeriodQuota,
+  Quotas,
   RecipientOutcome,
   RetiredRelays,
   StoredSettings,
@@ -84,12 +87,19 @@ interface AllowedKeyRow {
   allowed_at: Date
 }
 
+interface KeyQuotasRow {
+  pubkey: string
+  quotas: Partial<Quotas>
+  updated_at: Date
+}
+
 interface SettingsRow {
   open_registration: boolean
   max_message_bytes: number
   blossom_servers: string[]
   domain_relays: string[]
   indexer_relays: string[]
+  quotas: Quotas
   retired_domain_relays: RetiredRelays
 }
 
@@ -365,9 +375,65 @@ export class PgDomainRepository implements DomainRepository {
     return (result.rowCount ?? 0) > 0
   }
 
+  async listKeyQuotas(): Promise<KeyQuotas[]> {
+    const result = await this.pool.query<KeyQuotasRow>(
+      'select pubkey, quotas, updated_at from key_quotas order by updated_at asc, pubkey asc',
+    )
+    return result.rows.map(toKeyQuotas)
+  }
+
+  async findKeyQuotas(pubkey: string): Promise<KeyQuotas | null> {
+    const result = await this.pool.query<KeyQuotasRow>(
+      'select pubkey, quotas, updated_at from key_quotas where pubkey = $1',
+      [pubkey],
+    )
+    return result.rows[0] ? toKeyQuotas(result.rows[0]) : null
+  }
+
+  async putKeyQuotas(pubkey: string, quotas: Partial<Quotas>): Promise<KeyQuotas> {
+    const result = await this.pool.query<KeyQuotasRow>(
+      `
+        insert into key_quotas (pubkey, quotas) values ($1, $2)
+        on conflict (pubkey) do update set quotas = excluded.quotas, updated_at = now()
+        returning pubkey, quotas, updated_at
+      `,
+      [pubkey, JSON.stringify(quotas)],
+    )
+    return toKeyQuotas(result.rows[0])
+  }
+
+  async deleteKeyQuotas(pubkey: string): Promise<boolean> {
+    const result = await this.pool.query('delete from key_quotas where pubkey = $1', [pubkey])
+    return (result.rowCount ?? 0) > 0
+  }
+
+  async addQuotaUsage(quota: PeriodQuota, subject: string, amount: number): Promise<void> {
+    await this.pool.query('insert into quota_usage (quota, subject, amount) values ($1, $2, $3)', [
+      quota,
+      subject,
+      amount,
+    ])
+  }
+
+  async countQuotaUsage(quota: PeriodQuota, subject: string, since: Date): Promise<number> {
+    const result = await this.pool.query<{ used: number }>(
+      `
+        select coalesce(sum(amount), 0)::int as used from quota_usage
+        where quota = $1 and subject = $2 and used_at >= $3
+      `,
+      [quota, subject, since],
+    )
+    return result.rows[0].used
+  }
+
+  async pruneQuotaUsage(before: Date): Promise<number> {
+    const result = await this.pool.query('delete from quota_usage where used_at < $1', [before])
+    return result.rowCount ?? 0
+  }
+
   async findSettings(): Promise<StoredSettings> {
     const result = await this.pool.query<SettingsRow>(
-      `select open_registration, max_message_bytes, blossom_servers, domain_relays, indexer_relays,
+      `select open_registration, max_message_bytes, blossom_servers, domain_relays, indexer_relays, quotas,
         retired_domain_relays from server_settings`,
     )
     const row = result.rows[0]
@@ -377,6 +443,7 @@ export class PgDomainRepository implements DomainRepository {
       blossomServers: row.blossom_servers,
       domainRelays: row.domain_relays,
       indexerRelays: row.indexer_relays,
+      quotas: row.quotas,
       retiredDomainRelays: row.retired_domain_relays,
     }
   }
@@ -384,13 +451,14 @@ export class PgDomainRepository implements DomainRepository {
   async updateSettings(settings: StoredSettings): Promise<void> {
     await this.pool.query(
       `update server_settings set open_registration = $1, max_message_bytes = $2, blossom_servers = $3,
-        domain_relays = $4, indexer_relays = $5, retired_domain_relays = $6`,
+        domain_relays = $4, indexer_relays = $5, quotas = $6, retired_domain_relays = $7`,
       [
         settings.openRegistration,
         settings.maxMessageBytes,
         settings.blossomServers,
         settings.domainRelays,
         settings.indexerRelays,
+        JSON.stringify(settings.quotas),
         settings.retiredDomainRelays,
       ],
     )
@@ -422,6 +490,14 @@ export class PgDomainRepository implements DomainRepository {
       [createdBy],
     )
     return result.rows.map(toAddress)
+  }
+
+  async countCreatedAddresses(createdBy: string): Promise<number> {
+    const result = await this.pool.query<{ count: number }>(
+      'select count(*)::int as count from addresses where created_by = $1',
+      [createdBy],
+    )
+    return result.rows[0].count
   }
 
   async putAddress(input: NewAddress): Promise<Address> {
@@ -725,6 +801,10 @@ function toSuspension(row: SuspensionRow): Suspension {
 
 function toAllowedKey(row: AllowedKeyRow): AllowedKey {
   return { pubkey: row.pubkey, allowedAt: row.allowed_at.toISOString() }
+}
+
+function toKeyQuotas(row: KeyQuotasRow): KeyQuotas {
+  return { pubkey: row.pubkey, quotas: row.quotas, updatedAt: row.updated_at.toISOString() }
 }
 
 function toAbuseReport(row: AbuseReportRow): AbuseReport {

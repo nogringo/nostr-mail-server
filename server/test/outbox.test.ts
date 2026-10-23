@@ -218,6 +218,23 @@ test('a wrap from an address of the sender goes out DKIM signed, one transaction
   ])
 })
 
+test('a domain sends to its daily quota of recipients, and refuses the mail that would go over', async () => {
+  const { repo, transport, alice, domain, receive, settings } = await setup()
+  await settings.update({ quotas: { recipientsPerDay: 3 } })
+
+  await receive(outboundWrap(alice, domain.bridgePubkey, { rcptTo: ['a@remote.example', 'b@remote.example'] }))
+  const over = outboundWrap(alice, domain.bridgePubkey, { rcptTo: ['c@remote.example', 'd@remote.example'] })
+  await receive(over)
+  await receive(outboundWrap(alice, domain.bridgePubkey, { rcptTo: ['c@remote.example'] }))
+
+  expect(transport.sent.flatMap((sent) => sent.recipients)).toEqual([
+    'a@remote.example',
+    'b@remote.example',
+    'c@remote.example',
+  ])
+  expect(repo.outbound.get(over.id)?.refusal).toBe('example.com sends mail to 3 recipients a day at most')
+})
+
 test('a named address declared for the sender can send', async () => {
   const { repo, transport, alice, domain, receive } = await setup()
   await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: alice.pubkey, ownerPubkey: domain.pubkey })

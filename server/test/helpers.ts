@@ -13,6 +13,7 @@ import type { BunkerConnection, OpenBunker } from '../src/bunker.js'
 import { generateDkimKeyPair } from '../src/dkim.js'
 import { NIP98_KIND } from '../src/nip98.js'
 import { generateKeyPair } from '../src/nostr.js'
+import { NO_QUOTAS } from '../src/quotas.js'
 import type { Inbox, RelayNetwork, Subscription } from '../src/relays.js'
 import { SettingsStore } from '../src/settings.js'
 import { type KeySigner, localSigner } from '../src/signer.js'
@@ -32,6 +33,7 @@ import type {
   DomainRepository,
   DomainSummary,
   KeyPair,
+  KeyQuotas,
   MxRecord,
   NewAbuseReport,
   NewAddress,
@@ -40,6 +42,8 @@ import type {
   Nip05Host,
   Nip05Lookup,
   OutboundMessage,
+  PeriodQuota,
+  Quotas,
   RecipientOutcome,
   ServerSettings,
   StoredSettings,
@@ -64,6 +68,7 @@ export const testSettings: ServerSettings = {
   blossomServers: ['https://blossom.example.org'],
   domainRelays: ['wss://relay.example.org/'],
   indexerRelays: ['wss://indexer.example.org/'],
+  quotas: NO_QUOTAS,
 }
 
 // The settings of the repository, with these changes stored first.
@@ -103,6 +108,8 @@ export class MemoryDomainRepository implements DomainRepository {
   readonly outbound = new Map<string, StoredOutboundMessage>()
   readonly suspensions = new Map<string, Suspension>()
   readonly allowedKeys = new Map<string, AllowedKey>()
+  readonly keyQuotas = new Map<string, KeyQuotas>()
+  quotaUsage: { quota: PeriodQuota; subject: string; amount: number; usedAt: Date }[] = []
   storedSettings: StoredSettings = { ...testSettings, retiredDomainRelays: {} }
   readonly servedDomains = new Set<string>()
   serverKey: KeyPair | null = null
@@ -310,6 +317,48 @@ export class MemoryDomainRepository implements DomainRepository {
     return this.allowedKeys.delete(pubkey)
   }
 
+  async listKeyQuotas(): Promise<KeyQuotas[]> {
+    this.assertAvailable()
+    return [...this.keyQuotas.values()]
+  }
+
+  async findKeyQuotas(pubkey: string): Promise<KeyQuotas | null> {
+    this.assertAvailable()
+    return this.keyQuotas.get(pubkey) ?? null
+  }
+
+  async putKeyQuotas(pubkey: string, quotas: Partial<Quotas>): Promise<KeyQuotas> {
+    this.assertAvailable()
+    const keyQuotas = { pubkey, quotas, updatedAt: new Date().toISOString() }
+    this.keyQuotas.set(pubkey, keyQuotas)
+    return keyQuotas
+  }
+
+  async deleteKeyQuotas(pubkey: string): Promise<boolean> {
+    this.assertAvailable()
+    return this.keyQuotas.delete(pubkey)
+  }
+
+  async addQuotaUsage(quota: PeriodQuota, subject: string, amount: number): Promise<void> {
+    this.assertAvailable()
+    this.quotaUsage.push({ quota, subject, amount, usedAt: new Date() })
+  }
+
+  async countQuotaUsage(quota: PeriodQuota, subject: string, since: Date): Promise<number> {
+    this.assertAvailable()
+    return this.quotaUsage
+      .filter((usage) => usage.quota === quota && usage.subject === subject && usage.usedAt >= since)
+      .reduce((total, usage) => total + usage.amount, 0)
+  }
+
+  async pruneQuotaUsage(before: Date): Promise<number> {
+    this.assertAvailable()
+    const kept = this.quotaUsage.filter((usage) => usage.usedAt >= before)
+    const pruned = this.quotaUsage.length - kept.length
+    this.quotaUsage = kept
+    return pruned
+  }
+
   async findSettings(): Promise<StoredSettings> {
     this.assertAvailable()
     return this.storedSettings
@@ -337,6 +386,11 @@ export class MemoryDomainRepository implements DomainRepository {
     return [...this.addresses.values()]
       .filter((address) => address.createdBy === createdBy && address.ownerPubkey !== createdBy)
       .sort((left, right) => left.domain.localeCompare(right.domain) || left.localPart.localeCompare(right.localPart))
+  }
+
+  async countCreatedAddresses(createdBy: string): Promise<number> {
+    this.assertAvailable()
+    return [...this.addresses.values()].filter((address) => address.createdBy === createdBy).length
   }
 
   async putAddress(input: NewAddress): Promise<Address> {

@@ -1,5 +1,6 @@
 import { normalizeDomain } from './domain.js'
 import { decodeNpub } from './nostr.js'
+import type { QuotaKeeper } from './quotas.js'
 import type { Address, Domain, DomainRepository } from './types.js'
 
 // NIP-05 names allow a-z0-9-_. and an unquoted email local part is
@@ -77,10 +78,20 @@ export async function findMailbox(repo: DomainRepository, domain: string, localP
 }
 
 // A catch-all domain creates the addresses it does not know for its owner, private, except the deleted
-// ones. A shared domain catches nothing: its names are left for the keys that create them.
-export async function catchAddress(repo: DomainRepository, domain: Domain, localPart: string): Promise<Mailbox | null> {
+// ones and those past the quotas of the owner. A shared domain catches nothing: its names are left for the
+// keys that create them.
+export async function catchAddress(
+  repo: DomainRepository,
+  quotas: QuotaKeeper,
+  domain: Domain,
+  localPart: string,
+): Promise<Mailbox | null> {
   if (!domain.catchAll || domain.shared || isReservedLocalPart(localPart)) return null
-  return await repo.createCatchAllAddress(domain, localPart)
+  if (await quotas.refuseAddress(domain.pubkey)) return null
+
+  const address = await repo.createCatchAllAddress(domain, localPart)
+  if (address) await quotas.recordAddress(domain.pubkey)
+  return address
 }
 
 // A sender writes from the addresses of the domain that resolve to its key, private and disabled ones included.

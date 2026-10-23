@@ -7,6 +7,7 @@ import { generateDkimKeyPair } from '../dkim.js'
 import { normalizeDomain } from '../domain.js'
 import { publishDomainLists } from '../lists.js'
 import { generateKeyPair, parseNsec } from '../nostr.js'
+import type { QuotaKeeper } from '../quotas.js'
 import { checkRecords, expectedRecords } from '../records.js'
 import type { RelayNetwork } from '../relays.js'
 import type { SettingsStore } from '../settings.js'
@@ -51,6 +52,7 @@ export function registerDomainRoutes(
     relays,
     signers,
     settings,
+    quotas,
   }: {
     config: ApiConfig
     dns: DnsLookup
@@ -58,6 +60,7 @@ export function registerDomainRoutes(
     relays: RelayNetwork
     signers: DomainSigners
     settings: SettingsStore
+    quotas: QuotaKeeper
   },
 ): void {
   const publishLists = (domain: Domain) =>
@@ -80,12 +83,14 @@ export function registerDomainRoutes(
     const pubkey = authenticate(request, reply)
     if (pubkey === null) return reply
 
-    const [domains, suspensions, allowed, addresses, shared] = await Promise.all([
+    const [domains, suspensions, allowed, addresses, shared, limits, usage] = await Promise.all([
       repo.listDomains(pubkey),
       repo.listSuspensions(),
       canClaim(pubkey),
       repo.listCreatedAddresses(pubkey),
       repo.listSharedDomains(),
+      quotas.of(pubkey),
+      quotas.usage(pubkey),
     ])
     const suspended = new Map(suspensions.map((suspension) => [suspension.domain, suspension]))
     const owned = new Set(domains.filter((domain) => domain.verifiedAt).map((domain) => domain.domain))
@@ -99,6 +104,8 @@ export function registerDomainRoutes(
       // Where this key creates addresses for itself, and those it created.
       sharedDomains: shared.filter((name) => !owned.has(name)),
       addresses: addresses.map(presentAddress),
+      quotas: limits,
+      usage,
     })
   })
 
@@ -116,6 +123,7 @@ export function registerDomainRoutes(
     }
     if (!(await canClaim(pubkey))) return reply.code(403).send({ error: 'not_allowed' })
     if (suspension) return reply.code(403).send({ error: 'domain_suspended' })
+    if (await quotas.refusesPendingDomain(pubkey)) return reply.code(403).send({ error: 'pending_domain_quota' })
 
     const dkim = await generateDkimKeyPair()
     const bridge = generateKeyPair()

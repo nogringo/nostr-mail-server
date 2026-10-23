@@ -125,6 +125,14 @@ const en = {
     connect: 'Connect a domain',
     empty: 'No domain yet. Connect one you own to receive its mail in Nostr Mail.',
     abuseReports: (n: number) => count(n, 'abuse report'),
+    quotas: {
+      title: 'Your quotas on this server',
+      addresses: (used: number, limit: number) => `${used} of ${count(limit, 'address', 'addresses')}, on every domain`,
+      addressesPerHour: (limit: number) => `${count(limit, 'new address', 'new addresses')} an hour`,
+      pendingDomains: (limit: number) => `${count(limit, 'domain')} waiting for verification at a time`,
+      recipientsPerDay: (limit: number) => `${count(limit, 'recipient')} a day for each of your domains`,
+      more: 'Ask the admin of this server if you need more.',
+    },
   },
 
   privateServer: {
@@ -297,6 +305,7 @@ const en = {
     tabs: {
       domains: 'Domains',
       access: 'Access',
+      quotas: 'Quotas',
       suspended: 'Suspended',
       abuse: 'Abuse',
       server: 'Server',
@@ -361,6 +370,38 @@ const en = {
     submit: 'Allow key',
   },
 
+  quotas: {
+    names: {
+      addresses: 'Addresses per key',
+      addressesPerHour: 'Addresses created per hour',
+      pendingDomains: 'Domains waiting for verification',
+      recipientsPerDay: 'Recipients per domain per day',
+    },
+    notes: {
+      addresses:
+        'Every address a key holds: on its own domains, those their catch-all created included, and on shared domains. Once a key reaches it, the catch-all of its domains creates no address and their mail is refused.',
+      addressesPerHour: 'Over the last hour, deleted addresses included.',
+      pendingDomains:
+        'Domains a key connected whose ownership record is not found yet. Each one costs the server a DKIM key.',
+      recipientsPerDay: 'Over the last 24 hours, whoever sends from the domain. A mail that would go over is not sent.',
+    },
+    serverTitle: 'Quotas of the server',
+    serverNote: 'Every key gets them, except the admins, who have none. An empty field is no limit.',
+    noLimit: 'No limit',
+    unlimited: 'no limit',
+    keysTitle: 'Keys with quotas of their own',
+    keysNote: "They get these quotas instead of the server's, and the server's for the others.",
+    keysEmpty: 'No key has quotas of its own.',
+    giveKey: 'Give a key quotas of its own',
+    key: 'Key',
+    fieldsNote: "An empty field keeps the server's quota.",
+    server: (value: string) => `Server: ${value}`,
+    item: (name: string, value: string) => `${name}: ${value}`,
+    change: 'Change',
+    changeLabel: (npub: string) => `Change the quotas of ${npub}`,
+    removeLabel: (npub: string) => `Give ${npub} the quotas of the server back`,
+  },
+
   settings: {
     size: {
       title: 'Largest message',
@@ -418,6 +459,12 @@ const en = {
       invalid_blossom_servers: 'Enter at least one https:// URL of a public server, one per line.',
       invalid_domain_relays: 'Enter at least one wss:// URL of a public relay, one per line.',
       invalid_indexer_relays: 'Enter at least one wss:// URL of a public relay, one per line.',
+      invalid_quotas: 'Enter whole numbers, or leave a field empty.',
+      key_quotas_not_found: 'This key no longer has quotas of its own. Reload the page.',
+      pending_domain_quota:
+        'You have as many domains waiting for verification as this server allows. Verify or remove one first.',
+      address_quota: 'You have as many addresses as this server allows. Remove one first, or ask its admin for more.',
+      address_rate_quota: 'You created as many addresses as this server allows in an hour. Try again later.',
       no_extension: 'No Nostr extension found in this browser.',
       invalid_bunker: 'Enter a bunker:// link, the name@domain of your bunker, an nsec or an ncryptsec.',
       bunker_timeout: 'Your bunker did not answer in time.',

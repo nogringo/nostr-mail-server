@@ -182,6 +182,19 @@ test('a catch-all domain creates the address it does not know for its owner, pri
   expect(openWrap(network.published[0].event, owner.sk).rumor.kind).toBe(1301)
 })
 
+test('a catch-all creates no address past the quotas of its owner', async () => {
+  const { repo, network, owner, send, settings } = await setup()
+  await repo.setCatchAll('example.com', owner.pubkey, true)
+  network.inboxRelays.set(owner.pubkey, ['wss://inbox.owner.example/'])
+  await settings.update({ quotas: { addresses: 2 } })
+
+  await send(['shop@example.com'])
+  await expect(send(['news@example.com'])).rejects.toMatchObject({ responseCode: 550 })
+
+  expect(await repo.findAddress('example.com', 'news')).toBeNull()
+  expect(repo.quotaUsage.map(({ quota, subject }) => [quota, subject])).toEqual([['addressesPerHour', owner.pubkey]])
+})
+
 test('a catch-all does not take a disabled address back', async () => {
   const { repo, network, owner, send } = await setup()
   await repo.setCatchAll('example.com', owner.pubkey, true)

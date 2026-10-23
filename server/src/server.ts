@@ -7,6 +7,7 @@ import { createAuthResolver, createDnsLookup, createExchangerLookup } from './dn
 import { migrate } from './migrations.js'
 import { generateKeyPair } from './nostr.js'
 import { Outbox } from './outbox.js'
+import { QuotaKeeper } from './quotas.js'
 import { NostrRelayNetwork } from './relays.js'
 import { PgDomainRepository } from './repository.js'
 import { SettingsStore } from './settings.js'
@@ -21,7 +22,12 @@ const settings = await SettingsStore.load(repo)
 const relays = new NostrRelayNetwork(() => settings.current.indexerRelays)
 // One registry for the API, SMTP and the outbox, so that each bunker gets one connection.
 const signers = new DomainSigners({ logger: { info: (details, message) => app.log.info(details, message) } })
-const app = buildApp(repo, config, createDnsLookup(config.dnsServers), relays, settings, { logger: true, signers })
+const quotas = new QuotaKeeper(repo, settings, config.adminPubkeys)
+const app = buildApp(repo, config, createDnsLookup(config.dnsServers), relays, settings, {
+  logger: true,
+  signers,
+  quotas,
+})
 const smtpLogger = app.log.child({ component: 'smtp' })
 // Without the certificate files the server does not start: an orchestrator retries until they exist.
 const tls = config.tls ? await readTls(config.tls) : undefined
@@ -32,7 +38,7 @@ const smtp = createSmtpServer(
   createAuthResolver(config.dnsServers),
   settings,
   { ...config, serverPrivateKey: serverKey.privateKey },
-  { logger: smtpLogger, tls, signers },
+  { logger: smtpLogger, tls, signers, quotas },
 )
 const tlsReload = config.tls && tls ? reloadTls(smtp, config.tls, tls, smtpLogger) : null
 // The address of this server should resolve back to MX_HOST, the name it greets with.
@@ -40,7 +46,16 @@ const transport = createSmtpTransport({
   heloName: config.mxHost,
   findExchangers: createExchangerLookup(config.dnsServers),
 })
-const outbox = new Outbox(repo, relays, blossom, transport, settings, app.log.child({ component: 'outbox' }), signers)
+const outbox = new Outbox(
+  repo,
+  relays,
+  blossom,
+  transport,
+  settings,
+  app.log.child({ component: 'outbox' }),
+  signers,
+  quotas,
+)
 
 if (migrations.length) app.log.info({ migrations }, 'applied database migrations')
 

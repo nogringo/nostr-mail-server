@@ -135,6 +135,16 @@ const fr: Messages = {
     empty:
       "Aucun domaine pour l'instant. Connectez-en un qui vous appartient pour recevoir ses e-mails dans Nostr Mail.",
     abuseReports: (n: number) => count(n, "signalement d'abus", "signalements d'abus"),
+    quotas: {
+      title: 'Vos quotas sur ce serveur',
+      addresses: (used: number, limit: number) =>
+        `${used} sur ${count(limit, 'adresse', 'adresses')}, tous domaines confondus`,
+      addressesPerHour: (limit: number) => `${count(limit, 'nouvelle adresse', 'nouvelles adresses')} par heure`,
+      pendingDomains: (limit: number) => `${count(limit, 'domaine', 'domaines')} en attente de vérification à la fois`,
+      recipientsPerDay: (limit: number) =>
+        `${count(limit, 'destinataire', 'destinataires')} par jour pour chacun de vos domaines`,
+      more: "Demandez à l'admin de ce serveur si vous avez besoin de plus.",
+    },
   },
 
   privateServer: {
@@ -307,6 +317,7 @@ const fr: Messages = {
     tabs: {
       domains: 'Domaines',
       access: 'Accès',
+      quotas: 'Quotas',
       suspended: 'Suspendus',
       abuse: 'Abus',
       server: 'Serveur',
@@ -373,6 +384,39 @@ const fr: Messages = {
     submit: 'Autoriser la clé',
   },
 
+  quotas: {
+    names: {
+      addresses: 'Adresses par clé',
+      addressesPerHour: 'Adresses créées par heure',
+      pendingDomains: 'Domaines en attente de vérification',
+      recipientsPerDay: 'Destinataires par domaine et par jour',
+    },
+    notes: {
+      addresses:
+        "Toutes les adresses d'une clé : sur ses propres domaines, y compris celles créées par leur catch-all, et sur les domaines partagés. Une fois la limite atteinte, le catch-all de ses domaines ne crée plus d'adresse et leurs e-mails sont refusés.",
+      addressesPerHour: 'Sur la dernière heure, adresses supprimées comprises.',
+      pendingDomains:
+        "Les domaines connectés par une clé dont l'enregistrement de propriété n'est pas encore trouvé. Chacun coûte au serveur une clé DKIM.",
+      recipientsPerDay:
+        "Sur les dernières 24 heures, quel que soit l'expéditeur sur le domaine. Un e-mail qui dépasserait la limite n'est pas envoyé.",
+    },
+    serverTitle: 'Quotas du serveur',
+    serverNote: "Chaque clé y est soumise, sauf les admins, qui n'en ont aucun. Un champ vide signifie sans limite.",
+    noLimit: 'Sans limite',
+    unlimited: 'sans limite',
+    keysTitle: 'Clés avec leurs propres quotas',
+    keysNote: 'Ces clés ont ces quotas à la place de ceux du serveur, et ceux du serveur pour le reste.',
+    keysEmpty: "Aucune clé n'a ses propres quotas.",
+    giveKey: 'Donner ses propres quotas à une clé',
+    key: 'Clé',
+    fieldsNote: 'Un champ vide garde le quota du serveur.',
+    server: (value: string) => `Serveur : ${value}`,
+    item: (name: string, value: string) => `${name} : ${value}`,
+    change: 'Modifier',
+    changeLabel: (npub: string) => `Modifier les quotas de ${npub}`,
+    removeLabel: (npub: string) => `Rendre à ${npub} les quotas du serveur`,
+  },
+
   settings: {
     size: {
       title: 'Taille maximale des messages',
@@ -428,6 +472,14 @@ const fr: Messages = {
       allowed_key_not_found: "Cette clé n'est plus autorisée. Rechargez la page.",
       abuse_report_not_found: "Ce signalement n'existe plus. Rechargez la page.",
       invalid_max_message_bytes: 'Saisissez une taille entre 1 et 1024 Mo.',
+      invalid_quotas: 'Saisissez des nombres entiers, ou laissez un champ vide.',
+      key_quotas_not_found: "Cette clé n'a plus ses propres quotas. Rechargez la page.",
+      pending_domain_quota:
+        "Vous avez autant de domaines en attente de vérification que ce serveur le permet. Vérifiez-en ou retirez-en un d'abord.",
+      address_quota:
+        "Vous avez autant d'adresses que ce serveur le permet. Supprimez-en une d'abord, ou demandez-en plus à son admin.",
+      address_rate_quota:
+        "Vous avez créé autant d'adresses en une heure que ce serveur le permet. Réessayez plus tard.",
       invalid_blossom_servers: "Saisissez au moins une URL https:// d'un serveur public, une par ligne.",
       invalid_domain_relays: "Saisissez au moins une URL wss:// d'un relais public, une par ligne.",
       invalid_indexer_relays: "Saisissez au moins une URL wss:// d'un relais public, une par ligne.",

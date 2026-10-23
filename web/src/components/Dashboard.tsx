@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { localize, useLocale, useMessages } from '../i18n'
-import { createApi, type Domain, type DomainList } from '../lib/api'
+import { createApi, type Domain, type DomainList, QUOTA_NAMES, type Quotas, type QuotaUsage } from '../lib/api'
 import { domainHref, domainStatus } from '../lib/domain'
 import { describeError } from '../lib/errors'
 import { timeAgo } from '../lib/format'
@@ -21,6 +21,10 @@ export default function Dashboard({ signer }: { signer: Signer }) {
   }, [api, t])
 
   const domains = list?.domains
+
+  function countAddresses(change: number) {
+    setList((current) => current && { ...current, usage: { addresses: current.usage.addresses + change } })
+  }
 
   return (
     <div className="pt-10 sm:pt-16">
@@ -47,9 +51,40 @@ export default function Dashboard({ signer }: { signer: Signer }) {
         </ul>
       )}
       {list && (list.sharedDomains.length > 0 || list.addresses.length > 0) && (
-        <SharedAddresses api={api} domains={list.sharedDomains} initial={list.addresses} />
+        <SharedAddresses
+          api={api}
+          domains={list.sharedDomains}
+          initial={list.addresses}
+          onCountChange={countAddresses}
+        />
       )}
+      {list && <QuotaList quotas={list.quotas} usage={list.usage} />}
     </div>
+  )
+}
+
+// Only the quotas with a limit.
+function QuotaList({ quotas, usage }: { quotas: Quotas; usage: QuotaUsage }) {
+  const t = useMessages().dashboard.quotas
+  const lines = QUOTA_NAMES.flatMap((name) => {
+    const limit = quotas[name]
+    if (limit === null) return []
+    return [name === 'addresses' ? t.addresses(usage.addresses, limit) : t[name](limit)]
+  })
+  if (!lines.length) return null
+
+  return (
+    <section aria-labelledby="quotas" className="mt-14">
+      <h2 id="quotas" className="font-semibold text-xl tracking-tight">
+        {t.title}
+      </h2>
+      <ul className="mt-3 space-y-1 text-sm">
+        {lines.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+      <p className="mt-2 text-muted text-sm">{t.more}</p>
+    </section>
   )
 }
 

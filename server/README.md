@@ -14,12 +14,13 @@ the host and path of the request. The signing pubkey owns the claims it makes.
 
 | Method | Path | Action |
 |--------|------|--------|
-| `GET` | `/domains` | `{"domains": [...], "canClaim": true}`: the caller's claims, and whether it may [claim a new domain](#who-can-claim) |
-| `PUT` | `/domains/{domain}` | Claim a domain: `201` when created, `200` when the caller already claimed it, `400 invalid_domain`, `403 not_allowed` when the caller [may not claim](#who-can-claim), `403 domain_suspended` for a new claim on a suspended domain |
+| `GET` | `/domains` | `{"domains": [...], "canClaim": true, "sharedDomains": [...], "addresses": [...], "quotas": {...}, "usage": {"addresses": 3}}`: the caller's claims, whether it may [claim a new domain](#who-can-claim), the [shared domains](#shared-domains) of other keys and the addresses it created there, its [quotas](#quotas), and the addresses it holds on every domain |
+| `PUT` | `/domains/{domain}` | Claim a domain: `201` when created, `200` when the caller already claimed it, `400 invalid_domain`, `403 not_allowed` when the caller [may not claim](#who-can-claim), `403 domain_suspended` for a new claim on a suspended domain, `403 pending_domain_quota` when the caller has as many claims waiting for verification as its [quotas](#quotas) allow |
 | `GET` | `/domains/{domain}` | One claim, `404 domain_not_found` if the caller has none |
 | `POST` | `/domains/{domain}/check` | Look the records up now and store the result, `403 domain_suspended` on a suspended domain |
 | `GET` | `/domains/{domain}/key` | `{"nsec": "nsec1..."}`, the secret of the [domain key](#domain-key), `409 key_in_bunker` when a bunker holds it |
 | `PUT` | `/domains/{domain}/key` | Body `{"nsec": "nsec1..."}` or `{"bunker": "bunker://..."}`: the domain key becomes this one, see [Domain key](#domain-key) |
+| `PUT` | `/domains/{domain}/shared` | Body `{"shared": true}`: let any key [create addresses](#shared-domains) on the domain, or stop, `400 invalid_shared`, `409 domain_catch_all` while the catch-all is on, `403 domain_suspended` |
 | `PUT` | `/domains/{domain}/catch-all` | Body `{"catchAll": true}`: turn the [catch-all](#catch-all) on or off, `400 invalid_catch_all`, `409 domain_shared` while anyone can create addresses on the domain, `403 domain_suspended` |
 | `DELETE` | `/domains/{domain}` | Release the claim: `204`, or `404 domain_not_found` |
 
@@ -164,7 +165,7 @@ part at a pubkey. Same NIP-98 authentication as the domain routes.
 | Method | Path | Action |
 |--------|------|--------|
 | `GET` | `/domains/{domain}/addresses` | `{"addresses": [...], "deletedAddresses": [...]}`: the addresses of the domain and the [deleted](#deleted-addresses) ones |
-| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkey": "<hex or npub>", "private": false, "enabled": true}`: `201` when created, `200` when an existing address now points at this pubkey with this privacy and state, `409 address_deleted` for a deleted one |
+| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkey": "<hex or npub>", "private": false, "enabled": true}`: `201` when created, `200` when an existing address now points at this pubkey with this privacy and state, `409 address_deleted` for a deleted one, `403 address_quota` or `429 address_rate_quota` for a new one past the caller's [quotas](#quotas) |
 | `DELETE` | `/domains/{domain}/addresses/{localPart}` | `204`, or `404 address_not_found`. The address joins the deleted ones |
 | `DELETE` | `/domains/{domain}/deleted-addresses/{localPart}` | Let a deleted address be created again: `204`, or `404 deleted_address_not_found` |
 | `DELETE` | `/domains/{domain}/deleted-addresses` | Let every deleted address be created again: `204` |
@@ -213,6 +214,17 @@ cannot be declared:
 The addresses belong to the owner's claim: they are deleted with it, when the
 owner releases the domain or when another key takes it over.
 
+### Shared domains
+
+On a domain its owner shares, any key creates addresses that deliver to itself,
+and keeps managing them once the domain is no longer shared. The owner can
+still remove them.
+
+| Method | Path | Action |
+|--------|------|--------|
+| `PUT` | `/addresses/{domain}/{localPart}` | Body `{"private": false, "enabled": true}`: `201` when created, `200` when the caller changed one it created, `403 domain_not_shared`, `409 address_taken` when another key has it, `409 address_deleted`, `400 reserved_local_part` for `_smtp`, `npub1...` and the names only the owner gives (`abuse`, `postmaster`, `support`, `admin`, `noreply` and the like), `403 address_quota` or `429 address_rate_quota` for a new one past the caller's [quotas](#quotas) |
+| `DELETE` | `/addresses/{domain}/{localPart}` | Delete an address the caller created: `204`, or `404 address_not_found`. It joins the [deleted](#deleted-addresses) ones |
+
 ### Deleted addresses
 
 A deleted address is kept aside, and nothing creates it again, neither the
@@ -237,7 +249,9 @@ With the catch-all on, mail to an address the domain does not know creates it
 for the owner's key, private, the first time it arrives: `shop@` or
 `you+news@` need no declaring. A `+` is no separator: `you+news` is an address
 of its own, which the owner can delete without touching `you`. Reserved names
-and deleted addresses are never created.
+and deleted addresses are never created, nor any address past the
+[quotas](#quotas) of the owner: the mail is then refused like for an unknown
+address, as SimpleLogin does.
 
 A domain is shared or catch-all, not both, since the catch-all would take the
 names a shared domain leaves to the keys that create them: sharing a catch-all
@@ -250,14 +264,16 @@ same NIP-98 authentication. Any other key gets `403 not_admin`.
 
 | Method | Path | Action |
 |--------|------|--------|
-| `GET` | `/admin/domains` | `{"domains": [...], "suspensions": [...], "allowedKeys": [...], "settings": {...}, "abuseReports": [...], "serverRecords": [...]}`: every claim of every key, verified or not, sorted by domain then by age, every suspended domain, the [allowed keys](#allowed-keys), the [settings](#settings), every [abuse report](#abuse-reports), newest first, and the [server's own records](#server-records) |
+| `GET` | `/admin/domains` | `{"domains": [...], "suspensions": [...], "allowedKeys": [...], "keyQuotas": [...], "settings": {...}, "abuseReports": [...], "serverRecords": [...]}`: every claim of every key, verified or not, sorted by domain then by age, every suspended domain, the [allowed keys](#allowed-keys), the keys with [quotas](#quotas) of their own, the [settings](#settings), every [abuse report](#abuse-reports), newest first, and the [server's own records](#server-records) |
 | `GET` | `/admin/abuse-reports/{id}` | The message of any abuse report, or `404 abuse_report_not_found` |
 | `DELETE` | `/admin/abuse-reports/{id}` | [Delete the abuse report](#abuse-reports) for the admins: `204`, or `404 abuse_report_not_found` |
 | `PUT` | `/admin/domains/{domain}/suspension` | Suspend the domain, claimed or not: `201` when suspended, `200` when it already was, `400 invalid_domain` |
 | `DELETE` | `/admin/domains/{domain}/suspension` | Lift the suspension: `204`, or `404 suspension_not_found` |
 | `PUT` | `/admin/allowed-keys/{npub or hex}` | Let the key [claim domains](#who-can-claim): `201` when added, `200` when it already was, `400 invalid_pubkey` |
 | `DELETE` | `/admin/allowed-keys/{npub or hex}` | Take the key off the list: `204`, or `404 allowed_key_not_found` |
-| `PATCH` | `/admin/settings` | Body with any of the [settings](#settings), the others keep their value: returns them all as `{"settings": {...}}`, or `400` with `invalid_open_registration`, `invalid_max_message_bytes`, `invalid_blossom_servers`, `invalid_domain_relays` or `invalid_indexer_relays` |
+| `PUT` | `/admin/key-quotas/{npub or hex}` | Body `{"quotas": {"addresses": 100}}`: give the key [quotas](#quotas) of its own, in place of those it had: `201` when it had none, `200` otherwise, `400 invalid_pubkey`, `400 invalid_quotas` |
+| `DELETE` | `/admin/key-quotas/{npub or hex}` | Give the key the quotas of the server back: `204`, or `404 key_quotas_not_found` |
+| `PATCH` | `/admin/settings` | Body with any of the [settings](#settings), the others keep their value, and so do the quotas left out of `quotas`: returns them all as `{"settings": {...}}`, or `400` with `invalid_open_registration`, `invalid_max_message_bytes`, `invalid_blossom_servers`, `invalid_domain_relays`, `invalid_indexer_relays` or `invalid_quotas` |
 
 A claim is returned as:
 
@@ -299,8 +315,26 @@ restart:
 | `blossomServers` | `https://blossom.nmail.li`, `https://blossom.yakihonne.com`, `https://blossom.ditto.pub` | `https://` Blossom servers given to new claims for their large mail, and used by the server's own key; existing claims keep theirs |
 | `domainRelays` | `wss://relay.nmail.li/`, `wss://relay.ditto.pub/`, `wss://nos.lol/`, `wss://relay.primal.net/` | `wss://` relays the domain keys announce (kinds 10002 and 10050), publish their [lists](#lists-of-the-domain-key) on, and [receive the mail to send](#receiving-the-wraps) on |
 | `indexerRelays` | `wss://purplepag.es/`, `wss://user.kindpag.es/`, `wss://indexer.coracle.social/` | `wss://` relays where the lists of other pubkeys (kinds 10002, 10050 and 10063) are looked up, and where the domain keys publish their lists too |
+| `quotas` | every one `null` | The [quotas](#quotas) of every key |
 
 URLs must point at public hosts, and each list needs one at least.
+
+### Quotas
+
+What a key may do: the server's quotas apply to every key, unless an admin gave
+it quotas of its own. A quota is a whole number, or `null` for no limit. The
+admins have none.
+
+| Quota | Counts | Once reached |
+|-------|--------|--------------|
+| `addresses` | The addresses the key created, on its own domains, those their catch-all created included, and on shared ones. Deleting one frees its place | A new address answers `403 address_quota`, and the catch-all of the key's domains creates none |
+| `addressesPerHour` | The addresses the key created over the last hour, deleted since or not | A new address answers `429 address_rate_quota`, and the catch-all creates none |
+| `pendingDomains` | The key's claims whose ownership record is not found yet | A new claim answers `403 pending_domain_quota` |
+| `recipientsPerDay` | The recipients each domain of the key sent to over the last 24 hours, whoever sent from it | A mail that would go over is [refused](#receiving-the-wraps) |
+
+A key with quotas of its own is returned as
+`{"pubkey": "<hex>", "quotas": {"addresses": 100, "recipientsPerDay": null}, "updatedAt": "<date>"}`:
+a quota left out is the server's.
 
 ### Server records
 
@@ -558,6 +592,7 @@ A wrap is refused, and never sent, when:
 | The wrap opens with the domain key, its seal is signed by the rumor's author, and the rumor is a kind 1301 | The wrap does not hold an email |
 | `mail-from` is an address of the domain that resolves to the author: a declared name, private or not, or the author's own `npub1...` | `<address> is not an address of the sender` |
 | 1 to 50 `rcpt-to` tags, each `local@domain` with a dot-atom local part | Not an address mail can be relayed to |
+| The domain stays within the [quota](#quotas) of its owner: its recipients over the last 24 hours, this mail's included | `<domain> sends mail to <n> recipients a day at most` |
 
 The refusal is recorded with the wrap id and logged.
 

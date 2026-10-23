@@ -1,6 +1,6 @@
 import { type ReactNode, type SubmitEvent, useState } from 'react'
 import { useMessages } from '../i18n'
-import type { ServerSettings } from '../lib/api'
+import type { ServerSettings, SettingsChanges } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { Button, ErrorText } from './ui'
 
@@ -8,7 +8,7 @@ const MEGABYTE = 1024 * 1024
 
 interface Props {
   settings: ServerSettings
-  onSave: (changes: Partial<ServerSettings>) => Promise<void>
+  onSave: (changes: SettingsChanges) => Promise<void>
 }
 
 // Each setting is keyed by its value, so that a save shows what the server stored.

@@ -111,6 +111,31 @@ export interface ServerSettings {
   domainRelays: string[]
   // Where the lists of other keys are looked up.
   indexerRelays: string[]
+  quotas: Quotas
+}
+
+// What a key may do, null for no limit.
+export interface Quotas {
+  // Addresses it holds on every domain: those it created by hand, and those the catch-all of its domains created.
+  addresses: number | null
+  // Addresses it creates in an hour, deleted since or not.
+  addressesPerHour: number | null
+  // Domains it claimed whose ownership record is not found yet.
+  pendingDomains: number | null
+  // Recipients each of its domains sends mail to in a day.
+  recipientsPerDay: number | null
+}
+
+export type QuotaName = keyof Quotas
+
+// The quotas that count what was done over a period.
+export type PeriodQuota = 'addressesPerHour' | 'recipientsPerDay'
+
+// The quotas an admin gave one key instead of the server's.
+export interface KeyQuotas {
+  pubkey: string
+  quotas: Partial<Quotas>
+  updatedAt: string
 }
 
 // Domain relays taken off the settings, by the date the outbox stops listening to them.
@@ -253,12 +278,23 @@ export interface DomainRepository {
   // Returns the existing entry when the key is already allowed.
   allowKey(pubkey: string): Promise<AllowedKey>
   disallowKey(pubkey: string): Promise<boolean>
+  listKeyQuotas(): Promise<KeyQuotas[]>
+  findKeyQuotas(pubkey: string): Promise<KeyQuotas | null>
+  // Replaces the quotas the key had of its own.
+  putKeyQuotas(pubkey: string, quotas: Partial<Quotas>): Promise<KeyQuotas>
+  deleteKeyQuotas(pubkey: string): Promise<boolean>
+  addQuotaUsage(quota: PeriodQuota, subject: string, amount: number): Promise<void>
+  // What the subject used of the quota since then.
+  countQuotaUsage(quota: PeriodQuota, subject: string, since: Date): Promise<number>
+  pruneQuotaUsage(before: Date): Promise<number>
   findSettings(): Promise<StoredSettings>
   updateSettings(settings: StoredSettings): Promise<void>
   listAddresses(domain: string): Promise<Address[]>
   findAddress(domain: string, localPart: string): Promise<Address | null>
   // The addresses a key created on the domains of other keys.
   listCreatedAddresses(createdBy: string): Promise<Address[]>
+  // The addresses a key created, on its domains and on those of other keys.
+  countCreatedAddresses(createdBy: string): Promise<number>
   // Creates the address, or gives an existing one the new pubkey, privacy and state. An address pointed at
   // another pubkey is managed by `createdBy` from then on, one that keeps its pubkey by the same key.
   putAddress(input: NewAddress): Promise<Address>

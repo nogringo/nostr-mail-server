@@ -51,6 +51,7 @@ test('parses the settings an admin changes, URLs normalized and once each', () =
       blossomServers: ['https://Blossom.Example.com/', 'https://blossom.example.com'],
       domainRelays: ['wss://Relay.Example.com'],
       indexerRelays: [' wss://indexer.example.com/ '],
+      quotas: { addresses: 0, recipientsPerDay: null },
     }),
   ).toEqual({
     changes: {
@@ -59,6 +60,7 @@ test('parses the settings an admin changes, URLs normalized and once each', () =
       blossomServers: ['https://blossom.example.com'],
       domainRelays: ['wss://relay.example.com/'],
       indexerRelays: ['wss://indexer.example.com/'],
+      quotas: { addresses: 0, recipientsPerDay: null },
     },
   })
   expect(parseSettingsChanges({})).toEqual({ changes: {} })
@@ -75,6 +77,9 @@ test.each([
   [{ domainRelays: [] }, 'invalid_domain_relays'],
   [{ domainRelays: 'wss://relay.example.com' }, 'invalid_domain_relays'],
   [{ indexerRelays: ['wss://localhost'] }, 'invalid_indexer_relays'],
+  [{ quotas: null }, 'invalid_quotas'],
+  [{ quotas: { addresses: -1 } }, 'invalid_quotas'],
+  [{ quotas: { mailboxes: 5 } }, 'invalid_quotas'],
 ])('refuses %j with %s', (body, error) => {
   expect(parseSettingsChanges(body)).toEqual({ error })
 })

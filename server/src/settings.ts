@@ -1,6 +1,7 @@
 import { normalizeBlossomUrl } from './blossom.js'
 import { normalizeRelayUrl } from './nostr.js'
-import type { DomainRepository, RetiredRelays, ServerSettings, StoredSettings } from './types.js'
+import { parseQuotas } from './quotas.js'
+import type { DomainRepository, Quotas, RetiredRelays, ServerSettings, StoredSettings } from './types.js'
 
 // Clients that have not read the new kind 10050 of a domain key still send to the relays it listed.
 const RETIRED_RELAY_MS = 7 * 24 * 3600_000
@@ -13,6 +14,9 @@ const URL_SETTINGS = [
   ['domainRelays', normalizeRelayUrl, 'invalid_domain_relays'],
   ['indexerRelays', normalizeRelayUrl, 'invalid_indexer_relays'],
 ] as const
+
+// The quotas left out keep their value.
+export type SettingsChanges = Partial<Omit<ServerSettings, 'quotas'>> & { quotas?: Partial<Quotas> }
 
 // The settings the admins change from /admin, kept in memory: every change goes through `update`.
 export class SettingsStore {
@@ -30,8 +34,8 @@ export class SettingsStore {
     return settings
   }
 
-  async update(changes: Partial<ServerSettings>, now = Date.now()): Promise<ServerSettings> {
-    const next = { ...this.stored, ...changes }
+  async update(changes: SettingsChanges, now = Date.now()): Promise<ServerSettings> {
+    const next = { ...this.stored, ...changes, quotas: { ...this.stored.quotas, ...changes.quotas } }
     const retired: RetiredRelays = Object.fromEntries(
       Object.entries(this.stored.retiredDomainRelays).filter(
         ([relay, until]) => Date.parse(until) > now && !next.domainRelays.includes(relay),
@@ -58,11 +62,11 @@ export class SettingsStore {
 }
 
 // Returns the changes an admin asked for, or the error code of the first invalid one.
-export function parseSettingsChanges(body: unknown): { changes: Partial<ServerSettings> } | { error: string } {
+export function parseSettingsChanges(body: unknown): { changes: SettingsChanges } | { error: string } {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) return { error: 'invalid_settings' }
 
   const input = body as Record<string, unknown>
-  const changes: Partial<ServerSettings> = {}
+  const changes: SettingsChanges = {}
   if ('openRegistration' in input) {
     if (typeof input.openRegistration !== 'boolean') return { error: 'invalid_open_registration' }
     changes.openRegistration = input.openRegistration
@@ -86,6 +90,11 @@ export function parseSettingsChanges(body: unknown): { changes: Partial<ServerSe
     const urls = Array.isArray(value) ? value.map((url) => (typeof url === 'string' ? normalize(url) : null)) : []
     if (!urls.length || urls.includes(null)) return { error }
     changes[name] = [...new Set(urls as string[])]
+  }
+  if ('quotas' in input) {
+    const quotas = parseQuotas(input.quotas)
+    if (!quotas) return { error: 'invalid_quotas' }
+    changes.quotas = quotas
   }
 
   return { changes }

@@ -3,6 +3,7 @@ import type { DomainSigners } from '../bunker.js'
 import { normalizeDomain } from '../domain.js'
 import { publishEveryDomainLists } from '../lists.js'
 import { parsePubkey } from '../nostr.js'
+import { parseQuotas } from '../quotas.js'
 import { checkServerRecords } from '../records.js'
 import type { RelayNetwork } from '../relays.js'
 import { parseSettingsChanges, type SettingsStore } from '../settings.js'
@@ -12,6 +13,8 @@ import { authenticateAdmin } from './auth.js'
 type DomainRequest = FastifyRequest<{ Params: { domain: string } }>
 
 type KeyRequest = FastifyRequest<{ Params: { pubkey: string } }>
+
+type KeyQuotasRequest = FastifyRequest<{ Params: { pubkey: string }; Body: { quotas?: unknown } | undefined }>
 
 type SettingsRequest = FastifyRequest<{ Body: unknown }>
 
@@ -33,10 +36,11 @@ export function registerAdminRoutes(
   app.get('/admin/domains', async (request, reply) => {
     if (authenticateAdmin(request, reply, admins) === null) return reply
 
-    const [domains, suspensions, allowedKeys, abuseReports, serverRecords] = await Promise.all([
+    const [domains, suspensions, allowedKeys, keyQuotas, abuseReports, serverRecords] = await Promise.all([
       repo.listAllDomains(),
       repo.listSuspensions(),
       repo.listAllowedKeys(),
+      repo.listKeyQuotas(),
       repo.listAbuseReports('admin'),
       checkServerRecords(config, dns),
     ])
@@ -44,6 +48,7 @@ export function registerAdminRoutes(
       domains: domains.map(present),
       suspensions,
       allowedKeys,
+      keyQuotas,
       settings: settings.current,
       abuseReports,
       serverRecords,
@@ -117,6 +122,35 @@ export function registerAdminRoutes(
     if (!pubkey || !(await repo.disallowKey(pubkey))) return reply.code(404).send({ error: 'allowed_key_not_found' })
 
     request.log.info({ pubkey, admin }, 'Took back the right of a key to connect domains')
+    return reply.code(204).send()
+  })
+
+  // Replaces the quotas the key had of its own. The path takes an npub or a hex key.
+  app.put('/admin/key-quotas/:pubkey', async (request: KeyQuotasRequest, reply) => {
+    const admin = authenticateAdmin(request, reply, admins)
+    if (admin === null) return reply
+
+    const pubkey = parsePubkey(request.params.pubkey)
+    if (!pubkey) return reply.code(400).send({ error: 'invalid_pubkey' })
+    const quotas = parseQuotas(request.body?.quotas)
+    if (!quotas || !Object.keys(quotas).length) return reply.code(400).send({ error: 'invalid_quotas' })
+
+    const existing = await repo.findKeyQuotas(pubkey)
+    const keyQuotas = await repo.putKeyQuotas(pubkey, quotas)
+    request.log.info({ pubkey, quotas, admin }, 'Set the quotas of a key')
+    return reply.code(existing ? 200 : 201).send({ keyQuotas })
+  })
+
+  app.delete('/admin/key-quotas/:pubkey', async (request: KeyRequest, reply) => {
+    const admin = authenticateAdmin(request, reply, admins)
+    if (admin === null) return reply
+
+    const pubkey = parsePubkey(request.params.pubkey)
+    if (!pubkey || !(await repo.deleteKeyQuotas(pubkey))) {
+      return reply.code(404).send({ error: 'key_quotas_not_found' })
+    }
+
+    request.log.info({ pubkey, admin }, 'Gave a key the quotas of the server back')
     return reply.code(204).send()
   })
 }
