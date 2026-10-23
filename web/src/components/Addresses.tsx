@@ -1,5 +1,5 @@
 import { type SubmitEvent, useEffect, useId, useState } from 'react'
-import type { Address, Api } from '../lib/api'
+import type { Address, Api, DeletedAddress } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { npubOf, shortNpub } from '../lib/format'
 import { Button, CopyButton, ErrorText } from './ui'
@@ -10,20 +10,30 @@ interface Props {
   ownPubkey: string
 }
 
+const ACTION = 'cursor-pointer rounded px-1.5 py-0.5 text-muted text-sm hover:bg-rule/60 disabled:opacity-50'
+
+const byLocalPart = (left: { localPart: string }, right: { localPart: string }) =>
+  left.localPart.localeCompare(right.localPart)
+
 export default function Addresses({ domain, api, ownPubkey }: Props) {
   const [addresses, setAddresses] = useState<Address[]>([])
+  const [deleted, setDeleted] = useState<DeletedAddress[]>([])
   const [error, setError] = useState<string | null>(null)
   const ownNpub = npubOf(ownPubkey)
 
   useEffect(() => {
-    api.listAddresses(domain).then(setAddresses, (failure) => setError(describeError(failure)))
+    api.listAddresses(domain).then(
+      (list) => {
+        setAddresses(list.addresses)
+        setDeleted(list.deletedAddresses)
+      },
+      (failure) => setError(describeError(failure)),
+    )
   }, [api, domain])
 
   function keep(address: Address) {
     setAddresses((list) =>
-      [...list.filter((other) => other.localPart !== address.localPart), address].sort((left, right) =>
-        left.localPart.localeCompare(right.localPart),
-      ),
+      [...list.filter((other) => other.localPart !== address.localPart), address].sort(byLocalPart),
     )
   }
 
@@ -45,6 +55,18 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
     try {
       await api.removeAddress(domain, localPart)
       setAddresses((list) => list.filter((other) => other.localPart !== localPart))
+      const entry = { domain, localPart, address: `${localPart}@${domain}`, deletedAt: new Date().toISOString() }
+      setDeleted((list) => [...list, entry].sort(byLocalPart))
+    } catch (failure) {
+      setError(describeError(failure))
+    }
+  }
+
+  async function allow(localPart?: string) {
+    setError(null)
+    try {
+      await api.allowDeletedAddresses(domain, localPart)
+      setDeleted((list) => (localPart === undefined ? [] : list.filter((other) => other.localPart !== localPart)))
     } catch (failure) {
       setError(describeError(failure))
     }
@@ -77,7 +99,69 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
       </ul>
       <ErrorText>{error}</ErrorText>
       <AddressForm domains={[domain]} defaultPubkey={ownNpub} onAdd={add} />
+      {deleted.length > 0 && <DeletedAddresses deleted={deleted} onAllow={allow} />}
     </div>
+  )
+}
+
+function DeletedAddresses({
+  deleted,
+  onAllow,
+}: {
+  deleted: DeletedAddress[]
+  onAllow: (localPart?: string) => Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+
+  async function allowAll() {
+    setBusy(true)
+    await onAllow()
+    setBusy(false)
+  }
+
+  return (
+    <details className="mt-8 text-sm">
+      <summary className="w-fit cursor-pointer text-muted hover:text-ink">Deleted addresses ({deleted.length})</summary>
+      <p className="mt-2 max-w-xl text-muted">
+        Mail to them is refused, and nobody creates them again, neither by hand nor through the catch-all, until you
+        allow them.
+      </p>
+      <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
+        {deleted.map((entry) => (
+          <DeletedRow key={entry.localPart} address={entry.address} onAllow={() => onAllow(entry.localPart)} />
+        ))}
+      </ul>
+      {deleted.length > 1 && (
+        <Button variant="quiet" className="mt-3" onClick={allowAll} disabled={busy}>
+          {busy ? 'Allowing' : 'Allow them all'}
+        </Button>
+      )}
+    </details>
+  )
+}
+
+function DeletedRow({ address, onAllow }: { address: string; onAllow: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false)
+
+  async function allow() {
+    setBusy(true)
+    await onAllow()
+    setBusy(false)
+  }
+
+  return (
+    <li className="flex items-start justify-between gap-3 px-4 py-2">
+      <span className="min-w-0 break-all font-mono leading-6">{address}</span>
+      <button
+        type="button"
+        onClick={allow}
+        disabled={busy}
+        aria-label={`Allow ${address} again`}
+        className={`${ACTION} shrink-0 hover:text-ink`}
+      >
+        {busy ? 'Allowing' : 'Allow again'}
+      </button>
+    </li>
   )
 }
 
@@ -102,8 +186,6 @@ export function AddressRow({
     setPending(null)
   }
 
-  const action = 'cursor-pointer rounded px-1.5 py-0.5 text-muted text-sm hover:bg-rule/60 disabled:opacity-50'
-
   return (
     <li className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
       <div className="min-w-0">
@@ -125,7 +207,7 @@ export function AddressRow({
             onClick={() => run('privacy', onTogglePrivacy)}
             disabled={pending !== null}
             aria-label={`Make ${address} ${isPrivate ? 'public' : 'private'}`}
-            className={`${action} hover:text-ink`}
+            className={`${ACTION} hover:text-ink`}
           >
             {pending === 'privacy' ? 'Saving' : isPrivate ? 'Make public' : 'Make private'}
           </button>
@@ -136,7 +218,7 @@ export function AddressRow({
             onClick={() => run('removal', onRemove)}
             disabled={pending !== null}
             aria-label={`Remove ${address}`}
-            className={`${action} hover:text-bad`}
+            className={`${ACTION} hover:text-bad`}
           >
             {pending === 'removal' ? 'Removing' : 'Remove'}
           </button>

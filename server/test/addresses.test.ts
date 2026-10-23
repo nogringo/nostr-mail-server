@@ -17,8 +17,8 @@ async function setup() {
   const repo = new MemoryDomainRepository()
   const app = buildApp(repo, apiConfig, new FakeDns(), new FakeRelayNetwork(), settingsStore(repo))
   const owner = signer()
-  await verifyDomain(repo, 'example.com', owner.pubkey)
-  return { repo, app, owner }
+  const domain = await verifyDomain(repo, 'example.com', owner.pubkey)
+  return { repo, app, owner, domain }
 }
 
 test('PUT creates an address from an npub and stores the hex pubkey', async () => {
@@ -117,6 +117,66 @@ test('DELETE removes the address', async () => {
   expect(deleted.statusCode).toBe(204)
   expect(again.statusCode).toBe(404)
   expect(again.json()).toEqual({ error: 'address_not_found' })
+
+  await app.close()
+})
+
+test('a deleted address is listed and nothing creates it again until the owner allows it', async () => {
+  const { app, owner } = await setup()
+  const path = '/domains/example.com/addresses/bob'
+  await request(app, owner, 'PUT', path, { pubkey: owner.pubkey })
+  await request(app, owner, 'DELETE', path)
+
+  const listed = await request(app, owner, 'GET', '/domains/example.com/addresses')
+  const refused = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey })
+  const allowed = await request(app, owner, 'DELETE', '/domains/example.com/deleted-addresses/bob')
+  const again = await request(app, owner, 'DELETE', '/domains/example.com/deleted-addresses/bob')
+  const created = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey })
+
+  expect(listed.json()).toEqual({
+    addresses: [],
+    deletedAddresses: [
+      { domain: 'example.com', localPart: 'bob', address: 'bob@example.com', deletedAt: expect.any(String) },
+    ],
+  })
+  expect(refused.statusCode).toBe(409)
+  expect(refused.json()).toEqual({ error: 'address_deleted' })
+  expect(allowed.statusCode).toBe(204)
+  expect(again.statusCode).toBe(404)
+  expect(again.json()).toEqual({ error: 'deleted_address_not_found' })
+  expect(created.statusCode).toBe(201)
+
+  await app.close()
+})
+
+test('the owner allows every deleted address at once', async () => {
+  const { repo, app, owner } = await setup()
+  for (const localPart of ['alice', 'bob']) {
+    await request(app, owner, 'PUT', `/domains/example.com/addresses/${localPart}`, { pubkey: owner.pubkey })
+    await request(app, owner, 'DELETE', `/domains/example.com/addresses/${localPart}`)
+  }
+
+  const response = await request(app, owner, 'DELETE', '/domains/example.com/deleted-addresses')
+
+  expect(response.statusCode).toBe(204)
+  expect(await repo.listDeletedAddresses('example.com')).toEqual([])
+
+  await app.close()
+})
+
+test('the owner manages an address the catch-all created, whatever its local part', async () => {
+  const { repo, app, owner, domain } = await setup()
+  for (const localPart of ['bob+news', 'a/b#c']) await repo.createCatchAllAddress(domain, localPart)
+
+  const shown = await request(app, owner, 'PUT', '/domains/example.com/addresses/bob%2Bnews', {
+    pubkey: owner.pubkey,
+  })
+  const deleted = await request(app, owner, 'DELETE', '/domains/example.com/addresses/a%2Fb%23c')
+  const allowed = await request(app, owner, 'DELETE', '/domains/example.com/deleted-addresses/a%2Fb%23c')
+
+  expect(shown.statusCode).toBe(200)
+  expect(shown.json().address).toMatchObject({ address: 'bob+news@example.com', private: false })
+  expect([deleted.statusCode, allowed.statusCode]).toEqual([204, 204])
 
   await app.close()
 })

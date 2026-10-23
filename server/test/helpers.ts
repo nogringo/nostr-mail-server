@@ -24,6 +24,7 @@ import type {
   AllowedKey,
   ApiConfig,
   BridgeKey,
+  DeletedAddress,
   DnsLookup,
   Domain,
   DomainChecks,
@@ -98,6 +99,7 @@ export interface StoredAbuseReport {
 export class MemoryDomainRepository implements DomainRepository {
   readonly domains = new Map<string, Domain>()
   readonly addresses = new Map<string, Address>()
+  readonly deletedAddresses = new Map<string, DeletedAddress & { ownerPubkey: string }>()
   readonly outbound = new Map<string, StoredOutboundMessage>()
   readonly suspensions = new Map<string, Suspension>()
   readonly allowedKeys = new Map<string, AllowedKey>()
@@ -168,6 +170,7 @@ export class MemoryDomainRepository implements DomainRepository {
       bridgeBunker: null,
       nip05: 'server',
       shared: false,
+      catchAll: false,
       checks: null,
       checkedAt: null,
       verifiedAt: null,
@@ -216,6 +219,16 @@ export class MemoryDomainRepository implements DomainRepository {
     if (!current) return null
 
     const next = { ...current, shared }
+    this.domains.set(key(domain, pubkey), next)
+    return next
+  }
+
+  async setCatchAll(domain: string, pubkey: string, catchAll: boolean): Promise<Domain | null> {
+    this.assertAvailable()
+    const current = this.domains.get(key(domain, pubkey))
+    if (!current) return null
+
+    const next = { ...current, catchAll }
     this.domains.set(key(domain, pubkey), next)
     return next
   }
@@ -351,12 +364,63 @@ export class MemoryDomainRepository implements DomainRepository {
     return address
   }
 
+  async createCatchAllAddress(domain: Domain, localPart: string): Promise<Address | null> {
+    this.assertAvailable()
+    const existing = this.addresses.get(key(domain.domain, localPart))
+    if (existing) return existing
+    if (this.deletedAddresses.has(key(domain.domain, localPart))) return null
+
+    const address = {
+      domain: domain.domain,
+      localPart,
+      pubkey: domain.pubkey,
+      ownerPubkey: domain.pubkey,
+      createdBy: domain.pubkey,
+      private: true,
+      createdAt: new Date().toISOString(),
+    }
+    this.addresses.set(key(domain.domain, localPart), address)
+    return address
+  }
+
   async deleteAddress(domain: string, localPart: string, createdBy?: string): Promise<boolean> {
     this.assertAvailable()
     const existing = this.addresses.get(key(domain, localPart))
-    if (createdBy !== undefined && existing?.createdBy !== createdBy) return false
+    if (!existing || (createdBy !== undefined && existing.createdBy !== createdBy)) return false
 
-    return this.addresses.delete(key(domain, localPart))
+    this.addresses.delete(key(domain, localPart))
+    this.deletedAddresses.set(key(domain, localPart), {
+      domain,
+      localPart,
+      ownerPubkey: existing.ownerPubkey,
+      deletedAt: new Date().toISOString(),
+    })
+    return true
+  }
+
+  async listDeletedAddresses(domain: string): Promise<DeletedAddress[]> {
+    this.assertAvailable()
+    return [...this.deletedAddresses.values()]
+      .filter((deleted) => deleted.domain === domain)
+      .sort((left, right) => left.localPart.localeCompare(right.localPart))
+      .map(({ ownerPubkey: _, ...deleted }) => deleted)
+  }
+
+  async isDeletedAddress(domain: string, localPart: string): Promise<boolean> {
+    this.assertAvailable()
+    return this.deletedAddresses.has(key(domain, localPart))
+  }
+
+  async allowDeletedAddresses(domain: string, localPart?: string): Promise<number> {
+    this.assertAvailable()
+    let allowed = 0
+    for (const [deletedKey, deleted] of this.deletedAddresses) {
+      if (deleted.domain === domain && (localPart === undefined || deleted.localPart === localPart)) {
+        this.deletedAddresses.delete(deletedKey)
+        allowed++
+      }
+    }
+    return allowed
   }
 
   async hasOutboundMessage(wrapId: string): Promise<boolean> {
@@ -478,8 +542,10 @@ export class MemoryDomainRepository implements DomainRepository {
 
   // Mirrors the foreign keys: the addresses and the outbound mail of a claim go away with it.
   private dropClaim(domain: string, pubkey: string): boolean {
-    for (const [addressKey, address] of this.addresses) {
-      if (address.domain === domain && address.ownerPubkey === pubkey) this.addresses.delete(addressKey)
+    for (const addresses of [this.addresses, this.deletedAddresses]) {
+      for (const [addressKey, address] of addresses) {
+        if (address.domain === domain && address.ownerPubkey === pubkey) addresses.delete(addressKey)
+      }
     }
     const claim = this.domains.get(key(domain, pubkey))
     for (const [wrapId, message] of this.outbound) {

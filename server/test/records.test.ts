@@ -16,6 +16,7 @@ const domain: Domain = {
   blossomServers: [],
   nip05: 'server',
   shared: false,
+  catchAll: false,
   checks: null,
   checkedAt: null,
   verifiedAt: null,

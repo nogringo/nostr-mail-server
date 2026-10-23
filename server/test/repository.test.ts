@@ -83,6 +83,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '015_add_abuse_report_deletions.sql',
       '016_add_nip05_host.sql',
       '017_add_shared_domains.sql',
+      '018_add_catch_all.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -181,6 +182,33 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect(await repo.findAddress('example.com', 'alice')).toBeNull()
   })
 
+  test('a deleted address waits until it is allowed, and the catch-all creates no deleted one', async () => {
+    const owner = await repo.findVerifiedDomain('example.com')
+    if (!owner) throw new Error('example.com is not verified')
+    expect(await repo.listDeletedAddresses('example.com')).toEqual([
+      { domain: 'example.com', localPart: 'alice', deletedAt: expect.any(String) },
+    ])
+    expect(await repo.isDeletedAddress('example.com', 'alice')).toBe(true)
+    expect(await repo.createCatchAllAddress(owner, 'alice')).toBeNull()
+
+    const caught = await repo.createCatchAllAddress(owner, 'alice+shop')
+    expect(caught).toMatchObject({ localPart: 'alice+shop', pubkey: ALICE, createdBy: ALICE, private: true })
+    expect(await repo.createCatchAllAddress(owner, 'bob')).toEqual(await repo.findAddress('example.com', 'bob'))
+
+    expect(await repo.deleteAddress('example.com', 'alice+shop')).toBe(true)
+    expect(await repo.allowDeletedAddresses('example.com', 'alice')).toBe(1)
+    expect(await repo.allowDeletedAddresses('example.com', 'alice')).toBe(0)
+    expect(await repo.allowDeletedAddresses('example.com')).toBe(1)
+    expect(await repo.listDeletedAddresses('example.com')).toEqual([])
+  })
+
+  test('sets the catch-all of a claim', async () => {
+    expect((await repo.setCatchAll('example.com', ALICE, true))?.catchAll).toBe(true)
+    expect((await repo.findVerifiedDomain('example.com'))?.catchAll).toBe(true)
+    expect(await repo.setCatchAll('example.com', CAROL, true)).toBeNull()
+    expect((await repo.setCatchAll('example.com', ALICE, false))?.catchAll).toBe(false)
+  })
+
   test('an address needs the claim of its owner and a valid local part', async () => {
     await expect(
       repo.putAddress({ domain: 'example.com', localPart: 'eve', pubkey: CAROL, ownerPubkey: CAROL }),
@@ -201,9 +229,12 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
   })
 
   test('the addresses go away when another key takes the domain over', async () => {
+    await repo.putAddress({ domain: 'example.com', localPart: 'gone', pubkey: ALICE, ownerPubkey: ALICE })
+    await repo.deleteAddress('example.com', 'gone')
     await repo.recordChecks('example.com', BOB, checks, true)
 
     expect(await repo.listAddresses('example.com')).toEqual([])
+    expect(await repo.listDeletedAddresses('example.com')).toEqual([])
     expect((await repo.findVerifiedDomain('example.com'))?.pubkey).toBe(BOB)
   })
 

@@ -47,6 +47,8 @@ export interface Domain {
   nip05: Nip05Host
   // Any key may create addresses on it for itself.
   shared: boolean
+  // Mail to an address it does not know creates that address for the owner.
+  catchAll: boolean
   createdAt: string
   records: DnsRecord[]
   // Sent to abuse@ since this key owns the domain.
@@ -84,6 +86,19 @@ export interface Address {
   // NIP-05 does not show which key it reaches.
   private: boolean
   createdAt: string
+}
+
+// Nothing creates it again until the owner of the domain allows it.
+export interface DeletedAddress {
+  domain: string
+  localPart: string
+  address: string
+  deletedAt: string
+}
+
+export interface AddressList {
+  addresses: Address[]
+  deletedAddresses: DeletedAddress[]
 }
 
 // A claim of any key, as an admin of the server sees it.
@@ -193,18 +208,24 @@ export function createApi(
       (await call('PUT', `${domainPath(name)}/nip05`, { nip05 })).domain,
     setShared: async (name: string, shared: boolean): Promise<Domain> =>
       (await call('PUT', `${domainPath(name)}/shared`, { shared })).domain,
+    setCatchAll: async (name: string, catchAll: boolean): Promise<Domain> =>
+      (await call('PUT', `${domainPath(name)}/catch-all`, { catchAll })).domain,
     removeDomain: async (name: string): Promise<void> => {
       await call('DELETE', domainPath(name))
     },
     domainKey: async (name: string): Promise<string> => (await call('GET', `${domainPath(name)}/key`)).nsec,
     replaceDomainKey: async (name: string, key: { nsec: string } | { bunker: string }): Promise<Domain> =>
       (await call('PUT', `${domainPath(name)}/key`, key)).domain,
-    listAddresses: async (name: string): Promise<Address[]> =>
-      (await call('GET', `${domainPath(name)}/addresses`)).addresses,
+    listAddresses: (name: string): Promise<AddressList> => call('GET', `${domainPath(name)}/addresses`),
     putAddress: async (name: string, localPart: string, pubkey: string, isPrivate: boolean): Promise<Address> =>
       (await call('PUT', addressPath(name, localPart), { pubkey, private: isPrivate })).address,
     removeAddress: async (name: string, localPart: string): Promise<void> => {
       await call('DELETE', addressPath(name, localPart))
+    },
+    // Without a local part, every deleted address of the domain.
+    allowDeletedAddresses: async (name: string, localPart?: string): Promise<void> => {
+      const path = `${domainPath(name)}/deleted-addresses`
+      await call('DELETE', localPart === undefined ? path : `${path}/${encodeURIComponent(localPart)}`)
     },
     // An address on a shared domain, delivered to the signing key.
     putCreatedAddress: async (name: string, localPart: string, isPrivate: boolean): Promise<Address> =>

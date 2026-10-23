@@ -1,6 +1,6 @@
 import { normalizeDomain } from './domain.js'
 import { decodeNpub } from './nostr.js'
-import type { DomainRepository } from './types.js'
+import type { Domain, DomainRepository } from './types.js'
 
 // NIP-05 names allow a-z0-9-_. and an unquoted email local part is
 // dot-separated atoms of at most 64 characters.
@@ -42,6 +42,12 @@ export function normalizeLocalPart(value: string): string | null {
   return localPart.length <= 64 && LOCAL_PART.test(localPart) ? localPart : null
 }
 
+// Any unquoted local part, like alice+shop, which only a catch-all creates.
+export function normalizeDotAtom(value: string): string | null {
+  const localPart = value.trim().toLowerCase()
+  return localPart.length <= 64 && DOT_ATOM.test(localPart) ? localPart : null
+}
+
 // npub local parts resolve to their own pubkey on every verified domain.
 export function isReservedLocalPart(localPart: string): boolean {
   return localPart === SMTP_LOCAL_PART || localPart.startsWith('npub1')
@@ -51,11 +57,12 @@ export function isOwnerLocalPart(localPart: string): boolean {
   return OWNER_LOCAL_PARTS.has(localPart)
 }
 
+// alice+shop is an address of its own, not alice with a tag.
 export function parseEmailAddress(value: string): { localPart: string; domain: string } | null {
   const at = value.lastIndexOf('@')
   if (at <= 0) return null
 
-  const localPart = normalizeLocalPart(value.slice(0, at))
+  const localPart = normalizeDotAtom(value.slice(0, at))
   const domain = normalizeDomain(value.slice(at + 1))
   return localPart && domain ? { localPart, domain } : null
 }
@@ -68,6 +75,13 @@ export async function findAddressPubkey(
   localPart: string,
 ): Promise<string | null> {
   return decodeNpub(localPart) ?? (await repo.findAddress(domain, localPart))?.pubkey ?? null
+}
+
+// A catch-all domain creates the addresses it does not know for its owner, private, except the deleted
+// ones. A shared domain catches nothing: its names are left for the keys that create them.
+export async function catchAddress(repo: DomainRepository, domain: Domain, localPart: string): Promise<string | null> {
+  if (!domain.catchAll || domain.shared || isReservedLocalPart(localPart)) return null
+  return (await repo.createCatchAllAddress(domain, localPart))?.pubkey ?? null
 }
 
 // A sender writes from the addresses of the domain that resolve to its key, private ones included.

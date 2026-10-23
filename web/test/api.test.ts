@@ -217,3 +217,20 @@ test('deletes an abuse report as the owner or as an admin', async () => {
     ['DELETE', `${ORIGIN}/admin/abuse-reports/4`],
   ])
 })
+
+test('turns the catch-all on and lets deleted addresses be created again', async () => {
+  const { api, requests } = recordingApi(() =>
+    requests.length === 1 ? Response.json({ domain: { domain: 'example.com' } }) : new Response(null, { status: 204 }),
+  )
+
+  await api.setCatchAll('example.com', true)
+  await api.allowDeletedAddresses('example.com', 'you+news')
+  await api.allowDeletedAddresses('example.com')
+
+  expect(requests.map(({ url, init }) => [init.method, url])).toEqual([
+    ['PUT', `${ORIGIN}/domains/example.com/catch-all`],
+    ['DELETE', `${ORIGIN}/domains/example.com/deleted-addresses/you%2Bnews`],
+    ['DELETE', `${ORIGIN}/domains/example.com/deleted-addresses`],
+  ])
+  expect(requests[0].init.body).toBe('{"catchAll":true}')
+})

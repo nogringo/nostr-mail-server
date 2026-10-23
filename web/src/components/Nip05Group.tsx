@@ -9,6 +9,9 @@ const HOSTS: [Nip05Host, string][] = [
   ['owner', 'My own website'],
 ]
 
+// What NIP-05 allows: a catch-all address like you+news never resolves.
+const NIP05_NAME = /^[a-z0-9._-]+$/
+
 export default function Nip05Group({
   domain,
   api,
@@ -109,8 +112,12 @@ function StaticNames({ domain, api }: { domain: Domain; api: Api }) {
     if (!domain.verifiedAt) return
     setError(null)
     try {
-      const addresses = await api.listAddresses(domain.domain)
-      setListed(addresses.filter((address) => !address.private).map((address) => [address.localPart, address.pubkey]))
+      const { addresses } = await api.listAddresses(domain.domain)
+      setListed(
+        addresses
+          .filter((address) => !address.private && NIP05_NAME.test(address.localPart))
+          .map((address) => [address.localPart, address.pubkey]),
+      )
     } catch (failure) {
       setError(describeError(failure))
     }

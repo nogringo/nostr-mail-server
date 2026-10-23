@@ -180,6 +180,20 @@ test('a key deletes only the addresses it created', async () => {
   await app.close()
 })
 
+test('nobody creates again an address deleted from a shared domain', async () => {
+  const { app, member } = await setup()
+  await request(app, member, 'PUT', '/addresses/example.com/alice')
+  await request(app, member, 'DELETE', '/addresses/example.com/alice')
+
+  const own = await request(app, member, 'PUT', '/addresses/example.com/alice')
+  const other = await request(app, signer(), 'PUT', '/addresses/example.com/alice')
+
+  expect([own.statusCode, other.statusCode]).toEqual([409, 409])
+  expect(own.json()).toEqual({ error: 'address_deleted' })
+
+  await app.close()
+})
+
 test('the owner manages the addresses others created, and takes over the one it points elsewhere', async () => {
   const { repo, app, owner, member } = await setup()
   await request(app, member, 'PUT', '/addresses/example.com/alice')

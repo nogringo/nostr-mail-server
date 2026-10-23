@@ -30,6 +30,7 @@ The project is built in small steps. What exists today:
 | Website: sign in with a signer app's QR code (Amber), an nsec or an ncryptsec | done |
 | NIP-05 served by the owner's own website instead, checked through `_smtp` | done |
 | NIP-05 relayed by the owner's website to this server, private addresses included | done |
+| Catch-all: mail to a new address (`shop@`, `you+news@`) creates it; deleted addresses stay deleted | done |
 
 ## Layout
 

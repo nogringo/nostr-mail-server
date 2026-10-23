@@ -15,6 +15,7 @@ function domainWith(found: RecordId[], fields: Partial<Domain> = {}): Domain {
     blossomServers: [],
     nip05: 'server',
     shared: false,
+    catchAll: false,
     createdAt: '2026-10-20T09:00:00Z',
     records: IDS.map((id) => ({
       id,

@@ -36,6 +36,7 @@ type KeyRequest = FastifyRequest<{ Params: DomainParams; Body: { nsec?: unknown;
 type Nip05Request = FastifyRequest<{ Params: DomainParams; Body: { nip05?: unknown } | undefined }>
 
 type SharedRequest = FastifyRequest<{ Params: DomainParams; Body: { shared?: unknown } | undefined }>
+type CatchAllRequest = FastifyRequest<{ Params: DomainParams; Body: { catchAll?: unknown } | undefined }>
 
 // Domain lifecycle, authenticated with NIP-98: the signing pubkey owns the
 // claims it makes, and a claim becomes the domain's owner once its ownership
@@ -186,8 +187,28 @@ export function registerDomainRoutes(
 
     const shared = request.body?.shared
     if (typeof shared !== 'boolean') return reply.code(400).send({ error: 'invalid_shared' })
+    if (shared && domain.catchAll) return reply.code(409).send({ error: 'domain_catch_all' })
 
     const updated = await repo.setShared(domain.domain, pubkey, shared)
+    if (!updated) return reply.code(404).send({ error: 'domain_not_found' })
+
+    return reply.send({ domain: present(updated, config, null, await listOwnReports(repo, updated)) })
+  })
+
+  // The catch-all would take for the owner the names a shared domain leaves to the keys that create them.
+  app.put('/domains/:domain/catch-all', async (request: CatchAllRequest, reply) => {
+    const pubkey = authenticate(request, reply)
+    if (pubkey === null) return reply
+
+    const domain = await findOwnDomain(repo, request, pubkey)
+    if (!domain) return reply.code(404).send({ error: 'domain_not_found' })
+    if (await repo.findSuspension(domain.domain)) return reply.code(403).send({ error: 'domain_suspended' })
+
+    const catchAll = request.body?.catchAll
+    if (typeof catchAll !== 'boolean') return reply.code(400).send({ error: 'invalid_catch_all' })
+    if (catchAll && domain.shared) return reply.code(409).send({ error: 'domain_shared' })
+
+    const updated = await repo.setCatchAll(domain.domain, pubkey, catchAll)
     if (!updated) return reply.code(404).send({ error: 'domain_not_found' })
 
     return reply.send({ domain: present(updated, config, null, await listOwnReports(repo, updated)) })
@@ -275,6 +296,7 @@ function present(domain: Domain, config: DomainConfig, suspension: Suspension | 
     blossomServers: domain.blossomServers,
     nip05: domain.nip05,
     shared: domain.shared,
+    catchAll: domain.catchAll,
     createdAt: domain.createdAt,
     records: expectedRecords(domain, config).map((record) => ({
       ...record,

@@ -80,7 +80,24 @@ function DomainView({ initial, api, ownPubkey }: { initial: Domain; api: Api; ow
     addresses: (
       <div className="space-y-10">
         <Addresses domain={domain.domain} api={api} ownPubkey={ownPubkey} />
-        <Sharing domain={domain} api={api} onChange={setDomain} />
+        <DomainSwitch
+          title="Catch-all"
+          label={`Mail to any address on ${domain.domain} creates it`}
+          note="An address that does not exist yet, like shop@ or you+news@, is created for your key on its first mail, private, and shows in the list above. Once removed, it is not created again."
+          checked={domain.catchAll}
+          blockedBy={domain.shared ? 'Close the domain to everyone first.' : null}
+          toggle={(catchAll) => api.setCatchAll(domain.domain, catchAll)}
+          onChange={setDomain}
+        />
+        <DomainSwitch
+          title="Open to everyone"
+          label={`Anyone can create addresses on ${domain.domain}`}
+          note="Anyone who signs in on this site creates them for their own key, and they show in the list above, where you can remove them. Names like abuse, postmaster and support stay yours. Closing it again keeps the addresses already created."
+          checked={domain.shared}
+          blockedBy={domain.catchAll ? 'Turn the catch-all off first.' : null}
+          toggle={(shared) => api.setShared(domain.domain, shared)}
+          onChange={setDomain}
+        />
       </div>
     ),
     dns: <DnsPanel domain={domain} api={api} onChange={setDomain} />,
@@ -153,15 +170,32 @@ function DnsPanel({ domain, api, onChange }: { domain: Domain; api: Api; onChang
   )
 }
 
-function Sharing({ domain, api, onChange }: { domain: Domain; api: Api; onChange: (domain: Domain) => void }) {
+// A domain is shared or catch-all, never both: the switch of the other is blocked meanwhile.
+function DomainSwitch({
+  title,
+  label,
+  note,
+  checked,
+  blockedBy,
+  toggle,
+  onChange,
+}: {
+  title: string
+  label: string
+  note: string
+  checked: boolean
+  blockedBy: string | null
+  toggle: (checked: boolean) => Promise<Domain>
+  onChange: (domain: Domain) => void
+}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function share(shared: boolean) {
+  async function change(next: boolean) {
     setBusy(true)
     setError(null)
     try {
-      onChange(await api.setShared(domain.domain, shared))
+      onChange(await toggle(next))
     } catch (failure) {
       setError(describeError(failure))
     } finally {
@@ -171,21 +205,20 @@ function Sharing({ domain, api, onChange }: { domain: Domain; api: Api; onChange
 
   return (
     <div>
-      <h2 className="font-medium">Open to everyone</h2>
-      <label className="mt-3 flex w-fit cursor-pointer items-start gap-2 text-sm">
+      <h2 className="font-medium">{title}</h2>
+      <label className="mt-3 flex w-fit cursor-pointer items-start gap-2 text-sm has-disabled:cursor-default">
         <input
           type="checkbox"
-          checked={domain.shared}
-          disabled={busy}
-          onChange={(event) => share(event.target.checked)}
+          checked={checked}
+          disabled={busy || blockedBy !== null}
+          onChange={(event) => change(event.target.checked)}
           className="mt-1 accent-accent"
         />
         <span>
-          Anyone can create addresses on {domain.domain}
+          {label}
           <span className="block max-w-xl text-muted">
-            Anyone who signs in on this site creates them for their own key, and they show in the list above, where you
-            can remove them. Names like abuse, postmaster and support stay yours. Closing it again keeps the addresses
-            already created.
+            {note}
+            {blockedBy && ` ${blockedBy}`}
           </span>
         </span>
       </label>

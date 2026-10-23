@@ -1,6 +1,12 @@
 import { npubEncode } from 'nostr-tools/nip19'
 import { expect, test } from 'vitest'
-import { isOwnerLocalPart, isReservedLocalPart, normalizeLocalPart, parseEmailAddress } from '../src/address.js'
+import {
+  isOwnerLocalPart,
+  isReservedLocalPart,
+  normalizeDotAtom,
+  normalizeLocalPart,
+  parseEmailAddress,
+} from '../src/address.js'
 
 const NPUB = npubEncode('a'.repeat(64))
 
@@ -16,6 +22,18 @@ test.each(['', 'a..b', '.alice', 'alice.', 'a b', 'alice+tag', 'élodie', 'a@b',
   'normalizeLocalPart rejects %j',
   (value) => {
     expect(normalizeLocalPart(value)).toBeNull()
+  },
+)
+
+test('normalizeDotAtom lowercases any unquoted local part', () => {
+  expect(normalizeDotAtom(' Alice+Shop ')).toBe('alice+shop')
+  expect(normalizeDotAtom("o'brien/news#1=x")).toBe("o'brien/news#1=x")
+})
+
+test.each(['', 'a..b', '.alice', 'a b', '"alice"', 'élodie', 'a@b', 'a'.repeat(65)])(
+  'normalizeDotAtom rejects %j',
+  (value) => {
+    expect(normalizeDotAtom(value)).toBeNull()
   },
 )
 
@@ -42,9 +60,19 @@ test('parseEmailAddress splits and normalizes an address', () => {
   expect(parseEmailAddress('bob@bücher.de')).toEqual({ localPart: 'bob', domain: 'xn--bcher-kva.de' })
 })
 
-test.each(['', 'bob', '@example.com', 'bob@', 'bob@localhost', 'a..b@example.com'])(
-  'parseEmailAddress rejects %j',
-  (value) => {
-    expect(parseEmailAddress(value)).toBeNull()
-  },
-)
+test('parseEmailAddress keeps a plus as part of the address', () => {
+  expect(parseEmailAddress('Bob+News@example.com')).toEqual({ localPart: 'bob+news', domain: 'example.com' })
+})
+
+test.each([
+  '',
+  'bob',
+  '@example.com',
+  'bob@',
+  'bob@localhost',
+  'a..b@example.com',
+  'bob+a b@example.com',
+  `${'a'.repeat(60)}+news@example.com`,
+])('parseEmailAddress rejects %j', (value) => {
+  expect(parseEmailAddress(value)).toBeNull()
+})

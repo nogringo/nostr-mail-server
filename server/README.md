@@ -20,6 +20,7 @@ the host and path of the request. The signing pubkey owns the claims it makes.
 | `POST` | `/domains/{domain}/check` | Look the records up now and store the result, `403 domain_suspended` on a suspended domain |
 | `GET` | `/domains/{domain}/key` | `{"nsec": "nsec1..."}`, the secret of the [domain key](#domain-key), `409 key_in_bunker` when a bunker holds it |
 | `PUT` | `/domains/{domain}/key` | Body `{"nsec": "nsec1..."}` or `{"bunker": "bunker://..."}`: the domain key becomes this one, see [Domain key](#domain-key) |
+| `PUT` | `/domains/{domain}/catch-all` | Body `{"catchAll": true}`: turn the [catch-all](#catch-all) on or off, `400 invalid_catch_all`, `409 domain_shared` while anyone can create addresses on the domain, `403 domain_suspended` |
 | `DELETE` | `/domains/{domain}` | Release the claim: `204`, or `404 domain_not_found` |
 
 A domain is returned as:
@@ -162,9 +163,11 @@ part at a pubkey. Same NIP-98 authentication as the domain routes.
 
 | Method | Path | Action |
 |--------|------|--------|
-| `GET` | `/domains/{domain}/addresses` | List the addresses of the domain |
-| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkey": "<hex or npub>", "private": false}`: `201` when created, `200` when an existing address now points at this pubkey with this privacy |
-| `DELETE` | `/domains/{domain}/addresses/{localPart}` | `204`, or `404 address_not_found` |
+| `GET` | `/domains/{domain}/addresses` | `{"addresses": [...], "deletedAddresses": [...]}`: the addresses of the domain and the [deleted](#deleted-addresses) ones |
+| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkey": "<hex or npub>", "private": false}`: `201` when created, `200` when an existing address now points at this pubkey with this privacy, `409 address_deleted` for a deleted one |
+| `DELETE` | `/domains/{domain}/addresses/{localPart}` | `204`, or `404 address_not_found`. The address joins the deleted ones |
+| `DELETE` | `/domains/{domain}/deleted-addresses/{localPart}` | Let a deleted address be created again: `204`, or `404 deleted_address_not_found` |
+| `DELETE` | `/domains/{domain}/deleted-addresses` | Let every deleted address be created again: `204` |
 
 Every route answers `404 domain_not_found` when the caller has no claim on the
 domain, `409 domain_not_verified` while its claim is not verified and
@@ -190,7 +193,9 @@ nobody can link the address to the key it reaches. `PUT` without `private`
 makes the address public.
 
 A local part is lowercased and keeps to the NIP-05 characters: dot-separated
-runs of `a-z`, `0-9`, `-` and `_`, 64 characters at most. Reserved names
+runs of `a-z`, `0-9`, `-` and `_`, 64 characters at most. The
+[catch-all](#catch-all) creates other ones too, like `you+news`, which the
+owner then manages like the rest, URL-encoded in the path. Reserved names
 cannot be declared:
 
 - `_smtp`, the domain's own key.
@@ -199,6 +204,36 @@ cannot be declared:
 
 The addresses belong to the owner's claim: they are deleted with it, when the
 owner releases the domain or when another key takes it over.
+
+### Deleted addresses
+
+A deleted address is kept aside, and nothing creates it again, neither the
+owner, nor a key on a shared domain, nor the catch-all, until the owner lets it
+go. Mail to it is refused meanwhile: an address that leaked is dropped for
+good, and nobody gets the mail meant for whoever used it before. A deleted
+address is returned as:
+
+```json
+{
+  "localPart": "shop",
+  "address": "shop@example.com",
+  "deletedAt": "2026-10-23T12:00:00.000Z"
+}
+```
+
+The deleted addresses go with the claim, like the addresses.
+
+### Catch-all
+
+With the catch-all on, mail to an address the domain does not know creates it
+for the owner's key, private, the first time it arrives: `shop@` or
+`you+news@` need no declaring. A `+` is no separator: `you+news` is an address
+of its own, which the owner can delete without touching `you`. Reserved names
+and deleted addresses are never created.
+
+A domain is shared or catch-all, not both, since the catch-all would take the
+names a shared domain leaves to the keys that create them: sharing a catch-all
+domain answers `409 domain_catch_all`.
 
 ## Admin
 
@@ -340,7 +375,7 @@ answered with a temporary error so the sending server retries.
 
 | Step | Answer |
 |------|--------|
-| `RCPT TO` on a domain that is not verified or is suspended, or a local part that is neither a declared address, an npub nor `abuse` (`abuse` is taken on a suspended domain, on one the server served once, and on `MX_HOST`) | `550 5.1.1` |
+| `RCPT TO` on a domain that is not verified or is suspended, or a local part that is neither a declared address, an npub, `abuse`, nor one the [catch-all](#catch-all) creates (`abuse` is taken on a suspended domain, on one the server served once, and on `MX_HOST`) | `550 5.1.1` |
 | `RCPT TO` with a pubkey that has no inbox relays (neither DM relays in a kind 10050 nor read relays in a kind 10002), except to `abuse` | `450 4.2.0` |
 | More than 50 recipients | `452 4.5.3` |
 | Message above [`maxMessageBytes`](#settings) | `552 5.3.4` |

@@ -6,7 +6,7 @@ import {
   type SMTPServerEnvelope,
   type SMTPServerSession,
 } from 'smtp-server'
-import { ABUSE_LOCAL_PART, findAddressPubkey, parseEmailAddress } from './address.js'
+import { ABUSE_LOCAL_PART, catchAddress, findAddressPubkey, parseEmailAddress } from './address.js'
 import { authenticateMessage, dmarcRejection, removeForgedResults, summarize } from './authentication.js'
 import { type BlobStore, type EncryptedBlob, encryptBlob } from './blossom.js'
 import { DomainSigners } from './bunker.js'
@@ -127,8 +127,10 @@ export function createSmtpServer(
 
   async function findTargets(name: string, localPart: string): Promise<Target[] | null> {
     const domain = await repo.findVerifiedDomain(name)
-    const pubkey = domain ? await findAddressPubkey(repo, name, localPart) : null
-    return domain && pubkey ? [{ writer: domainWriter(domain), pubkey }] : null
+    if (!domain) return null
+
+    const pubkey = (await findAddressPubkey(repo, name, localPart)) ?? (await catchAddress(repo, domain, localPart))
+    return pubkey ? [{ writer: domainWriter(domain), pubkey }] : null
   }
 
   // A complaint reaches the admins, and the owner of the domain while it has one,

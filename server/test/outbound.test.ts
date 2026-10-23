@@ -110,8 +110,28 @@ test('a sender writes from its npub address and from the names declared for it',
   await expect(checkSender(repo, domain, email('Alice@Example.com'))).resolves.toBeUndefined()
   await expect(checkSender(repo, domain, email('shop@example.com'))).resolves.toBeUndefined()
   await expect(checkSender(repo, domain, email(`${npubEncode(owner.pubkey)}@example.com`))).rejects.toThrow(Refusal)
+  await expect(checkSender(repo, domain, email('alice+news@example.com'))).rejects.toThrow(Refusal)
   await expect(checkSender(repo, domain, email('nobody@example.com'))).rejects.toThrow(Refusal)
   await expect(checkSender(repo, domain, email(`${npubEncode(alice.pubkey)}@other.example`))).rejects.toThrow(Refusal)
+})
+
+test('an address with a plus sends once it exists, like one the catch-all created', async () => {
+  const { repo, domain, alice } = await setup()
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'alice+news',
+    pubkey: alice.pubkey,
+    ownerPubkey: domain.pubkey,
+  })
+
+  await expect(
+    checkSender(repo, domain, {
+      senderPubkey: alice.pubkey,
+      mailFrom: 'Alice+News@example.com',
+      recipients: [],
+      body: { mime: '' },
+    }),
+  ).resolves.toBeUndefined()
 })
 
 test('a domain sends nothing until its SPF and DKIM records are found', async () => {

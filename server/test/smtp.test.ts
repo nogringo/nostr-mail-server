@@ -143,8 +143,41 @@ test('an npub address is delivered without being declared', async () => {
   expect(openWrap(network.published[0].event, carol.sk).rumor.kind).toBe(1301)
 })
 
+test('a catch-all domain creates the address it does not know for its owner, private', async () => {
+  const { repo, network, owner, send } = await setup()
+  await repo.setCatchAll('example.com', owner.pubkey, true)
+  network.inboxRelays.set(owner.pubkey, ['wss://inbox.owner.example/'])
+
+  const info = await send(['Bob+News@example.com', 'shop@example.com'])
+
+  expect(info.rejected).toEqual([])
+  expect(await repo.findAddress('example.com', 'bob+news')).toMatchObject({
+    pubkey: owner.pubkey,
+    createdBy: owner.pubkey,
+    private: true,
+  })
+  expect((await repo.findAddress('example.com', 'shop'))?.pubkey).toBe(owner.pubkey)
+  expect(network.published).toHaveLength(1)
+  expect(openWrap(network.published[0].event, owner.sk).rumor.kind).toBe(1301)
+})
+
+test('a catch-all creates no deleted, reserved or shared address', async () => {
+  const { repo, owner, bob, send } = await setup()
+  await repo.setCatchAll('example.com', owner.pubkey, true)
+  await repo.putAddress({ domain: 'example.com', localPart: 'shop', pubkey: bob.pubkey, ownerPubkey: owner.pubkey })
+  await repo.deleteAddress('example.com', 'shop')
+
+  for (const address of ['shop@example.com', '_smtp@example.com', 'npub1typo@example.com']) {
+    await expect(send([address]), address).rejects.toMatchObject({ responseCode: 550 })
+  }
+  await repo.setShared('example.com', owner.pubkey, true)
+  await expect(send(['zoe@example.com'])).rejects.toMatchObject({ responseCode: 550 })
+  expect((await repo.listAddresses('example.com')).map((address) => address.localPart)).toEqual(['bob'])
+})
+
 test.each([
   'nobody@example.com',
+  'bob+news@example.com',
   '_smtp@example.com',
   'bob@unknown.example',
   'bob@pending.example',

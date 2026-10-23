@@ -7,6 +7,7 @@ import type {
   AllowedKey,
   BridgeKey,
   BunkerKey,
+  DeletedAddress,
   Domain,
   DomainChecks,
   DomainRepository,
@@ -26,8 +27,8 @@ import type {
 
 const DOMAIN_COLUMNS = `
   domain, pubkey, verification_token, dkim_selector, dkim_public_key, dkim_private_key,
-  bridge_pubkey, bridge_private_key, bridge_bunker, blossom_servers, nip05, shared, checks, checked_at, verified_at,
-  created_at
+  bridge_pubkey, bridge_private_key, bridge_bunker, blossom_servers, nip05, shared, catch_all, checks, checked_at,
+  verified_at, created_at
 `
 
 const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, created_by, private, created_at'
@@ -49,6 +50,7 @@ interface DomainRow {
   blossom_servers: string[]
   nip05: Nip05Host
   shared: boolean
+  catch_all: boolean
   checks: DomainChecks | null
   checked_at: Date | null
   verified_at: Date | null
@@ -63,6 +65,12 @@ interface AddressRow {
   created_by: string
   private: boolean
   created_at: Date
+}
+
+interface DeletedAddressRow {
+  domain: string
+  local_part: string
+  deleted_at: Date
 }
 
 interface SuspensionRow {
@@ -240,6 +248,14 @@ export class PgDomainRepository implements DomainRepository {
     const result = await this.pool.query<DomainRow>(
       `update domains set shared = $3 where domain = $1 and pubkey = $2 returning ${DOMAIN_COLUMNS}`,
       [domain, pubkey, shared],
+    )
+    return result.rows[0] ? toDomain(result.rows[0]) : null
+  }
+
+  async setCatchAll(domain: string, pubkey: string, catchAll: boolean): Promise<Domain | null> {
+    const result = await this.pool.query<DomainRow>(
+      `update domains set catch_all = $3 where domain = $1 and pubkey = $2 returning ${DOMAIN_COLUMNS}`,
+      [domain, pubkey, catchAll],
     )
     return result.rows[0] ? toDomain(result.rows[0]) : null
   }
@@ -445,12 +461,63 @@ export class PgDomainRepository implements DomainRepository {
     return result.rows[0] ? toAddress(result.rows[0]) : null
   }
 
+  async createCatchAllAddress(domain: Domain, localPart: string): Promise<Address | null> {
+    // The no-op update returns the address created meanwhile, unchanged.
+    const result = await this.pool.query<AddressRow>(
+      `
+        insert into addresses (domain, local_part, pubkey, owner_pubkey, created_by, private)
+        select $1, $2, $3, $3, $3, true
+        where not exists (select 1 from deleted_addresses where domain = $1 and local_part = $2)
+        on conflict (domain, local_part) do update set local_part = excluded.local_part
+        returning ${ADDRESS_COLUMNS}
+      `,
+      [domain.domain, localPart, domain.pubkey],
+    )
+    return result.rows[0] ? toAddress(result.rows[0]) : null
+  }
+
   async deleteAddress(domain: string, localPart: string, createdBy?: string): Promise<boolean> {
     const result = await this.pool.query(
-      'delete from addresses where domain = $1 and local_part = $2 and created_by = coalesce($3, created_by)',
+      `
+        with deleted as (
+          delete from addresses where domain = $1 and local_part = $2 and created_by = coalesce($3, created_by)
+          returning domain, local_part, owner_pubkey
+        )
+        insert into deleted_addresses (domain, local_part, owner_pubkey)
+        select domain, local_part, owner_pubkey from deleted
+        on conflict (domain, local_part) do update set owner_pubkey = excluded.owner_pubkey, deleted_at = now()
+      `,
       [domain, localPart, createdBy ?? null],
     )
     return (result.rowCount ?? 0) > 0
+  }
+
+  async listDeletedAddresses(domain: string): Promise<DeletedAddress[]> {
+    const result = await this.pool.query<DeletedAddressRow>(
+      'select domain, local_part, deleted_at from deleted_addresses where domain = $1 order by local_part asc',
+      [domain],
+    )
+    return result.rows.map((row) => ({
+      domain: row.domain,
+      localPart: row.local_part,
+      deletedAt: row.deleted_at.toISOString(),
+    }))
+  }
+
+  async isDeletedAddress(domain: string, localPart: string): Promise<boolean> {
+    const result = await this.pool.query('select 1 from deleted_addresses where domain = $1 and local_part = $2', [
+      domain,
+      localPart,
+    ])
+    return (result.rowCount ?? 0) > 0
+  }
+
+  async allowDeletedAddresses(domain: string, localPart?: string): Promise<number> {
+    const result = await this.pool.query(
+      'delete from deleted_addresses where domain = $1 and local_part = coalesce($2, local_part)',
+      [domain, localPart ?? null],
+    )
+    return result.rowCount ?? 0
   }
 
   async hasOutboundMessage(wrapId: string): Promise<boolean> {
@@ -633,6 +700,7 @@ function toDomain(row: DomainRow): Domain {
     blossomServers: row.blossom_servers,
     nip05: row.nip05,
     shared: row.shared,
+    catchAll: row.catch_all,
     checks: row.checks,
     checkedAt: row.checked_at?.toISOString() ?? null,
     verifiedAt: row.verified_at?.toISOString() ?? null,

@@ -72,6 +72,8 @@ export interface Domain {
   nip05: Nip05Host
   // Any key may create addresses on it for itself.
   shared: boolean
+  // Mail to an address it does not know creates that address for the owner.
+  catchAll: boolean
   checks: DomainChecks | null
   checkedAt: string | null
   verifiedAt: string | null
@@ -157,6 +159,13 @@ export interface Address {
 export type NewAddress = Pick<Address, 'domain' | 'localPart' | 'pubkey' | 'ownerPubkey'> &
   Partial<Pick<Address, 'createdBy' | 'private'>>
 
+// Nothing creates it again until the owner of the domain allows it.
+export interface DeletedAddress {
+  domain: string
+  localPart: string
+  deletedAt: string
+}
+
 // A gift wrap addressed to a domain key: queued with its recipients, or refused.
 export type NewOutboundMessage = { wrapId: string; bridgePubkey: string } & (
   | { wrap: NostrEvent; recipients: string[] }
@@ -222,6 +231,7 @@ export interface DomainRepository {
   recordChecks(domain: string, pubkey: string, checks: DomainChecks, verified: boolean): Promise<Domain | null>
   setNip05Host(domain: string, pubkey: string, nip05: Nip05Host): Promise<Domain | null>
   setShared(domain: string, pubkey: string, shared: boolean): Promise<Domain | null>
+  setCatchAll(domain: string, pubkey: string, catchAll: boolean): Promise<Domain | null>
   // The shared domains in service.
   listSharedDomains(): Promise<string[]>
   // Also drops the addresses the claim declared.
@@ -253,8 +263,15 @@ export interface DomainRepository {
   // Creates the address, or changes the privacy of one the same key created. Returns null when it is
   // another key's.
   putCreatedAddress(input: NewAddress & { createdBy: string }): Promise<Address | null>
-  // With `createdBy`, only an address that key created.
+  // Creates the address for the owner of the domain, private, or returns the existing one. Returns null
+  // when it was deleted.
+  createCatchAllAddress(domain: Domain, localPart: string): Promise<Address | null>
+  // With `createdBy`, only an address that key created. The address is kept among the deleted ones.
   deleteAddress(domain: string, localPart: string, createdBy?: string): Promise<boolean>
+  listDeletedAddresses(domain: string): Promise<DeletedAddress[]>
+  isDeletedAddress(domain: string, localPart: string): Promise<boolean>
+  // Lets the address be created again, or all of them without `localPart`. Returns how many it let go.
+  allowDeletedAddresses(domain: string, localPart?: string): Promise<number>
   hasOutboundMessage(wrapId: string): Promise<boolean>
   // Does nothing when the wrap is already known.
   addOutboundMessage(input: NewOutboundMessage): Promise<void>
