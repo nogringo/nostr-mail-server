@@ -2,7 +2,7 @@ import websocket from '@fastify/websocket'
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { verifyEvent } from 'nostr-tools/pure'
 import { asNostrEvent, findTagValue } from '../nostr.js'
-import { GIFT_WRAP_KIND, MAX_CLOCK_SKEW_SECONDS, type Outbox } from '../outbox.js'
+import { checkWrapDate, GIFT_WRAP_KIND, type Outbox } from '../outbox.js'
 import type { DomainRepository } from '../types.js'
 
 // Clients move mail over 32 KB to Blossom, so a wrap stays well under this.
@@ -57,9 +57,8 @@ async function take({ repo, outbox, log }: Relay, value: unknown): Promise<Reply
   if (!wrap) return ['NOTICE', 'invalid: not an event']
   if (!verifyEvent(wrap)) return ['OK', wrap.id, false, 'invalid: bad id or signature']
   if (wrap.kind !== GIFT_WRAP_KIND) return ['OK', wrap.id, false, 'blocked: this relay only takes gift wraps']
-  if (wrap.created_at > Math.floor(Date.now() / 1000) + MAX_CLOCK_SKEW_SECONDS) {
-    return ['OK', wrap.id, false, 'invalid: dated in the future']
-  }
+  const dateProblem = checkWrapDate(wrap)
+  if (dateProblem) return ['OK', wrap.id, false, `invalid: ${dateProblem}`]
 
   try {
     const bridgePubkey = findTagValue(wrap.tags, 'p')

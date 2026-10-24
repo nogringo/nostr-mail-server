@@ -448,13 +448,16 @@ test('a blob found nowhere waits for a retry', async () => {
   })
 })
 
-test('a wrap dated in the future is ignored', async () => {
-  const { repo, alice, domain, outbox } = await setup()
-  const wrap = { ...outboundWrap(alice, domain.bridgePubkey), created_at: Math.floor(Date.now() / 1000) + 7200 }
+test('a wrap dated in the future or more than six days back is ignored', async () => {
+  const { repo, alice, domain, receive } = await setup()
+  const now = Math.floor(Date.now() / 1000)
+  const future = { ...outboundWrap(alice, domain.bridgePubkey), created_at: now + 7200 }
+  const stale = { ...outboundWrap(alice, domain.bridgePubkey), created_at: now - 7 * 24 * 3600 }
+  const late = { ...outboundWrap(alice, domain.bridgePubkey), created_at: now - 5 * 24 * 3600 }
 
-  await outbox.receive(wrap, domain.bridgePubkey)
+  for (const wrap of [future, stale, late]) await receive(wrap)
 
-  expect(repo.outbound.size).toBe(0)
+  expect([...repo.outbound.keys()]).toEqual([late.id])
 })
 
 test('messages that wait for nothing are pruned after a week', async () => {

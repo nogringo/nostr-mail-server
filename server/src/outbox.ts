@@ -11,7 +11,7 @@ import type { KeySigner } from './signer.js'
 import type { Domain, DomainRepository, OutboundMessage, RecipientOutcome } from './types.js'
 
 export const GIFT_WRAP_KIND = 1059
-export const MAX_CLOCK_SKEW_SECONDS = 3600
+const MAX_CLOCK_SKEW_SECONDS = 3600
 const TICK_MS = 30_000
 // Connections drop silently now and then: every subscription is renewed.
 const RENEW_SUBSCRIPTIONS_MS = 10 * 60_000
@@ -22,7 +22,9 @@ const BATCH_SIZE = 20
 const RETRY_DELAYS_MINUTES = [5, 15, 30, 60, 120, 240, 480]
 // RFC 5321 4.5.4.1: a sender gives up after four or five days.
 const GIVE_UP_MS = 4 * 24 * 3600_000
-// Longer than the lookback, so a wrap seen again is still known.
+// NIP-59 dates a wrap up to two days back, then it has as long as an email to get through.
+export const MAX_WRAP_AGE_SECONDS = 2 * 24 * 3600 + GIVE_UP_MS / 1000
+// Longer than a wrap may be old, plus the clock skew, so a wrap sent again is still known and not sent twice.
 const KEEP_MS = 7 * 24 * 3600_000
 // A client may upload a blob well before its wrap gets through, a bunker that is away for instance.
 const UNCLAIMED_BLOB_MS = 24 * 3600_000
@@ -123,7 +125,7 @@ export class Outbox {
   receive(wrap: NostrEvent, bridgePubkey: string): Promise<string | null> {
     const handling = this.handling.get(wrap.id)
     if (handling) return handling
-    if (this.seen.has(wrap.id) || wrap.created_at > now() + MAX_CLOCK_SKEW_SECONDS) return Promise.resolve(null)
+    if (this.seen.has(wrap.id) || checkWrapDate(wrap)) return Promise.resolve(null)
 
     const answer = this.queue(wrap, bridgePubkey)
       .then((refusal) => {
@@ -300,6 +302,13 @@ function isUndelivered(outcome: RecipientOutcome): boolean {
 // SMTP and DKIM work on CRLF lines, clients often write LF.
 function toCrlf(message: Buffer): Buffer {
   return Buffer.from(message.toString('latin1').replace(/\r?\n/g, '\r\n'), 'latin1')
+}
+
+// Returns why the date of the wrap is refused, or null.
+export function checkWrapDate(wrap: NostrEvent): string | null {
+  if (wrap.created_at > now() + MAX_CLOCK_SKEW_SECONDS) return 'dated in the future'
+  if (wrap.created_at < now() - MAX_WRAP_AGE_SECONDS) return 'dated too far back'
+  return null
 }
 
 function now(): number {

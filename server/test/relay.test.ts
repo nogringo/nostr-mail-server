@@ -86,6 +86,7 @@ test('only signed gift wraps to a domain of the server are taken', async () => {
   const elsewhere = giftWrap([['p', signer().pubkey]])
   const untagged = giftWrap([])
   const future = giftWrap([['p', domain.bridgePubkey]], { created_at: Math.floor(Date.now() / 1000) + 7200 })
+  const stale = giftWrap([['p', domain.bridgePubkey]], { created_at: Math.floor(Date.now() / 1000) - 7 * 24 * 3600 })
   const forged = { ...outboundWrap(signer(), domain.bridgePubkey), content: 'forged' }
 
   expect(await exchange(socket, ['EVENT', note])).toEqual([
@@ -103,6 +104,7 @@ test('only signed gift wraps to a domain of the server are taken', async () => {
     ])
   }
   expect(await exchange(socket, ['EVENT', future])).toEqual(['OK', future.id, false, 'invalid: dated in the future'])
+  expect(await exchange(socket, ['EVENT', stale])).toEqual(['OK', stale.id, false, 'invalid: dated too far back'])
   expect(await exchange(socket, ['EVENT', forged])).toEqual(['OK', forged.id, false, 'invalid: bad id or signature'])
   expect(await exchange(socket, ['EVENT', { id: 'x' }])).toEqual(['NOTICE', 'invalid: not an event'])
   socket.terminate()
