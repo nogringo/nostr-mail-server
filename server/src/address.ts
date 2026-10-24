@@ -68,13 +68,13 @@ export function parseEmailAddress(value: string): { localPart: string; domain: s
   return localPart && domain ? { localPart, domain } : null
 }
 
-type Mailbox = Pick<Address, 'pubkey' | 'enabled'>
+type Mailbox = Pick<Address, 'pubkeys' | 'enabled'>
 
-// The pubkey behind an address of a verified domain: an npub local part is its
+// The pubkeys behind an address of a verified domain: an npub local part is its
 // own pubkey, anything else has to be declared.
 export async function findMailbox(repo: DomainRepository, domain: string, localPart: string): Promise<Mailbox | null> {
   const npubPubkey = decodeNpub(localPart)
-  return npubPubkey ? { pubkey: npubPubkey, enabled: true } : await repo.findAddress(domain, localPart)
+  return npubPubkey ? { pubkeys: [npubPubkey], enabled: true } : await repo.findAddress(domain, localPart)
 }
 
 // A catch-all domain creates the addresses it does not know for its owner, private, except the deleted
@@ -94,7 +94,7 @@ export async function catchAddress(
   return address
 }
 
-// A sender writes from the addresses of the domain that resolve to its key, private and disabled ones included.
+// A sender writes from the addresses of the domain that deliver to its key, private and disabled ones included.
 export async function ownsAddress(
   repo: DomainRepository,
   domain: string,
@@ -102,7 +102,7 @@ export async function ownsAddress(
   pubkey: string,
 ): Promise<boolean> {
   const parsed = parseEmailAddress(address)
-  return parsed?.domain === domain && (await findMailbox(repo, domain, parsed.localPart))?.pubkey === pubkey
+  return parsed?.domain === domain && !!(await findMailbox(repo, domain, parsed.localPart))?.pubkeys.includes(pubkey)
 }
 
 // An address mail is relayed to: a dot-atom local part (RFC 5322 3.2.3) kept as

@@ -160,12 +160,12 @@ claim is released.
 ## Addresses
 
 The verified owner of a domain declares its addresses, each pointing a local
-part at a pubkey. Same NIP-98 authentication as the domain routes.
+part at one pubkey or more. Same NIP-98 authentication as the domain routes.
 
 | Method | Path | Action |
 |--------|------|--------|
 | `GET` | `/domains/{domain}/addresses` | `{"addresses": [...], "deletedAddresses": [...]}`: the addresses of the domain and the [deleted](#deleted-addresses) ones |
-| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkey": "<hex or npub>", "private": false, "enabled": true}`: `201` when created, `200` when an existing address now points at this pubkey with this privacy and state, `409 address_deleted` for a deleted one, `403 address_quota` or `429 address_rate_quota` for a new one past the caller's [quotas](#quotas) |
+| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkeys": ["<hex or npub>"], "private": false, "enabled": true}`: `201` when created, `200` when an existing address now points at these pubkeys with this privacy and state, `409 address_deleted` for a deleted one, `403 address_quota` or `429 address_rate_quota` for a new one past the caller's [quotas](#quotas), `403 keys_per_address_quota` for more pubkeys than they allow |
 | `DELETE` | `/domains/{domain}/addresses/{localPart}` | `204`, or `404 address_not_found`. The address joins the deleted ones |
 | `DELETE` | `/domains/{domain}/deleted-addresses/{localPart}` | Let a deleted address be created again: `204`, or `404 deleted_address_not_found` |
 | `DELETE` | `/domains/{domain}/deleted-addresses` | Let every deleted address be created again: `204` |
@@ -174,7 +174,7 @@ Every route answers `404 domain_not_found` when the caller has no claim on the
 domain, `409 domain_not_verified` while its claim is not verified and
 `403 domain_suspended` while the domain is [suspended](#suspension). `PUT`
 also answers `400` with `invalid_local_part`, `reserved_local_part`,
-`invalid_pubkey`, `invalid_private` or `invalid_enabled`.
+`invalid_pubkeys`, `invalid_private` or `invalid_enabled`.
 
 An address is returned as:
 
@@ -182,12 +182,23 @@ An address is returned as:
 {
   "localPart": "alice",
   "address": "alice@example.com",
-  "pubkey": "<hex>",
+  "pubkeys": ["<hex>"],
   "private": false,
   "enabled": true,
   "createdAt": "2026-10-20T12:00:00.000Z"
 }
 ```
+
+An address delivers its mail to every pubkey it lists, each in its own wrap,
+and each of them sends from it, as a SimpleLogin alias does with its
+mailboxes. A repeated pubkey is kept once, and a pubkey without inbox relays
+is skipped while another one has some. [NIP-05](#nip-05) shows one pubkey
+per name, and a Nostr client that finds it writes to it directly, so it shows
+none for an address with several: mail from Nostr clients then comes through
+SMTP and reaches them all. Once the address is back to one pubkey, NIP-05 shows
+it again unless the address is private. Only the owner gives an address
+several pubkeys: one on a [shared domain](#shared-domains) delivers to the key
+that created it.
 
 An address is public unless `private` is `true`. A private address receives
 and sends like a public one, but [NIP-05](#nip-05) does not show its pubkey:
@@ -199,7 +210,7 @@ its mail and drops it, answering `250` like a delivery so the sender cannot
 tell, as SimpleLogin does. NIP-05 hides it too, or Nostr clients would write to
 its key around it. It still sends, and the catch-all does not create it again,
 since it exists. A disabled `abuse` still brings complaints to the owner and the
-admins, just not to its own pubkey. `PUT` without `enabled` enables the address.
+admins, just not to its own pubkeys. `PUT` without `enabled` enables the address.
 
 A local part is lowercased and keeps to the NIP-05 characters: dot-separated
 runs of `a-z`, `0-9`, `-` and `_`, 64 characters at most. The
@@ -331,6 +342,7 @@ admins have none.
 | `addressesPerHour` | The addresses the key created over the last hour, deleted since or not | A new address answers `429 address_rate_quota`, and the catch-all creates none |
 | `pendingDomains` | The key's claims whose ownership record is not found yet | A new claim answers `403 pending_domain_quota` |
 | `recipientsPerDay` | The recipients each domain of the key sent to over the last 24 hours, whoever sent from it | A mail that would go over is [refused](#receiving-the-wraps) |
+| `keysPerAddress` | The pubkeys one address the key declares delivers to. One is always allowed, and an address keeps the pubkeys it has when the quota goes down | Giving an address more answers `403 keys_per_address_quota` |
 
 A key with quotas of its own is returned as
 `{"pubkey": "<hex>", "quotas": {"addresses": 100, "recipientsPerDay": null}, "updatedAt": "<date>"}`:
@@ -392,13 +404,13 @@ On a verified domain, `name` resolves to:
 |--------|--------|
 | `_smtp` | The domain's own key, which clients wrap the mail they send from the domain to |
 | `npub1...` | The pubkey it encodes |
-| A declared address that is neither private nor disabled | Its pubkey |
+| A declared address with one pubkey, neither private nor disabled | Its pubkey |
 
 ```json
 { "names": { "alice": "<hex>" } }
 ```
 
-An unknown, private or disabled name, or any name on a domain that is not verified or is suspended, returns
+An unknown, private or disabled name, one with several pubkeys, or any name on a domain that is not verified or is suspended, returns
 `{"names": {}}`. A missing `name` is `400 name_required`. There is no `relays`
 field: Nostr Mail finds relays through kind 10050.
 
@@ -418,7 +430,7 @@ answered with a temporary error so the sending server retries.
 | Step | Answer |
 |------|--------|
 | `RCPT TO` on a domain that is not verified or is suspended, or a local part that is neither a declared address, an npub, `abuse`, nor one the [catch-all](#catch-all) creates (`abuse` is taken on a suspended domain, on one the server served once, and on `MX_HOST`) | `550 5.1.1` |
-| `RCPT TO` with a pubkey that has no inbox relays (neither DM relays in a kind 10050 nor read relays in a kind 10002), except to `abuse` | `450 4.2.0` |
+| `RCPT TO` on an address none of whose pubkeys has inbox relays (neither DM relays in a kind 10050 nor read relays in a kind 10002), except to `abuse` | `450 4.2.0` |
 | `RCPT TO` on a [disabled](#addresses) address | `250`, and the message is dropped for it |
 | More than 50 recipients | `452 4.5.3` |
 | Message above [`maxMessageBytes`](#settings) | `552 5.3.4` |
@@ -427,7 +439,7 @@ answered with a temporary error so the sending server retries.
 | No Blossom server stores a large message, a recipient's relays all refuse it, or the database fails | `451` |
 | Every recipient's wrap accepted by at least one of its relays | `250` |
 
-Each recipient gets its own gift wrap (NIP-59) of a kind 1301 rumor written by
+Each recipient pubkey gets its own gift wrap (NIP-59) of a kind 1301 rumor written by
 the `_smtp` key of the recipient's domain, as the Nostr Mail protocol describes
 for mail from a legacy sender:
 
@@ -440,7 +452,7 @@ for mail from a legacy sender:
 ### Abuse reports
 
 `abuse@<domain>` (RFC 2142) always exists on a verified domain. It reaches the
-domain owner and every key of `ADMIN_PUBKEYS`, plus the pubkey it is declared
+domain owner and every key of `ADMIN_PUBKEYS`, plus the pubkeys it is declared
 to, if any: the server sends the domain's mail, so its admins hear about
 complaints too. Each of them gets one wrap. A pubkey without inbox relays is
 skipped rather than deferring the complaint, which the server keeps anyway.
@@ -590,7 +602,7 @@ A wrap is refused, and never sent, when:
 |-------|---------|
 | The domain's last check found SPF and DKIM | `<domain> does not send mail until its SPF and DKIM records are found` |
 | The wrap opens with the domain key, its seal is signed by the rumor's author, and the rumor is a kind 1301 | The wrap does not hold an email |
-| `mail-from` is an address of the domain that resolves to the author: a declared name, private or not, or the author's own `npub1...` | `<address> is not an address of the sender` |
+| `mail-from` is an address of the domain that delivers to the author: a declared name among whose pubkeys the author is, private or not, or the author's own `npub1...` | `<address> is not an address of the sender` |
 | 1 to 50 `rcpt-to` tags, each `local@domain` with a dot-atom local part | Not an address mail can be relayed to |
 | The domain stays within the [quota](#quotas) of its owner: its recipients over the last 24 hours, this mail's included | `<domain> sends mail to <n> recipients a day at most` |
 

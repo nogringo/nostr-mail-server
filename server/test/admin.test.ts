@@ -28,8 +28,8 @@ test('GET /admin/domains lists every claim of every key with its address count',
   const alice = signer()
   const bob = signer()
   const verified = await verifyDomain(repo, 'example.com', alice.pubkey)
-  await repo.putAddress({ domain: 'example.com', localPart: 'bob', pubkey: bob.pubkey, ownerPubkey: alice.pubkey })
-  await repo.putAddress({ domain: 'example.com', localPart: 'zoe', pubkey: bob.pubkey, ownerPubkey: alice.pubkey })
+  await repo.putAddress({ domain: 'example.com', localPart: 'bob', pubkeys: [bob.pubkey], ownerPubkey: alice.pubkey })
+  await repo.putAddress({ domain: 'example.com', localPart: 'zoe', pubkeys: [bob.pubkey], ownerPubkey: alice.pubkey })
   await repo.createDomain(claim('pending.example', bob.pubkey))
 
   const response = await request(app, admin, 'GET', '/admin/domains')

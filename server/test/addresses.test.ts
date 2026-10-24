@@ -26,7 +26,7 @@ test('PUT creates an address from an npub and stores the hex pubkey', async () =
   const bob = signer()
 
   const response = await request(app, owner, 'PUT', '/domains/example.com/addresses/Bob', {
-    pubkey: npubEncode(bob.pubkey),
+    pubkeys: [npubEncode(bob.pubkey)],
   })
 
   expect(response.statusCode).toBe(201)
@@ -35,7 +35,7 @@ test('PUT creates an address from an npub and stores the hex pubkey', async () =
       domain: 'example.com',
       localPart: 'bob',
       address: 'bob@example.com',
-      pubkey: bob.pubkey,
+      pubkeys: [bob.pubkey],
       createdBy: owner.pubkey,
       private: false,
       enabled: true,
@@ -47,16 +47,31 @@ test('PUT creates an address from an npub and stores the hex pubkey', async () =
   await app.close()
 })
 
+test('PUT gives an address several pubkeys, each once, in the order given', async () => {
+  const { repo, app, owner } = await setup()
+  const bob = signer()
+
+  const response = await request(app, owner, 'PUT', '/domains/example.com/addresses/team', {
+    pubkeys: [npubEncode(bob.pubkey), owner.pubkey, bob.pubkey],
+  })
+
+  expect(response.statusCode).toBe(201)
+  expect(response.json().address.pubkeys).toEqual([bob.pubkey, owner.pubkey])
+  expect((await repo.findAddress('example.com', 'team'))?.pubkeys).toEqual([bob.pubkey, owner.pubkey])
+
+  await app.close()
+})
+
 test('PUT makes an address private, then public again when private is left out', async () => {
   const { repo, app, owner } = await setup()
   const path = '/domains/example.com/addresses/shop'
 
-  const hidden = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey, private: true })
+  const hidden = await request(app, owner, 'PUT', path, { pubkeys: [owner.pubkey], private: true })
   expect(hidden.statusCode).toBe(201)
   expect(hidden.json().address.private).toBe(true)
   expect((await repo.findAddress('example.com', 'shop'))?.private).toBe(true)
 
-  const shown = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey })
+  const shown = await request(app, owner, 'PUT', path, { pubkeys: [owner.pubkey] })
   expect(shown.statusCode).toBe(200)
   expect(shown.json().address.private).toBe(false)
 
@@ -67,7 +82,7 @@ test.each(['yes', 1, {}])('PUT refuses private %j with invalid_private', async (
   const { repo, app, owner } = await setup()
 
   const response = await request(app, owner, 'PUT', '/domains/example.com/addresses/shop', {
-    pubkey: owner.pubkey,
+    pubkeys: [owner.pubkey],
     private: value,
   })
 
@@ -82,12 +97,12 @@ test('PUT disables an address, then enables it again when enabled is left out', 
   const { repo, app, owner } = await setup()
   const path = '/domains/example.com/addresses/shop'
 
-  const disabled = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey, private: true, enabled: false })
+  const disabled = await request(app, owner, 'PUT', path, { pubkeys: [owner.pubkey], private: true, enabled: false })
   expect(disabled.statusCode).toBe(201)
   expect(disabled.json().address).toMatchObject({ private: true, enabled: false })
   expect((await repo.findAddress('example.com', 'shop'))?.enabled).toBe(false)
 
-  const enabled = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey, private: true })
+  const enabled = await request(app, owner, 'PUT', path, { pubkeys: [owner.pubkey], private: true })
   expect(enabled.statusCode).toBe(200)
   expect(enabled.json().address).toMatchObject({ private: true, enabled: true })
 
@@ -98,7 +113,7 @@ test.each(['no', 0, {}])('PUT refuses enabled %j with invalid_enabled', async (v
   const { repo, app, owner } = await setup()
 
   const response = await request(app, owner, 'PUT', '/domains/example.com/addresses/shop', {
-    pubkey: owner.pubkey,
+    pubkeys: [owner.pubkey],
     enabled: value,
   })
 
@@ -111,13 +126,13 @@ test.each(['no', 0, {}])('PUT refuses enabled %j with invalid_enabled', async (v
 
 test('PUT on an existing address points it at the new pubkey with 200', async () => {
   const { app, owner } = await setup()
-  const first = await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkey: signer().pubkey })
+  const first = await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkeys: [signer().pubkey] })
 
   const carol = signer()
-  const second = await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkey: carol.pubkey })
+  const second = await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkeys: [carol.pubkey] })
 
   expect(second.statusCode).toBe(200)
-  expect(second.json().address.pubkey).toBe(carol.pubkey)
+  expect(second.json().address.pubkeys).toEqual([carol.pubkey])
   expect(second.json().address.createdAt).toBe(first.json().address.createdAt)
 
   await app.close()
@@ -125,8 +140,8 @@ test('PUT on an existing address points it at the new pubkey with 200', async ()
 
 test('GET lists the addresses of the domain', async () => {
   const { app, owner } = await setup()
-  await request(app, owner, 'PUT', '/domains/example.com/addresses/zoe', { pubkey: signer().pubkey })
-  await request(app, owner, 'PUT', '/domains/example.com/addresses/alice', { pubkey: owner.pubkey })
+  await request(app, owner, 'PUT', '/domains/example.com/addresses/zoe', { pubkeys: [signer().pubkey] })
+  await request(app, owner, 'PUT', '/domains/example.com/addresses/alice', { pubkeys: [owner.pubkey] })
 
   const response = await request(app, owner, 'GET', '/domains/example.com/addresses')
 
@@ -141,7 +156,7 @@ test('GET lists the addresses of the domain', async () => {
 
 test('DELETE removes the address', async () => {
   const { app, owner } = await setup()
-  await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkey: signer().pubkey })
+  await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkeys: [signer().pubkey] })
 
   const deleted = await request(app, owner, 'DELETE', '/domains/example.com/addresses/bob')
   const again = await request(app, owner, 'DELETE', '/domains/example.com/addresses/bob')
@@ -156,14 +171,14 @@ test('DELETE removes the address', async () => {
 test('a deleted address is listed and nothing creates it again until the owner allows it', async () => {
   const { app, owner } = await setup()
   const path = '/domains/example.com/addresses/bob'
-  await request(app, owner, 'PUT', path, { pubkey: owner.pubkey })
+  await request(app, owner, 'PUT', path, { pubkeys: [owner.pubkey] })
   await request(app, owner, 'DELETE', path)
 
   const listed = await request(app, owner, 'GET', '/domains/example.com/addresses')
-  const refused = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey })
+  const refused = await request(app, owner, 'PUT', path, { pubkeys: [owner.pubkey] })
   const allowed = await request(app, owner, 'DELETE', '/domains/example.com/deleted-addresses/bob')
   const again = await request(app, owner, 'DELETE', '/domains/example.com/deleted-addresses/bob')
-  const created = await request(app, owner, 'PUT', path, { pubkey: owner.pubkey })
+  const created = await request(app, owner, 'PUT', path, { pubkeys: [owner.pubkey] })
 
   expect(listed.json()).toEqual({
     addresses: [],
@@ -184,7 +199,7 @@ test('a deleted address is listed and nothing creates it again until the owner a
 test('the owner allows every deleted address at once', async () => {
   const { repo, app, owner } = await setup()
   for (const localPart of ['alice', 'bob']) {
-    await request(app, owner, 'PUT', `/domains/example.com/addresses/${localPart}`, { pubkey: owner.pubkey })
+    await request(app, owner, 'PUT', `/domains/example.com/addresses/${localPart}`, { pubkeys: [owner.pubkey] })
     await request(app, owner, 'DELETE', `/domains/example.com/addresses/${localPart}`)
   }
 
@@ -201,7 +216,7 @@ test('the owner manages an address the catch-all created, whatever its local par
   for (const localPart of ['bob+news', 'a/b#c']) await repo.createCatchAllAddress(domain, localPart)
 
   const shown = await request(app, owner, 'PUT', '/domains/example.com/addresses/bob%2Bnews', {
-    pubkey: owner.pubkey,
+    pubkeys: [owner.pubkey],
   })
   const deleted = await request(app, owner, 'DELETE', '/domains/example.com/addresses/a%2Fb%23c')
   const allowed = await request(app, owner, 'DELETE', '/domains/example.com/deleted-addresses/a%2Fb%23c')
@@ -220,7 +235,7 @@ test('only the verified owner manages addresses', async () => {
 
   const stranger = await request(app, signer(), 'GET', '/domains/example.com/addresses')
   const unverified = await request(app, claimant, 'PUT', '/domains/pending.example/addresses/bob', {
-    pubkey: claimant.pubkey,
+    pubkeys: [claimant.pubkey],
   })
 
   expect(stranger.statusCode).toBe(404)
@@ -236,7 +251,7 @@ test('the addresses of a suspended domain cannot be managed', async () => {
   await repo.suspendDomain('example.com')
 
   const listed = await request(app, owner, 'GET', '/domains/example.com/addresses')
-  const added = await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkey: owner.pubkey })
+  const added = await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkeys: [owner.pubkey] })
 
   expect([listed.statusCode, added.statusCode]).toEqual([403, 403])
   expect(added.json()).toEqual({ error: 'domain_suspended' })
@@ -255,7 +270,7 @@ test.each([
   const { app, owner } = await setup()
 
   const response = await request(app, owner, 'PUT', `/domains/example.com/addresses/${localPart}`, {
-    pubkey: owner.pubkey,
+    pubkeys: [owner.pubkey],
   })
 
   expect(response.statusCode).toBe(400)
@@ -264,23 +279,28 @@ test.each([
   await app.close()
 })
 
-test.each([{ pubkey: 'npub1typo' }, { pubkey: 'abc' }, { pubkey: 42 }, {}])(
-  'PUT refuses the body %j with invalid_pubkey',
-  async (body) => {
-    const { app, owner } = await setup()
+test.each([
+  { pubkeys: ['npub1typo'] },
+  { pubkeys: ['abc'] },
+  { pubkeys: [42] },
+  { pubkeys: [] },
+  { pubkeys: 'a'.repeat(64) },
+  { pubkey: 'a'.repeat(64) },
+  {},
+])('PUT refuses the body %j with invalid_pubkeys', async (body) => {
+  const { app, owner } = await setup()
 
-    const response = await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', body)
+  const response = await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', body)
 
-    expect(response.statusCode).toBe(400)
-    expect(response.json()).toEqual({ error: 'invalid_pubkey' })
+  expect(response.statusCode).toBe(400)
+  expect(response.json()).toEqual({ error: 'invalid_pubkeys' })
 
-    await app.close()
-  },
-)
+  await app.close()
+})
 
 test('the addresses go away when another key takes the domain over', async () => {
   const { repo, app, owner } = await setup()
-  await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkey: signer().pubkey })
+  await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkeys: [signer().pubkey] })
 
   await verifyDomain(repo, 'example.com', signer().pubkey)
 
@@ -291,7 +311,7 @@ test('the addresses go away when another key takes the domain over', async () =>
 
 test('the addresses go away when the owner releases the domain', async () => {
   const { repo, app, owner } = await setup()
-  await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkey: signer().pubkey })
+  await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkeys: [signer().pubkey] })
 
   await request(app, owner, 'DELETE', '/domains/example.com')
 

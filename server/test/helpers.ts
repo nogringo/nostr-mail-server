@@ -398,7 +398,8 @@ export class MemoryDomainRepository implements DomainRepository {
     const existing = this.addresses.get(key(input.domain, input.localPart))
     const address = {
       ...input,
-      createdBy: existing?.pubkey === input.pubkey ? existing.createdBy : (input.createdBy ?? input.ownerPubkey),
+      createdBy:
+        existing?.pubkeys.join() === input.pubkeys.join() ? existing.createdBy : (input.createdBy ?? input.ownerPubkey),
       private: input.private ?? false,
       enabled: input.enabled ?? true,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
@@ -429,7 +430,7 @@ export class MemoryDomainRepository implements DomainRepository {
     const address = {
       domain: domain.domain,
       localPart,
-      pubkey: domain.pubkey,
+      pubkeys: [domain.pubkey],
       ownerPubkey: domain.pubkey,
       createdBy: domain.pubkey,
       private: true,

@@ -78,9 +78,15 @@ export interface DomainList {
   usage: QuotaUsage
 }
 
-export type QuotaName = 'addresses' | 'addressesPerHour' | 'pendingDomains' | 'recipientsPerDay'
+export type QuotaName = 'addresses' | 'addressesPerHour' | 'pendingDomains' | 'recipientsPerDay' | 'keysPerAddress'
 
-export const QUOTA_NAMES: QuotaName[] = ['addresses', 'addressesPerHour', 'pendingDomains', 'recipientsPerDay']
+export const QUOTA_NAMES: QuotaName[] = [
+  'addresses',
+  'addressesPerHour',
+  'pendingDomains',
+  'recipientsPerDay',
+  'keysPerAddress',
+]
 
 // What a key may do, null for no limit. The admins have none.
 export type Quotas = Record<QuotaName, number | null>
@@ -101,7 +107,8 @@ export interface Address {
   domain: string
   localPart: string
   address: string
-  pubkey: string
+  // Each one gets the mail and sends from the address. NIP-05 shows none of them when there are several.
+  pubkeys: string[]
   // The owner of the domain, or the key that created it on a shared domain.
   createdBy: string
   // NIP-05 does not show which key it reaches.
@@ -248,8 +255,12 @@ export function createApi(
     replaceDomainKey: async (name: string, key: { nsec: string } | { bunker: string }): Promise<Domain> =>
       (await call('PUT', `${domainPath(name)}/key`, key)).domain,
     listAddresses: (name: string): Promise<AddressList> => call('GET', `${domainPath(name)}/addresses`),
-    putAddress: async (name: string, localPart: string, pubkey: string, settings: AddressSettings): Promise<Address> =>
-      (await call('PUT', addressPath(name, localPart), { pubkey, ...settings })).address,
+    putAddress: async (
+      name: string,
+      localPart: string,
+      pubkeys: string[],
+      settings: AddressSettings,
+    ): Promise<Address> => (await call('PUT', addressPath(name, localPart), { pubkeys, ...settings })).address,
     removeAddress: async (name: string, localPart: string): Promise<void> => {
       await call('DELETE', addressPath(name, localPart))
     },

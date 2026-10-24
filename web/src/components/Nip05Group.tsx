@@ -109,8 +109,11 @@ function StaticNames({ domain, api }: { domain: Domain; api: Api }) {
       const { addresses } = await api.listAddresses(domain.domain)
       setListed(
         addresses
-          .filter((address) => !address.private && address.enabled && NIP05_NAME.test(address.localPart))
-          .map((address) => [address.localPart, address.pubkey]),
+          .filter(
+            (address) =>
+              !address.private && address.enabled && address.pubkeys.length === 1 && NIP05_NAME.test(address.localPart),
+          )
+          .map((address) => [address.localPart, address.pubkeys[0]]),
       )
     } catch (failure) {
       setError(describeError(failure, t.errors))

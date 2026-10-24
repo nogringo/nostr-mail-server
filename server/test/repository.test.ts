@@ -86,6 +86,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '018_add_catch_all.sql',
       '019_add_address_enabled.sql',
       '020_add_quotas.sql',
+      '021_add_address_keys.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -161,11 +162,16 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
   })
 
   test('creates, repoints, lists and deletes addresses', async () => {
-    const created = await repo.putAddress({ domain: 'example.com', localPart: 'bob', pubkey: BOB, ownerPubkey: ALICE })
+    const created = await repo.putAddress({
+      domain: 'example.com',
+      localPart: 'bob',
+      pubkeys: [BOB],
+      ownerPubkey: ALICE,
+    })
     expect(created).toEqual({
       domain: 'example.com',
       localPart: 'bob',
-      pubkey: BOB,
+      pubkeys: [BOB],
       ownerPubkey: ALICE,
       createdBy: ALICE,
       private: false,
@@ -173,11 +179,13 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       createdAt: expect.any(String),
     })
 
-    const repointed = await repo.putAddress({ ...created, pubkey: CAROL, private: true, enabled: false })
-    expect(repointed).toEqual({ ...created, pubkey: CAROL, private: true, enabled: false })
+    const repointed = await repo.putAddress({ ...created, pubkeys: [CAROL], private: true, enabled: false })
+    expect(repointed).toEqual({ ...created, pubkeys: [CAROL], private: true, enabled: false })
     expect(await repo.findAddress('example.com', 'bob')).toEqual(repointed)
+    const several = await repo.putAddress({ ...repointed, pubkeys: [CAROL, BOB] })
+    expect(await repo.findAddress('example.com', 'bob')).toEqual({ ...several, pubkeys: [CAROL, BOB] })
 
-    await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: ALICE, ownerPubkey: ALICE })
+    await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkeys: [ALICE], ownerPubkey: ALICE })
     expect((await repo.listAddresses('example.com')).map((address) => address.localPart)).toEqual(['alice', 'bob'])
 
     expect(await repo.deleteAddress('example.com', 'alice')).toBe(true)
@@ -197,7 +205,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     const caught = await repo.createCatchAllAddress(owner, 'alice+shop')
     expect(caught).toMatchObject({
       localPart: 'alice+shop',
-      pubkey: ALICE,
+      pubkeys: [ALICE],
       createdBy: ALICE,
       private: true,
       enabled: true,
@@ -218,13 +226,18 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect((await repo.setCatchAll('example.com', ALICE, false))?.catchAll).toBe(false)
   })
 
-  test('an address needs the claim of its owner and a valid local part', async () => {
+  test('an address needs the claim of its owner, a valid local part and hex pubkeys', async () => {
     await expect(
-      repo.putAddress({ domain: 'example.com', localPart: 'eve', pubkey: CAROL, ownerPubkey: CAROL }),
+      repo.putAddress({ domain: 'example.com', localPart: 'eve', pubkeys: [CAROL], ownerPubkey: CAROL }),
     ).rejects.toThrow(/foreign key/)
     await expect(
-      repo.putAddress({ domain: 'example.com', localPart: 'Eve', pubkey: CAROL, ownerPubkey: ALICE }),
+      repo.putAddress({ domain: 'example.com', localPart: 'Eve', pubkeys: [CAROL], ownerPubkey: ALICE }),
     ).rejects.toThrow(/addresses_local_part/)
+    for (const pubkeys of [[], [CAROL, 'npub1carol']]) {
+      await expect(
+        repo.putAddress({ domain: 'example.com', localPart: 'eve', pubkeys, ownerPubkey: ALICE }),
+      ).rejects.toThrow(/addresses_pubkeys_hex/)
+    }
   })
 
   test('lists every claim with the addresses it declared', async () => {
@@ -238,7 +251,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
   })
 
   test('the addresses go away when another key takes the domain over', async () => {
-    await repo.putAddress({ domain: 'example.com', localPart: 'gone', pubkey: ALICE, ownerPubkey: ALICE })
+    await repo.putAddress({ domain: 'example.com', localPart: 'gone', pubkeys: [ALICE], ownerPubkey: ALICE })
     await repo.deleteAddress('example.com', 'gone')
     await repo.recordChecks('example.com', BOB, checks, true)
 
@@ -308,7 +321,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
   })
 
   test('counts the addresses a key created, on any domain', async () => {
-    await repo.putAddress({ domain: 'example.com', localPart: 'counted', pubkey: CAROL, ownerPubkey: BOB })
+    await repo.putAddress({ domain: 'example.com', localPart: 'counted', pubkeys: [CAROL], ownerPubkey: BOB })
 
     expect(await repo.countCreatedAddresses(BOB)).toBe(1)
     expect(await repo.countCreatedAddresses(CAROL)).toBe(0)
@@ -340,7 +353,13 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       blossomServers: ['https://blossom.nmail.li', 'https://blossom.yakihonne.com', 'https://blossom.ditto.pub'],
       domainRelays: ['wss://relay.nmail.li/', 'wss://relay.ditto.pub/', 'wss://nos.lol/', 'wss://relay.primal.net/'],
       indexerRelays: ['wss://purplepag.es/', 'wss://user.kindpag.es/', 'wss://indexer.coracle.social/'],
-      quotas: { addresses: null, addressesPerHour: null, pendingDomains: null, recipientsPerDay: null },
+      quotas: {
+        addresses: null,
+        addressesPerHour: null,
+        pendingDomains: null,
+        recipientsPerDay: null,
+        keysPerAddress: null,
+      },
       retiredDomainRelays: {},
     })
 
@@ -350,7 +369,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       blossomServers: ['https://cdn.example.com/blossom'],
       domainRelays: ['wss://relay.example.com/'],
       indexerRelays: ['wss://indexer.example.com/'],
-      quotas: { addresses: 10, addressesPerHour: 5, pendingDomains: 0, recipientsPerDay: null },
+      quotas: { addresses: 10, addressesPerHour: 5, pendingDomains: 0, recipientsPerDay: null, keysPerAddress: 3 },
       retiredDomainRelays: { 'wss://relay.nmail.li/': '2026-10-28T12:00:00.000Z' },
     }
     await repo.updateSettings(changed)
@@ -559,11 +578,11 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect((await repo.setShared('shared.example', CAROL, true))?.shared).toBe(true)
     expect(await repo.listSharedDomains()).toEqual(['shared.example'])
 
-    const member = { domain: 'shared.example', pubkey: ALICE, ownerPubkey: CAROL, createdBy: ALICE }
+    const member = { domain: 'shared.example', pubkeys: [ALICE], ownerPubkey: CAROL, createdBy: ALICE }
     const zoe = await repo.putCreatedAddress({ ...member, localPart: 'zoe' })
     expect(zoe).toMatchObject({ ...member, localPart: 'zoe', private: false, enabled: true })
     await repo.putCreatedAddress({ ...member, localPart: 'alice' })
-    await repo.putAddress({ domain: 'shared.example', localPart: 'carol', pubkey: CAROL, ownerPubkey: CAROL })
+    await repo.putAddress({ domain: 'shared.example', localPart: 'carol', pubkeys: [CAROL], ownerPubkey: CAROL })
     expect((await repo.listCreatedAddresses(ALICE)).map((address) => address.localPart)).toEqual(['alice', 'zoe'])
     expect(await repo.listCreatedAddresses(CAROL)).toEqual([])
 
@@ -573,11 +592,11 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       enabled: false,
     })
     expect(await repo.putCreatedAddress({ ...member, localPart: 'carol' })).toBeNull()
-    expect(await repo.putCreatedAddress({ ...member, pubkey: BOB, createdBy: BOB, localPart: 'zoe' })).toBeNull()
+    expect(await repo.putCreatedAddress({ ...member, pubkeys: [BOB], createdBy: BOB, localPart: 'zoe' })).toBeNull()
 
     await repo.putAddress({ ...member, localPart: 'zoe', createdBy: CAROL, private: false })
     expect((await repo.findAddress('shared.example', 'zoe'))?.createdBy).toBe(ALICE)
-    await repo.putAddress({ ...member, localPart: 'zoe', pubkey: CAROL, createdBy: CAROL })
+    await repo.putAddress({ ...member, localPart: 'zoe', pubkeys: [CAROL], createdBy: CAROL })
     expect((await repo.findAddress('shared.example', 'zoe'))?.createdBy).toBe(CAROL)
 
     expect(await repo.deleteAddress('shared.example', 'carol', ALICE)).toBe(false)

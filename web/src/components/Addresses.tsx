@@ -1,5 +1,5 @@
 import { type SubmitEvent, useEffect, useId, useState } from 'react'
-import { useMessages } from '../i18n'
+import { useLocale, useMessages } from '../i18n'
 import type { Address, AddressSettings, Api, DeletedAddress } from '../lib/api'
 import { describeError } from '../lib/errors'
 import { npubOf, shortNpub } from '../lib/format'
@@ -18,6 +18,7 @@ const byLocalPart = (left: { localPart: string }, right: { localPart: string }) 
 
 export default function Addresses({ domain, api, ownPubkey }: Props) {
   const t = useMessages()
+  const locale = useLocale()
   const [addresses, setAddresses] = useState<Address[]>([])
   const [deleted, setDeleted] = useState<DeletedAddress[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -40,19 +41,23 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
   }
 
   async function add({ localPart, pubkey, isPrivate }: NewAddress) {
-    keep(await api.putAddress(domain, localPart, pubkey, { private: isPrivate }))
+    keep(await api.putAddress(domain, localPart, [pubkey], { private: isPrivate }))
+  }
+
+  async function save(address: Address, pubkeys: string[], settings: AddressSettings = {}) {
+    keep(
+      await api.putAddress(domain, address.localPart, pubkeys, {
+        private: address.private,
+        enabled: address.enabled,
+        ...settings,
+      }),
+    )
   }
 
   async function change(address: Address, settings: AddressSettings) {
     setError(null)
     try {
-      keep(
-        await api.putAddress(domain, address.localPart, address.pubkey, {
-          private: address.private,
-          enabled: address.enabled,
-          ...settings,
-        }),
-      )
+      await save(address, address.pubkeys, settings)
     } catch (failure) {
       setError(describeError(failure, t.errors))
     }
@@ -81,9 +86,12 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
   }
 
   function deliveredTo(address: Address) {
-    if (address.pubkey === ownPubkey) return t.common.yourKey
-    const key = shortNpub(npubOf(address.pubkey))
-    return address.createdBy === address.pubkey ? t.addresses.createdBy(key) : key
+    const keys = address.pubkeys.map((pubkey) => {
+      if (pubkey === ownPubkey) return t.common.yourKey
+      const key = shortNpub(npubOf(pubkey))
+      return address.createdBy === pubkey ? t.addresses.createdBy(key) : key
+    })
+    return new Intl.ListFormat(locale).format(keys)
   }
 
   return (
@@ -91,18 +99,26 @@ export default function Addresses({ domain, api, ownPubkey }: Props) {
       <p className="text-muted text-sm">{t.addresses.intro}</p>
       <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
         <AddressRow address={`${ownNpub}@${domain}`} deliveredTo={t.common.yourKeyAlwaysAvailable} />
-        {addresses.map((address) => (
-          <AddressRow
-            key={address.localPart}
-            address={address.address}
-            deliveredTo={deliveredTo(address)}
-            isPrivate={address.private}
-            enabled={address.enabled}
-            onTogglePrivacy={() => change(address, { private: !address.private })}
-            onToggleEnabled={() => change(address, { enabled: !address.enabled })}
-            onRemove={() => remove(address.localPart)}
-          />
-        ))}
+        {addresses.map((address) => {
+          const several = address.pubkeys.length > 1
+          return (
+            <AddressRow
+              key={address.localPart}
+              address={address.address}
+              deliveredTo={deliveredTo(address)}
+              isPrivate={address.private || several}
+              enabled={address.enabled}
+              onTogglePrivacy={several ? undefined : () => change(address, { private: !address.private })}
+              onToggleEnabled={() => change(address, { enabled: !address.enabled })}
+              onRemove={() => remove(address.localPart)}
+              keys={{
+                pubkeys: address.pubkeys,
+                ownPubkey,
+                onSave: (pubkeys) => save(address, pubkeys),
+              }}
+            />
+          )
+        })}
       </ul>
       <ErrorText>{error}</ErrorText>
       <AddressForm domains={[domain]} defaultPubkey={ownNpub} onAdd={add} />
@@ -171,6 +187,13 @@ function DeletedRow({ address, onAllow }: { address: string; onAllow: () => Prom
   )
 }
 
+interface Keys {
+  pubkeys: string[]
+  ownPubkey: string
+  // Throws when the server refuses them.
+  onSave: (pubkeys: string[]) => Promise<void>
+}
+
 export function AddressRow({
   address,
   deliveredTo,
@@ -179,6 +202,7 @@ export function AddressRow({
   onTogglePrivacy,
   onToggleEnabled,
   onRemove,
+  keys,
 }: {
   address: string
   deliveredTo: string
@@ -187,9 +211,12 @@ export function AddressRow({
   onTogglePrivacy?: () => Promise<void>
   onToggleEnabled?: () => Promise<void>
   onRemove?: () => Promise<void>
+  keys?: Keys
 }) {
   const t = useMessages()
   const [pending, setPending] = useState<'privacy' | 'state' | 'removal' | null>(null)
+  const [editingKeys, setEditingKeys] = useState(false)
+  const keysId = useId()
 
   async function run(action: 'privacy' | 'state' | 'removal', task: () => Promise<void>) {
     setPending(action)
@@ -198,52 +225,152 @@ export function AddressRow({
   }
 
   return (
-    <li className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-      <div className="min-w-0">
-        <p className="break-all font-mono text-sm leading-6">
-          {address}
-          {isPrivate && <Tag>{t.addresses.private}</Tag>}
-          {!enabled && <Tag>{t.addresses.disabled}</Tag>}
-        </p>
-        <p className="text-muted text-sm">{t.common.deliveredTo(deliveredTo)}</p>
+    <li className="px-4 py-3">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+        <div className="min-w-0">
+          <p className="break-all font-mono text-sm leading-6">
+            {address}
+            {isPrivate && <Tag>{t.addresses.private}</Tag>}
+            {!enabled && <Tag>{t.addresses.disabled}</Tag>}
+          </p>
+          <p className="text-muted text-sm">{t.common.deliveredTo(deliveredTo)}</p>
+        </div>
+        <div className="-ml-1.5 flex shrink-0 flex-wrap items-center gap-1 sm:ml-0">
+          <CopyButton text={address} label={address} />
+          {onTogglePrivacy && (
+            <button
+              type="button"
+              onClick={() => run('privacy', onTogglePrivacy)}
+              disabled={pending !== null}
+              aria-label={t.addresses.privacyLabel(address, isPrivate)}
+              className={`${ACTION} hover:text-ink`}
+            >
+              {pending === 'privacy' ? t.common.saving : isPrivate ? t.addresses.makePublic : t.addresses.makePrivate}
+            </button>
+          )}
+          {onToggleEnabled && (
+            <button
+              type="button"
+              onClick={() => run('state', onToggleEnabled)}
+              disabled={pending !== null}
+              aria-label={t.addresses.stateLabel(address, enabled)}
+              className={`${ACTION} hover:text-ink`}
+            >
+              {pending === 'state' ? t.common.saving : enabled ? t.addresses.disable : t.addresses.enable}
+            </button>
+          )}
+          {keys && (
+            <button
+              type="button"
+              onClick={() => setEditingKeys(!editingKeys)}
+              aria-expanded={editingKeys}
+              aria-controls={keysId}
+              aria-label={t.addresses.keysLabel(address)}
+              className={`${ACTION} hover:text-ink`}
+            >
+              {t.addresses.keys}
+            </button>
+          )}
+          {onRemove && (
+            <button
+              type="button"
+              onClick={() => run('removal', onRemove)}
+              disabled={pending !== null}
+              aria-label={t.addresses.removeLabel(address)}
+              className={`${ACTION} hover:text-bad`}
+            >
+              {pending === 'removal' ? t.common.removing : t.common.remove}
+            </button>
+          )}
+        </div>
       </div>
-      <div className="-ml-1.5 flex shrink-0 items-center gap-1 sm:ml-0">
-        <CopyButton text={address} label={address} />
-        {onTogglePrivacy && (
-          <button
-            type="button"
-            onClick={() => run('privacy', onTogglePrivacy)}
-            disabled={pending !== null}
-            aria-label={t.addresses.privacyLabel(address, isPrivate)}
-            className={`${ACTION} hover:text-ink`}
-          >
-            {pending === 'privacy' ? t.common.saving : isPrivate ? t.addresses.makePublic : t.addresses.makePrivate}
-          </button>
-        )}
-        {onToggleEnabled && (
-          <button
-            type="button"
-            onClick={() => run('state', onToggleEnabled)}
-            disabled={pending !== null}
-            aria-label={t.addresses.stateLabel(address, enabled)}
-            className={`${ACTION} hover:text-ink`}
-          >
-            {pending === 'state' ? t.common.saving : enabled ? t.addresses.disable : t.addresses.enable}
-          </button>
-        )}
-        {onRemove && (
-          <button
-            type="button"
-            onClick={() => run('removal', onRemove)}
-            disabled={pending !== null}
-            aria-label={t.addresses.removeLabel(address)}
-            className={`${ACTION} hover:text-bad`}
-          >
-            {pending === 'removal' ? t.common.removing : t.common.remove}
-          </button>
-        )}
-      </div>
+      {keys && editingKeys && <KeyEditor id={keysId} address={address} keys={keys} />}
     </li>
+  )
+}
+
+// Saves on each change. The last key cannot be removed: the address is removed instead.
+function KeyEditor({ id, address, keys }: { id: string; address: string; keys: Keys }) {
+  const t = useMessages()
+  const [key, setKey] = useState('')
+  const [pending, setPending] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const inputId = useId()
+
+  async function save(pubkeys: string[], action: string): Promise<boolean> {
+    setPending(action)
+    setError(null)
+    try {
+      await keys.onSave(pubkeys)
+      return true
+    } catch (failure) {
+      setError(describeError(failure, t.errors))
+      return false
+    } finally {
+      setPending(null)
+    }
+  }
+
+  async function add(event: SubmitEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (key.trim() && (await save([...keys.pubkeys, key.trim()], 'add'))) setKey('')
+  }
+
+  return (
+    <div id={id} className="mt-3 border-rule border-t pt-3">
+      <p className="max-w-xl text-muted text-sm">{t.addresses.keysNote}</p>
+      <ul className="mt-3 space-y-1">
+        {keys.pubkeys.map((pubkey) => {
+          const npub = npubOf(pubkey)
+          return (
+            <li key={pubkey} className="flex items-start justify-between gap-3">
+              <span className="min-w-0 break-all font-mono text-sm leading-6">
+                {npub}
+                {pubkey === keys.ownPubkey && <Tag>{t.common.yourKey}</Tag>}
+              </span>
+              {keys.pubkeys.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    save(
+                      keys.pubkeys.filter((other) => other !== pubkey),
+                      pubkey,
+                    )
+                  }
+                  disabled={pending !== null}
+                  aria-label={t.addresses.removeKeyLabel(npub, address)}
+                  className={`${ACTION} shrink-0 hover:text-bad`}
+                >
+                  {pending === pubkey ? t.addresses.removingKey : t.addresses.removeKey}
+                </button>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+      <form onSubmit={add} className="mt-3">
+        <label htmlFor={inputId} className="block text-sm">
+          {t.addresses.newKey}
+        </label>
+        <div className="mt-1 flex flex-wrap gap-2">
+          <input
+            id={inputId}
+            type="text"
+            autoCapitalize="none"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="npub1..."
+            value={key}
+            onChange={(event) => setKey(event.target.value)}
+            className="min-w-0 flex-1 basis-64 rounded-md border border-rule bg-surface px-3 py-2 font-mono text-sm"
+          />
+          <Button type="submit" variant="secondary" disabled={!key.trim() || pending !== null}>
+            {pending === 'add' ? t.addresses.adding : t.addresses.addKey}
+          </Button>
+        </div>
+      </form>
+      <ErrorText>{error}</ErrorText>
+    </div>
   )
 }
 

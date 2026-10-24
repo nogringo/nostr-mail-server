@@ -96,11 +96,16 @@ test('a rumor claiming another author than its seal is refused', async () => {
 
 test('a sender writes from its npub address and from the names declared for it, even disabled', async () => {
   const { repo, owner, domain, alice, aliceAddress } = await setup()
-  await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: alice.pubkey, ownerPubkey: owner.pubkey })
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'alice',
+    pubkeys: [alice.pubkey],
+    ownerPubkey: owner.pubkey,
+  })
   await repo.putAddress({
     domain: 'example.com',
     localPart: 'shop',
-    pubkey: alice.pubkey,
+    pubkeys: [alice.pubkey],
     ownerPubkey: owner.pubkey,
     private: true,
     enabled: false,
@@ -116,12 +121,33 @@ test('a sender writes from its npub address and from the names declared for it, 
   await expect(checkSender(repo, domain, email(`${npubEncode(alice.pubkey)}@other.example`))).rejects.toThrow(Refusal)
 })
 
+test('each pubkey of an address with several writes from it', async () => {
+  const { repo, owner, domain, alice } = await setup()
+  const bob = signer()
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'team',
+    pubkeys: [alice.pubkey, bob.pubkey],
+    ownerPubkey: owner.pubkey,
+  })
+  const email = (senderPubkey: string) => ({
+    senderPubkey,
+    mailFrom: 'team@example.com',
+    recipients: [],
+    body: { mime: '' },
+  })
+
+  await expect(checkSender(repo, domain, email(alice.pubkey))).resolves.toBeUndefined()
+  await expect(checkSender(repo, domain, email(bob.pubkey))).resolves.toBeUndefined()
+  await expect(checkSender(repo, domain, email(owner.pubkey))).rejects.toThrow(Refusal)
+})
+
 test('an address with a plus sends once it exists, like one the catch-all created', async () => {
   const { repo, domain, alice } = await setup()
   await repo.putAddress({
     domain: 'example.com',
     localPart: 'alice+news',
-    pubkey: alice.pubkey,
+    pubkeys: [alice.pubkey],
     ownerPubkey: domain.pubkey,
   })
 

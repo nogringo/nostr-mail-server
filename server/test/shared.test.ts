@@ -64,7 +64,7 @@ test('a key creates an address for itself on a shared domain', async () => {
       domain: 'example.com',
       localPart: 'alice',
       address: 'alice@example.com',
-      pubkey: member.pubkey,
+      pubkeys: [member.pubkey],
       createdBy: member.pubkey,
       private: true,
       enabled: true,
@@ -72,7 +72,7 @@ test('a key creates an address for itself on a shared domain', async () => {
     },
   })
   expect(await repo.findAddress('example.com', 'alice')).toMatchObject({
-    pubkey: member.pubkey,
+    pubkeys: [member.pubkey],
     ownerPubkey: owner.pubkey,
     createdBy: member.pubkey,
   })
@@ -122,7 +122,7 @@ test('a key creates no address on a domain that is not shared or not in service'
 
 test('an address of the owner or of another key is taken', async () => {
   const { app, owner, member } = await setup()
-  await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkey: owner.pubkey })
+  await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkeys: [owner.pubkey] })
   await request(app, signer(), 'PUT', '/addresses/example.com/carol')
 
   for (const localPart of ['bob', 'carol']) {
@@ -165,7 +165,7 @@ test('a key keeps managing its address once the domain is no longer shared, but 
 
 test('a key deletes only the addresses it created', async () => {
   const { repo, app, owner, member } = await setup()
-  await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkey: member.pubkey })
+  await request(app, owner, 'PUT', '/domains/example.com/addresses/bob', { pubkeys: [member.pubkey] })
   await request(app, signer(), 'PUT', '/addresses/example.com/carol')
   await request(app, member, 'PUT', '/addresses/example.com/alice')
 
@@ -206,12 +206,12 @@ test('the owner manages the addresses others created, and takes over the one it 
     member.pubkey,
   ])
 
-  await request(app, owner, 'PUT', '/domains/example.com/addresses/alice', { pubkey: member.pubkey, private: true })
+  await request(app, owner, 'PUT', '/domains/example.com/addresses/alice', { pubkeys: [member.pubkey], private: true })
   expect(await repo.findAddress('example.com', 'alice')).toMatchObject({ private: true, createdBy: member.pubkey })
 
-  await request(app, owner, 'PUT', '/domains/example.com/addresses/alice', { pubkey: npubEncode(owner.pubkey) })
+  await request(app, owner, 'PUT', '/domains/example.com/addresses/alice', { pubkeys: [npubEncode(owner.pubkey)] })
   expect(await repo.findAddress('example.com', 'alice')).toMatchObject({
-    pubkey: owner.pubkey,
+    pubkeys: [owner.pubkey],
     createdBy: owner.pubkey,
   })
 

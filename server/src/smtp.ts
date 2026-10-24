@@ -112,14 +112,15 @@ export function createSmtpServer(
 
     const added = targets.filter((target) => !accepted.some((recipient) => recipient.pubkey === target.pubkey))
     const inboxes = await Promise.all(added.map((target) => relays.findInbox(target.pubkey)))
-    // A complaint is kept on the server anyway, and goes on to whoever can get it.
-    if (!abuse && inboxes.some((inbox) => !inbox.relays.length)) {
+    // A complaint is kept on the server anyway, and mail to several keys goes on to those that can get it.
+    const unreachable = inboxes.filter((inbox) => !inbox.relays.length).length
+    if (!abuse && unreachable && unreachable === targets.length) {
       throw smtpError(450, '4.2.0 The recipient has no Nostr inbox relays yet')
     }
 
     added.forEach((target, index) => {
       if (inboxes[index].relays.length) accepted.push({ ...target, ...inboxes[index] })
-      else logger.info({ session: session.id, pubkey: target.pubkey }, 'An abuse report recipient has no inbox relays')
+      else logger.info({ session: session.id, pubkey: target.pubkey }, 'A recipient key has no inbox relays')
     })
     recipients.set(session.envelope, accepted)
     if (abuse) {
@@ -134,7 +135,7 @@ export function createSmtpServer(
     const mailbox = (await findMailbox(repo, name, localPart)) ?? (await catchAddress(repo, quotas, domain, localPart))
     if (!mailbox) return null
     // Accepted like the others, so the sender cannot tell the address is disabled.
-    return mailbox.enabled ? [{ writer: domainWriter(domain), pubkey: mailbox.pubkey }] : []
+    return mailbox.enabled ? mailbox.pubkeys.map((pubkey) => ({ writer: domainWriter(domain), pubkey })) : []
   }
 
   // A complaint reaches the admins, and the owner of the domain while it has one,
@@ -144,9 +145,7 @@ export function createSmtpServer(
     const owned = await repo.findOwnedDomain(name)
     if (owned) {
       const declared = await repo.findAddress(name, ABUSE_LOCAL_PART)
-      const pubkeys = [declared?.enabled ? declared.pubkey : null, owned.pubkey, ...adminPubkeys].filter(
-        (pubkey) => pubkey !== null,
-      )
+      const pubkeys = [...(declared?.enabled ? declared.pubkeys : []), owned.pubkey, ...adminPubkeys]
       return [...new Set(pubkeys)].map((pubkey) => ({ writer: domainWriter(owned), pubkey }))
     }
     if (name !== mxHost && !(await repo.hasServedDomain(name)) && !(await repo.findSuspension(name))) return null

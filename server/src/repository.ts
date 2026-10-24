@@ -34,7 +34,7 @@ const DOMAIN_COLUMNS = `
   verified_at, created_at
 `
 
-const ADDRESS_COLUMNS = 'domain, local_part, pubkey, owner_pubkey, created_by, private, enabled, created_at'
+const ADDRESS_COLUMNS = 'domain, local_part, pubkeys, owner_pubkey, created_by, private, enabled, created_at'
 
 const ABUSE_REPORT_COLUMNS = 'id, domain, mail_from, header_from, subject, octet_length(message) as size, received_at'
 
@@ -63,7 +63,7 @@ interface DomainRow {
 interface AddressRow {
   domain: string
   local_part: string
-  pubkey: string
+  pubkeys: string[]
   owner_pubkey: string
   created_by: string
   private: boolean
@@ -503,19 +503,19 @@ export class PgDomainRepository implements DomainRepository {
   async putAddress(input: NewAddress): Promise<Address> {
     const result = await this.pool.query<AddressRow>(
       `
-        insert into addresses (domain, local_part, pubkey, owner_pubkey, created_by, private, enabled)
+        insert into addresses (domain, local_part, pubkeys, owner_pubkey, created_by, private, enabled)
         values ($1, $2, $3, $4, $5, $6, $7)
         on conflict (domain, local_part) do update
-        set pubkey = excluded.pubkey, owner_pubkey = excluded.owner_pubkey, private = excluded.private,
+        set pubkeys = excluded.pubkeys, owner_pubkey = excluded.owner_pubkey, private = excluded.private,
             enabled = excluded.enabled,
-            created_by = case when addresses.pubkey = excluded.pubkey then addresses.created_by
+            created_by = case when addresses.pubkeys = excluded.pubkeys then addresses.created_by
                               else excluded.created_by end
         returning ${ADDRESS_COLUMNS}
       `,
       [
         input.domain,
         input.localPart,
-        input.pubkey,
+        input.pubkeys,
         input.ownerPubkey,
         input.createdBy ?? input.ownerPubkey,
         input.private ?? false,
@@ -528,7 +528,7 @@ export class PgDomainRepository implements DomainRepository {
   async putCreatedAddress(input: NewAddress & { createdBy: string }): Promise<Address | null> {
     const result = await this.pool.query<AddressRow>(
       `
-        insert into addresses (domain, local_part, pubkey, owner_pubkey, created_by, private, enabled)
+        insert into addresses (domain, local_part, pubkeys, owner_pubkey, created_by, private, enabled)
         values ($1, $2, $3, $4, $5, $6, $7)
         on conflict (domain, local_part) do update
         set private = excluded.private, enabled = excluded.enabled
@@ -538,7 +538,7 @@ export class PgDomainRepository implements DomainRepository {
       [
         input.domain,
         input.localPart,
-        input.pubkey,
+        input.pubkeys,
         input.ownerPubkey,
         input.createdBy,
         input.private ?? false,
@@ -552,8 +552,8 @@ export class PgDomainRepository implements DomainRepository {
     // The no-op update returns the address created meanwhile, unchanged.
     const result = await this.pool.query<AddressRow>(
       `
-        insert into addresses (domain, local_part, pubkey, owner_pubkey, created_by, private)
-        select $1, $2, $3, $3, $3, true
+        insert into addresses (domain, local_part, pubkeys, owner_pubkey, created_by, private)
+        select $1, $2, array[$3::text], $3, $3, true
         where not exists (select 1 from deleted_addresses where domain = $1 and local_part = $2)
         on conflict (domain, local_part) do update set local_part = excluded.local_part
         returning ${ADDRESS_COLUMNS}
@@ -848,7 +848,7 @@ function toAddress(row: AddressRow): Address {
   return {
     domain: row.domain,
     localPart: row.local_part,
-    pubkey: row.pubkey,
+    pubkeys: row.pubkeys,
     ownerPubkey: row.owner_pubkey,
     createdBy: row.created_by,
     private: row.private,

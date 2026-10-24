@@ -28,7 +28,7 @@ async function setup(quotas: Partial<Quotas> = {}) {
 }
 
 function putOwned(app: App, owner: Signer, localPart: string) {
-  return request(app, owner, 'PUT', `/domains/example.com/addresses/${localPart}`, { pubkey: owner.pubkey })
+  return request(app, owner, 'PUT', `/domains/example.com/addresses/${localPart}`, { pubkeys: [owner.pubkey] })
 }
 
 test('a key creates no address past its quota, and frees one by deleting an address', async () => {
@@ -38,7 +38,7 @@ test('a key creates no address past its quota, and frees one by deleting an addr
   await putOwned(app, owner, 'b')
   const over = await putOwned(app, owner, 'c')
   const changed = await request(app, owner, 'PUT', '/domains/example.com/addresses/a', {
-    pubkey: owner.pubkey,
+    pubkeys: [owner.pubkey],
     private: true,
   })
   await request(app, owner, 'DELETE', '/domains/example.com/addresses/a')
@@ -55,7 +55,12 @@ test('the addresses of a key count on every domain, shared ones included', async
   const { repo, app, owner } = await setup({ addresses: 2 })
   const member = signer()
   await verifyDomain(repo, 'own.example', member.pubkey)
-  await repo.putAddress({ domain: 'own.example', localPart: 'me', pubkey: member.pubkey, ownerPubkey: member.pubkey })
+  await repo.putAddress({
+    domain: 'own.example',
+    localPart: 'me',
+    pubkeys: [member.pubkey],
+    ownerPubkey: member.pubkey,
+  })
   await repo.setShared('example.com', owner.pubkey, true)
 
   const first = await request(app, member, 'PUT', '/addresses/example.com/alice')
@@ -81,6 +86,23 @@ test('a key creates so many addresses an hour, deleted ones included', async () 
   expect(over.statusCode).toBe(429)
   expect(over.json()).toEqual({ error: 'address_rate_quota' })
   expect(later.statusCode).toBe(201)
+})
+
+test('an address gets keys up to the quota, and keeps those it had past a quota lowered since', async () => {
+  const { app, admin, owner } = await setup({ keysPerAddress: 2 })
+  const [bob, carol] = [signer(), signer()]
+  const path = '/domains/example.com/addresses/team'
+
+  const two = await request(app, owner, 'PUT', path, { pubkeys: [owner.pubkey, bob.pubkey] })
+  const three = await request(app, owner, 'PUT', path, { pubkeys: [owner.pubkey, bob.pubkey, carol.pubkey] })
+  await request(app, admin, 'PUT', `/admin/key-quotas/${owner.pubkey}`, { quotas: { keysPerAddress: 0 } })
+  const kept = await request(app, owner, 'PUT', path, { pubkeys: [owner.pubkey, bob.pubkey], private: true })
+  const fewer = await request(app, owner, 'PUT', path, { pubkeys: [bob.pubkey] })
+  const again = await request(app, owner, 'PUT', path, { pubkeys: [owner.pubkey, bob.pubkey] })
+
+  expect([two.statusCode, three.statusCode]).toEqual([201, 403])
+  expect(three.json()).toEqual({ error: 'keys_per_address_quota' })
+  expect([kept.statusCode, fewer.statusCode, again.statusCode]).toEqual([200, 200, 403])
 })
 
 test('a key claims no domain past its quota of domains waiting for verification', async () => {

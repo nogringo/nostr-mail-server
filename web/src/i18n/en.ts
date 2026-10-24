@@ -131,6 +131,7 @@ const en = {
       addressesPerHour: (limit: number) => `${count(limit, 'new address', 'new addresses')} an hour`,
       pendingDomains: (limit: number) => `${count(limit, 'domain')} waiting for verification at a time`,
       recipientsPerDay: (limit: number) => `${count(limit, 'recipient')} a day for each of your domains`,
+      keysPerAddress: (limit: number) => `${count(Math.max(limit, 1), 'key')} per address`,
       more: 'Ask the admin of this server if you need more.',
     },
   },
@@ -212,7 +213,7 @@ const en = {
 
   addresses: {
     intro:
-      'Mail sent to an address reaches the Nostr key it points at. Anyone can look up the key of a public address (NIP-05), while a private one keeps it hidden. A disabled address drops its mail without the sender knowing, and can still send.',
+      'Mail sent to an address reaches the Nostr keys it points at, and each of them can send from it. Anyone can look up the key of a public address (NIP-05), while a private one keeps it hidden, as does one with several keys. A disabled address drops its mail without the sender knowing, and can still send.',
     createdBy: (key: string) => `${key}, who created it`,
     deleted: (n: number) => `Deleted addresses (${n})`,
     deletedNote:
@@ -230,6 +231,15 @@ const en = {
     disable: 'Disable',
     stateLabel: (address: string, enabled: boolean) => `${enabled ? 'Disable' : 'Enable'} ${address}`,
     removeLabel: (address: string) => `Remove ${address}`,
+    keys: 'Keys',
+    keysLabel: (address: string) => `Change the keys of ${address}`,
+    keysNote:
+      'Every key gets the mail sent to the address and can send from it. With more than one, the address is private: NIP-05 shows a single key, so mail from Nostr apps has to come through this server to reach them all.',
+    newKey: 'New key',
+    addKey: 'Add key',
+    removeKey: 'Remove',
+    removingKey: 'Removing',
+    removeKeyLabel: (npub: string, address: string) => `Remove ${npub} from ${address}`,
     newAddress: 'New address',
     namePlaceholder: 'name',
     deliveredTo: 'Delivered to',
@@ -297,7 +307,7 @@ const en = {
     caddy: 'Caddy, in the site block of the domain',
     withoutRelay: 'Without a relay',
     staticNote:
-      'Add these names to the file, served with Access-Control-Allow-Origin: *, and update it whenever an address changes. Private addresses stay out of it.',
+      'Add these names to the file, served with Access-Control-Allow-Origin: *, and update it whenever an address changes. Private addresses, and those with several keys, stay out of it.',
     names: 'nostr.json names',
   },
 
@@ -376,6 +386,7 @@ const en = {
       addressesPerHour: 'Addresses created per hour',
       pendingDomains: 'Domains waiting for verification',
       recipientsPerDay: 'Recipients per domain per day',
+      keysPerAddress: 'Keys per address',
     },
     notes: {
       addresses:
@@ -384,6 +395,8 @@ const en = {
       pendingDomains:
         'Domains a key connected whose ownership record is not found yet. Each one costs the server a DKIM key.',
       recipientsPerDay: 'Over the last 24 hours, whoever sends from the domain. A mail that would go over is not sent.',
+      keysPerAddress:
+        'The keys one address delivers to. One is always allowed, and an address keeps its keys when the quota goes down.',
     },
     serverTitle: 'Quotas of the server',
     serverNote: 'Every key gets them, except the admins, who have none. An empty field is no limit.',
@@ -432,6 +445,7 @@ const en = {
       invalid_local_part: 'Use letters, digits, dots, hyphens and underscores, 64 characters at most.',
       reserved_local_part: 'This name is reserved.',
       invalid_pubkey: 'Enter an npub or a hex public key.',
+      invalid_pubkeys: 'Enter an npub or a hex public key.',
       address_not_found: 'This address no longer exists. Reload the page.',
       address_taken: 'This address is taken. Pick another name.',
       address_deleted: 'This address was deleted. Its domain owner has to allow it again before anyone creates it.',
@@ -465,6 +479,8 @@ const en = {
         'You have as many domains waiting for verification as this server allows. Verify or remove one first.',
       address_quota: 'You have as many addresses as this server allows. Remove one first, or ask its admin for more.',
       address_rate_quota: 'You created as many addresses as this server allows in an hour. Try again later.',
+      keys_per_address_quota:
+        'This address has as many keys as this server allows. Remove one first, or ask its admin for more.',
       no_extension: 'No Nostr extension found in this browser.',
       invalid_bunker: 'Enter a bunker:// link, the name@domain of your bunker, an nsec or an ncryptsec.',
       bunker_timeout: 'Your bunker did not answer in time.',

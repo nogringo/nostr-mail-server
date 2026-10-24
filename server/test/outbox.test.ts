@@ -237,7 +237,12 @@ test('a domain sends to its daily quota of recipients, and refuses the mail that
 
 test('a named address declared for the sender can send', async () => {
   const { repo, transport, alice, domain, receive } = await setup()
-  await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: alice.pubkey, ownerPubkey: domain.pubkey })
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'alice',
+    pubkeys: [alice.pubkey],
+    ownerPubkey: domain.pubkey,
+  })
 
   await receive(
     outboundWrap(alice, domain.bridgePubkey, {

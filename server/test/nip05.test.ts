@@ -20,7 +20,7 @@ async function setup() {
   const app = buildApp(repo, apiConfig, new FakeDns(), new FakeRelayNetwork(), settingsStore(repo))
   const owner = signer()
   await verifyDomain(repo, 'example.com', owner.pubkey)
-  await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkey: PUBKEY, ownerPubkey: owner.pubkey })
+  await repo.putAddress({ domain: 'example.com', localPart: 'alice', pubkeys: [PUBKEY], ownerPubkey: owner.pubkey })
   return { repo, app, owner }
 }
 
@@ -36,6 +36,23 @@ test('a declared address resolves on its domain, with CORS open', async () => {
   expect(response.statusCode).toBe(200)
   expect(response.headers['access-control-allow-origin']).toBe('*')
   expect(response.json()).toEqual({ names: { alice: PUBKEY } })
+
+  await app.close()
+})
+
+test('an address with several pubkeys resolves to none of them, and to its pubkey once it has one', async () => {
+  const { repo, app, owner } = await setup()
+  const team = { domain: 'example.com', localPart: 'team', ownerPubkey: owner.pubkey }
+  await repo.putAddress({ ...team, pubkeys: [PUBKEY, 'b'.repeat(64)] })
+
+  const several = await lookup(app, 'example.com', '?name=team')
+  const relayed = await app.inject({ method: 'GET', url: '/nip05/example.com?name=team' })
+  await repo.putAddress({ ...team, pubkeys: ['b'.repeat(64)] })
+  const one = await lookup(app, 'example.com', '?name=team')
+
+  expect(several.json()).toEqual({ names: {} })
+  expect(relayed.json()).toEqual({ names: {} })
+  expect(one.json()).toEqual({ names: { team: 'b'.repeat(64) } })
 
   await app.close()
 })
@@ -71,7 +88,7 @@ test.each([{ private: true }, { enabled: false }])('an address with %j does not 
   await repo.putAddress({
     domain: 'example.com',
     localPart: 'shop',
-    pubkey: PUBKEY,
+    pubkeys: [PUBKEY],
     ownerPubkey: owner.pubkey,
     ...settings,
   })
@@ -125,7 +142,7 @@ test('a domain relayed by its own website resolves on its path, whatever the Hos
   await repo.putAddress({
     domain: 'example.com',
     localPart: 'shop',
-    pubkey: PUBKEY,
+    pubkeys: [PUBKEY],
     ownerPubkey: owner.pubkey,
     private: true,
   })

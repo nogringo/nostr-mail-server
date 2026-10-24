@@ -33,6 +33,7 @@ The project is built in small steps. What exists today:
 | Catch-all: mail to a new address (`shop@`, `you+news@`) creates it; deleted addresses stay deleted | done |
 | Disable an address without deleting it: its mail is dropped, the sender cannot tell, and it still sends | done |
 | Website in English and French, opened in the browser's language | done |
+| One address to several npubs, each receiving and sending; NIP-05 then shows none | done |
 
 ## Layout
 

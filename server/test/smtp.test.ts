@@ -81,7 +81,7 @@ async function setup({
   const owner = signer()
   const domain = await verifyDomain(repo, 'example.com', owner.pubkey)
   const bob = signer()
-  await repo.putAddress({ domain: 'example.com', localPart: 'bob', pubkey: bob.pubkey, ownerPubkey: owner.pubkey })
+  await repo.putAddress({ domain: 'example.com', localPart: 'bob', pubkeys: [bob.pubkey], ownerPubkey: owner.pubkey })
   network.inboxRelays.set(bob.pubkey, ['wss://inbox.bob.example/'])
 
   const send = (to: string[], raw = MESSAGE) =>
@@ -122,7 +122,7 @@ test('a private address is delivered like a public one', async () => {
   await repo.putAddress({
     domain: 'example.com',
     localPart: 'shop',
-    pubkey: bob.pubkey,
+    pubkeys: [bob.pubkey],
     ownerPubkey: owner.pubkey,
     private: true,
   })
@@ -140,7 +140,7 @@ test('a disabled address takes the mail and drops it, answered like a delivery',
   await repo.putAddress({
     domain: 'example.com',
     localPart: 'shop',
-    pubkey: carol.pubkey,
+    pubkeys: [carol.pubkey],
     ownerPubkey: owner.pubkey,
     enabled: false,
   })
@@ -173,11 +173,11 @@ test('a catch-all domain creates the address it does not know for its owner, pri
 
   expect(info.rejected).toEqual([])
   expect(await repo.findAddress('example.com', 'bob+news')).toMatchObject({
-    pubkey: owner.pubkey,
+    pubkeys: [owner.pubkey],
     createdBy: owner.pubkey,
     private: true,
   })
-  expect((await repo.findAddress('example.com', 'shop'))?.pubkey).toBe(owner.pubkey)
+  expect((await repo.findAddress('example.com', 'shop'))?.pubkeys).toEqual([owner.pubkey])
   expect(network.published).toHaveLength(1)
   expect(openWrap(network.published[0].event, owner.sk).rumor.kind).toBe(1301)
 })
@@ -202,7 +202,7 @@ test('a catch-all does not take a disabled address back', async () => {
   await repo.putAddress({
     domain: 'example.com',
     localPart: 'shop',
-    pubkey: owner.pubkey,
+    pubkeys: [owner.pubkey],
     ownerPubkey: owner.pubkey,
     enabled: false,
   })
@@ -216,7 +216,7 @@ test('a catch-all does not take a disabled address back', async () => {
 test('a catch-all creates no deleted, reserved or shared address', async () => {
   const { repo, owner, bob, send } = await setup()
   await repo.setCatchAll('example.com', owner.pubkey, true)
-  await repo.putAddress({ domain: 'example.com', localPart: 'shop', pubkey: bob.pubkey, ownerPubkey: owner.pubkey })
+  await repo.putAddress({ domain: 'example.com', localPart: 'shop', pubkeys: [bob.pubkey], ownerPubkey: owner.pubkey })
   await repo.deleteAddress('example.com', 'shop')
 
   for (const address of ['shop@example.com', '_smtp@example.com', 'npub1typo@example.com']) {
@@ -334,6 +334,40 @@ test('a recipient without inbox relays is deferred with 450', async () => {
   await expect(send(['bob@example.com'])).rejects.toMatchObject({ code: 'EENVELOPE', responseCode: 450 })
 })
 
+test('a message to an address with several pubkeys is wrapped to each of them', async () => {
+  const { repo, network, owner, bob, send } = await setup()
+  const carol = signer()
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'team',
+    pubkeys: [bob.pubkey, carol.pubkey],
+    ownerPubkey: owner.pubkey,
+  })
+  network.inboxRelays.set(carol.pubkey, ['wss://inbox.carol.example/'])
+
+  const info = await send(['team@example.com'])
+
+  expect(info.rejected).toEqual([])
+  expect(network.published.map((entry) => entry.relays)).toEqual([
+    ['wss://inbox.bob.example/'],
+    ['wss://inbox.carol.example/'],
+  ])
+  expect(openWrap(network.published[0].event, bob.sk).rumor.kind).toBe(1301)
+  expect(openWrap(network.published[1].event, carol.sk).rumor.kind).toBe(1301)
+})
+
+test('an address with several pubkeys reaches those with inbox relays, and is deferred while none has any', async () => {
+  const { repo, network, owner, bob, send } = await setup()
+  const team = { domain: 'example.com', ownerPubkey: owner.pubkey }
+  await repo.putAddress({ ...team, localPart: 'team', pubkeys: [signer().pubkey, bob.pubkey] })
+  await repo.putAddress({ ...team, localPart: 'new', pubkeys: [signer().pubkey, signer().pubkey] })
+
+  await send(['team@example.com'])
+
+  expect(network.published.map((entry) => entry.event.tags[0][1])).toEqual([bob.pubkey])
+  await expect(send(['new@example.com'])).rejects.toMatchObject({ code: 'EENVELOPE', responseCode: 450 })
+})
+
 test('the message is deferred with 451 when no relay takes it', async () => {
   const { network, send } = await setup()
   network.down.add('wss://inbox.bob.example/')
@@ -365,7 +399,12 @@ test('each recipient gets a wrap sealed by the key of its own domain', async () 
   const owner = signer()
   const other = await verifyDomain(repo, 'other.example', owner.pubkey)
   const dave = signer()
-  await repo.putAddress({ domain: 'other.example', localPart: 'dave', pubkey: dave.pubkey, ownerPubkey: owner.pubkey })
+  await repo.putAddress({
+    domain: 'other.example',
+    localPart: 'dave',
+    pubkeys: [dave.pubkey],
+    ownerPubkey: owner.pubkey,
+  })
   network.inboxRelays.set(dave.pubkey, ['wss://inbox.dave.example/'])
 
   await send(['bob@example.com', 'dave@other.example'])
@@ -409,7 +448,7 @@ test('abuse@ reaches the domain owner and the server admins', async () => {
 
 test('a declared abuse@ reaches its pubkey too, and each pubkey once', async () => {
   const { repo, network, owner, bob, send } = await setup()
-  await repo.putAddress({ domain: 'example.com', localPart: 'abuse', pubkey: bob.pubkey, ownerPubkey: owner.pubkey })
+  await repo.putAddress({ domain: 'example.com', localPart: 'abuse', pubkeys: [bob.pubkey], ownerPubkey: owner.pubkey })
   network.inboxRelays.set(owner.pubkey, ['wss://inbox.owner.example/'])
 
   await send(['abuse@example.com', 'bob@example.com'])
@@ -422,7 +461,7 @@ test('a disabled abuse@ still reaches the owner, but not its own pubkey', async 
   await repo.putAddress({
     domain: 'example.com',
     localPart: 'abuse',
-    pubkey: bob.pubkey,
+    pubkeys: [bob.pubkey],
     ownerPubkey: owner.pubkey,
     enabled: false,
   })
@@ -526,7 +565,12 @@ test('a message above the inline limit is stored on Blossom and referenced from 
 test('every recipient references the same blob', async () => {
   const { repo, network, blobs, domain, bob, send } = await setup()
   const carol = signer()
-  await repo.putAddress({ domain: 'example.com', localPart: 'carol', pubkey: carol.pubkey, ownerPubkey: domain.pubkey })
+  await repo.putAddress({
+    domain: 'example.com',
+    localPart: 'carol',
+    pubkeys: [carol.pubkey],
+    ownerPubkey: domain.pubkey,
+  })
   network.inboxRelays.set(carol.pubkey, ['wss://inbox.carol.example/'])
 
   await send(['bob@example.com', 'carol@example.com'], largeMessage(MAX_INLINE_MIME_BYTES))

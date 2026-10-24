@@ -10,12 +10,13 @@ type DomainRequest = FastifyRequest<{ Params: { domain: string } }>
 
 type AddressRequest = FastifyRequest<{
   Params: { domain: string; localPart: string }
-  Body: { pubkey?: unknown; private?: unknown; enabled?: unknown } | undefined
+  Body: { pubkeys?: unknown; private?: unknown; enabled?: unknown } | undefined
 }>
 
 // Addresses on a domain, managed with NIP-98 by its verified owner, and on a
 // shared domain by the keys that created them. Each one points a local part at
-// a pubkey, which NIP-05 then serves on the domain unless the address is private or disabled.
+// pubkeys. NIP-05 then serves the pubkey of an address with one, unless it is private or disabled.
+// Only the owner gives an address more than one, up to its quota.
 // A disabled address takes its mail and drops it.
 // A deleted address is kept aside, and nothing creates it again until the owner allows it.
 // A new address counts in the quotas of the key that creates it.
@@ -48,8 +49,8 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
     if (!localPart) return reply.code(400).send({ error: 'invalid_local_part' })
     if (isReservedLocalPart(localPart)) return reply.code(400).send({ error: 'reserved_local_part' })
 
-    const target = parsePubkey(request.body?.pubkey)
-    if (!target) return reply.code(400).send({ error: 'invalid_pubkey' })
+    const targets = parsePubkeys(request.body?.pubkeys)
+    if (!targets) return reply.code(400).send({ error: 'invalid_pubkeys' })
 
     const isPrivate = request.body?.private ?? false
     if (typeof isPrivate !== 'boolean') return reply.code(400).send({ error: 'invalid_private' })
@@ -64,11 +65,15 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
     }
     const refusal = existing ? null : await quotas.refuseAddress(pubkey)
     if (refusal) return reply.code(refusalStatus(refusal)).send({ error: refusal })
+    // An address past a quota lowered since keeps its keys, and can lose some.
+    if (targets.length > (existing?.pubkeys.length ?? 1) && (await quotas.refusesKeys(pubkey, targets.length))) {
+      return reply.code(403).send({ error: 'keys_per_address_quota' })
+    }
 
     const address = await repo.putAddress({
       domain: domain.domain,
       localPart,
-      pubkey: target,
+      pubkeys: targets,
       ownerPubkey: pubkey,
       private: isPrivate,
       enabled,
@@ -149,7 +154,7 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
     const address = await repo.putCreatedAddress({
       domain: domain.domain,
       localPart,
-      pubkey,
+      pubkeys: [pubkey],
       ownerPubkey: domain.pubkey,
       createdBy: pubkey,
       private: isPrivate,
@@ -173,6 +178,13 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
 
     return reply.code(204).send()
   })
+}
+
+// One pubkey or more, each an npub or hex, without repeats.
+function parsePubkeys(value: unknown): string[] | null {
+  const pubkeys = Array.isArray(value) ? value.map(parsePubkey) : []
+  if (!pubkeys.length || pubkeys.includes(null)) return null
+  return [...new Set(pubkeys as string[])]
 }
 
 // The hourly quota frees up on its own.
@@ -211,7 +223,7 @@ export function presentAddress(address: Address) {
     domain: address.domain,
     localPart: address.localPart,
     address: `${address.localPart}@${address.domain}`,
-    pubkey: address.pubkey,
+    pubkeys: address.pubkeys,
     createdBy: address.createdBy,
     private: address.private,
     enabled: address.enabled,

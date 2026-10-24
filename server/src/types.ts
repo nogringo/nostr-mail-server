@@ -124,6 +124,8 @@ export interface Quotas {
   pendingDomains: number | null
   // Recipients each of its domains sends mail to in a day.
   recipientsPerDay: number | null
+  // Keys one of its addresses delivers to.
+  keysPerAddress: number | null
 }
 
 export type QuotaName = keyof Quotas
@@ -170,12 +172,13 @@ export type NewDomain = Pick<
 export interface Address {
   domain: string
   localPart: string
-  pubkey: string
+  // Each one gets the mail and sends from the address. NIP-05 serves the key of an address with only one.
+  pubkeys: string[]
   // The verified owner of the domain, whose claim the address goes away with.
   ownerPubkey: string
   // Who manages it besides the owner: the owner, or the key that created it on a shared domain.
   createdBy: string
-  // NIP-05 does not serve it: mail still reaches the pubkey, which nobody can look up.
+  // NIP-05 does not serve it: mail still reaches the pubkeys, which nobody can look up.
   private: boolean
   // Mail to it is taken and dropped, so the sender cannot tell. It still sends.
   enabled: boolean
@@ -183,7 +186,7 @@ export interface Address {
 }
 
 // Public, enabled and created by the owner unless said otherwise.
-export type NewAddress = Pick<Address, 'domain' | 'localPart' | 'pubkey' | 'ownerPubkey'> &
+export type NewAddress = Pick<Address, 'domain' | 'localPart' | 'pubkeys' | 'ownerPubkey'> &
   Partial<Pick<Address, 'createdBy' | 'private' | 'enabled'>>
 
 // Nothing creates it again until the owner of the domain allows it.
@@ -295,8 +298,8 @@ export interface DomainRepository {
   listCreatedAddresses(createdBy: string): Promise<Address[]>
   // The addresses a key created, on its domains and on those of other keys.
   countCreatedAddresses(createdBy: string): Promise<number>
-  // Creates the address, or gives an existing one the new pubkey, privacy and state. An address pointed at
-  // another pubkey is managed by `createdBy` from then on, one that keeps its pubkey by the same key.
+  // Creates the address, or gives an existing one the new pubkeys, privacy and state. An address given other
+  // pubkeys is managed by `createdBy` from then on, one that keeps its pubkeys by the same key.
   putAddress(input: NewAddress): Promise<Address>
   // Creates the address, or changes the privacy and state of one the same key created. Returns null when it is
   // another key's.

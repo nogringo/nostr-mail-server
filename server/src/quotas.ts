@@ -4,13 +4,20 @@ import type { Domain, DomainRepository, PeriodQuota, QuotaName, Quotas } from '.
 const HOUR_MS = 3600_000
 const DAY_MS = 24 * HOUR_MS
 
-export const QUOTA_NAMES: QuotaName[] = ['addresses', 'addressesPerHour', 'pendingDomains', 'recipientsPerDay']
+export const QUOTA_NAMES: QuotaName[] = [
+  'addresses',
+  'addressesPerHour',
+  'pendingDomains',
+  'recipientsPerDay',
+  'keysPerAddress',
+]
 
 export const NO_QUOTAS: Quotas = {
   addresses: null,
   addressesPerHour: null,
   pendingDomains: null,
   recipientsPerDay: null,
+  keysPerAddress: null,
 }
 
 // Why a key creates no address for now.
@@ -52,6 +59,12 @@ export class QuotaKeeper {
 
   async recordAddress(pubkey: string): Promise<void> {
     await this.record('addressesPerHour', pubkey, 1)
+  }
+
+  // One key is always allowed.
+  async refusesKeys(pubkey: string, keys: number): Promise<boolean> {
+    const { keysPerAddress } = await this.of(pubkey)
+    return keysPerAddress !== null && keys > Math.max(keysPerAddress, 1)
   }
 
   async refusesPendingDomain(pubkey: string): Promise<boolean> {

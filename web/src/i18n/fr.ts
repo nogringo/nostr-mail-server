@@ -143,6 +143,7 @@ const fr: Messages = {
       pendingDomains: (limit: number) => `${count(limit, 'domaine', 'domaines')} en attente de vérification à la fois`,
       recipientsPerDay: (limit: number) =>
         `${count(limit, 'destinataire', 'destinataires')} par jour pour chacun de vos domaines`,
+      keysPerAddress: (limit: number) => `${count(Math.max(limit, 1), 'clé', 'clés')} par adresse`,
       more: "Demandez à l'admin de ce serveur si vous avez besoin de plus.",
     },
   },
@@ -224,7 +225,7 @@ const fr: Messages = {
 
   addresses: {
     intro:
-      "Les e-mails envoyés à une adresse arrivent à la clé Nostr vers laquelle elle pointe. Tout le monde peut retrouver la clé d'une adresse publique (NIP-05), alors qu'une adresse privée la garde cachée. Une adresse désactivée jette ses e-mails sans que l'expéditeur le sache, et peut toujours envoyer.",
+      "Les e-mails envoyés à une adresse arrivent aux clés Nostr vers lesquelles elle pointe, et chacune peut envoyer depuis l'adresse. Tout le monde peut retrouver la clé d'une adresse publique (NIP-05), alors qu'une adresse privée la garde cachée, tout comme une adresse à plusieurs clés. Une adresse désactivée jette ses e-mails sans que l'expéditeur le sache, et peut toujours envoyer.",
     createdBy: (key: string) => `${key}, qui l'a créée`,
     deleted: (n: number) => `Adresses supprimées (${n})`,
     deletedNote:
@@ -242,6 +243,15 @@ const fr: Messages = {
     disable: 'Désactiver',
     stateLabel: (address: string, enabled: boolean) => `${enabled ? 'Désactiver' : 'Activer'} ${address}`,
     removeLabel: (address: string) => `Supprimer ${address}`,
+    keys: 'Clés',
+    keysLabel: (address: string) => `Modifier les clés de ${address}`,
+    keysNote:
+      "Chaque clé reçoit les e-mails envoyés à l'adresse et peut envoyer depuis celle-ci. Avec plus d'une clé, l'adresse est privée : le NIP-05 ne montre qu'une seule clé, donc les e-mails des apps Nostr doivent passer par ce serveur pour les atteindre toutes.",
+    newKey: 'Nouvelle clé',
+    addKey: 'Ajouter la clé',
+    removeKey: 'Retirer',
+    removingKey: 'Retrait',
+    removeKeyLabel: (npub: string, address: string) => `Retirer ${npub} de ${address}`,
     newAddress: 'Nouvelle adresse',
     namePlaceholder: 'nom',
     deliveredTo: 'Distribué à',
@@ -309,7 +319,7 @@ const fr: Messages = {
     caddy: 'Caddy, dans le bloc du site du domaine',
     withoutRelay: 'Sans relais',
     staticNote:
-      "Ajoutez ces noms au fichier, servi avec Access-Control-Allow-Origin: *, et mettez-le à jour à chaque changement d'adresse. Les adresses privées n'y figurent pas.",
+      "Ajoutez ces noms au fichier, servi avec Access-Control-Allow-Origin: *, et mettez-le à jour à chaque changement d'adresse. Les adresses privées, et celles à plusieurs clés, n'y figurent pas.",
     names: 'les noms de nostr.json',
   },
 
@@ -390,6 +400,7 @@ const fr: Messages = {
       addressesPerHour: 'Adresses créées par heure',
       pendingDomains: 'Domaines en attente de vérification',
       recipientsPerDay: 'Destinataires par domaine et par jour',
+      keysPerAddress: 'Clés par adresse',
     },
     notes: {
       addresses:
@@ -399,6 +410,8 @@ const fr: Messages = {
         "Les domaines connectés par une clé dont l'enregistrement de propriété n'est pas encore trouvé. Chacun coûte au serveur une clé DKIM.",
       recipientsPerDay:
         "Sur les dernières 24 heures, quel que soit l'expéditeur sur le domaine. Un e-mail qui dépasserait la limite n'est pas envoyé.",
+      keysPerAddress:
+        'Les clés auxquelles une adresse est distribuée. Une clé est toujours permise, et une adresse garde ses clés quand le quota baisse.',
     },
     serverTitle: 'Quotas du serveur',
     serverNote: "Chaque clé y est soumise, sauf les admins, qui n'en ont aucun. Un champ vide signifie sans limite.",
@@ -447,6 +460,7 @@ const fr: Messages = {
       invalid_local_part: 'Utilisez des lettres, chiffres, points, tirets et tirets bas, 64 caractères au plus.',
       reserved_local_part: 'Ce nom est réservé.',
       invalid_pubkey: 'Saisissez un npub ou une clé publique hexadécimale.',
+      invalid_pubkeys: 'Saisissez un npub ou une clé publique hexadécimale.',
       address_not_found: "Cette adresse n'existe plus. Rechargez la page.",
       address_taken: 'Cette adresse est prise. Choisissez un autre nom.',
       address_deleted:
@@ -480,6 +494,8 @@ const fr: Messages = {
         "Vous avez autant d'adresses que ce serveur le permet. Supprimez-en une d'abord, ou demandez-en plus à son admin.",
       address_rate_quota:
         "Vous avez créé autant d'adresses en une heure que ce serveur le permet. Réessayez plus tard.",
+      keys_per_address_quota:
+        "Cette adresse a autant de clés que ce serveur le permet. Retirez-en une d'abord, ou demandez-en plus à son admin.",
       invalid_blossom_servers: "Saisissez au moins une URL https:// d'un serveur public, une par ligne.",
       invalid_domain_relays: "Saisissez au moins une URL wss:// d'un relais public, une par ligne.",
       invalid_indexer_relays: "Saisissez au moins une URL wss:// d'un relais public, une par ligne.",
