@@ -47,9 +47,37 @@ test('a large email points to its blob', async () => {
   })
 })
 
+test('a public email may point to a blob in the clear', async () => {
+  const { domain, alice } = await setup()
+  const sha256 = 'a'.repeat(64)
+  const wrap = outboundWrap(alice, domain.bridgePubkey, { content: '', tags: [['x', sha256]] })
+
+  expect((await openOutboundWrap(wrap, heldKey(domain))).body).toEqual({ blob: { sha256 } })
+})
+
 test.each([
   ['an empty email', { content: '' }],
-  ['a blob without its key', { content: '', tags: [['x', 'a'.repeat(64)]] }],
+  [
+    'a blob without its key',
+    {
+      content: '',
+      tags: [
+        ['x', 'a'.repeat(64)],
+        ['encryption-algorithm', 'aes-gcm'],
+      ],
+    },
+  ],
+  [
+    'a blob encrypted otherwise',
+    {
+      content: '',
+      tags: [
+        ['x', 'a'.repeat(64)],
+        ['encryption-algorithm', 'chacha20'],
+      ],
+    },
+  ],
+  ['a blob by an invalid hash', { content: '', tags: [['x', 'abc']] }],
   ['no rcpt-to', { rcptTo: [] }],
   ['a recipient without a domain', { rcptTo: ['bob@'] }],
   ['a recipient that breaks the envelope', { rcptTo: ['bob>@remote.example'] }],

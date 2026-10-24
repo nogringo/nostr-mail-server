@@ -336,8 +336,12 @@ const en = {
       'Mail sent to abuse@ of the domains, newest first. Their owners get it too, and keep the reports you delete.',
     toFix: (n: number) => `${count(n, 'record')} to fix`,
     allFound: 'Every record found',
-    serverNote:
-      'Checked when the page loads. Connected domains point their MX at the name of the A record and include the name of the SPF record in their own. The PTR record is set at the hosting provider: receivers trust the mail this server sends when its address names it back. The server works over IPv4, so its name should have no AAAA record.',
+    serverHints: {
+      host: 'The MX of the connected domains. No AAAA.',
+      ptr: 'Set at the hosting provider.',
+      spf: 'Included in the SPF of the connected domains.',
+      nostr: 'The relay and Blossom server. A CNAME to the site works too.',
+    },
     namedAddresses: (n: number) => count(n, 'named address', 'named addresses'),
     openToEveryone: 'open to everyone',
     claimed: (when: string) => `claimed ${when}`,
@@ -422,9 +426,15 @@ const en = {
       label: 'Largest message, in MB',
       unit: 'MB',
     },
+    blobStorage: {
+      title: 'Blob storage',
+      note: "Uploads to the server's built-in Blossom server are refused once the blobs it holds reach this size together. A blob goes soon after its email is sent, or a day after its upload. Keep it well above the largest message.",
+      label: 'Blob storage, in MB',
+      unit: 'MB',
+    },
     blossom: {
       title: 'Blossom servers',
-      note: "Given to new domains for the mail too large for a gift wrap, and used by the server's own key. Connected domains keep theirs.",
+      note: "Given to new domains for the mail they receive that is too large for a gift wrap, and used by the server's own key. Connected domains keep theirs. The mail domains send goes through the server's built-in Blossom server.",
     },
     indexerRelays: {
       title: 'Indexer relays',
@@ -466,6 +476,7 @@ const en = {
       allowed_key_not_found: 'This key is no longer allowed. Reload the page.',
       abuse_report_not_found: 'This report no longer exists. Reload the page.',
       invalid_max_message_bytes: 'Enter a size between 1 and 1024 MB.',
+      invalid_max_blob_storage_bytes: 'Enter a size between 1 MB and 1 TB.',
       invalid_blossom_servers: 'Enter at least one https:// URL of a public server, one per line.',
       invalid_indexer_relays: 'Enter at least one wss:// URL of a public relay, one per line.',
       invalid_quotas: 'Enter whole numbers, or leave a field empty.',

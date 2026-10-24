@@ -2,12 +2,12 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { isPublicHostname } from './domain.js'
 import type { KeySigner } from './signer.js'
 
-const AUTH_KIND = 24242
+export const AUTH_KIND = 24242
 const AUTH_TTL_SECONDS = 300
 const UPLOAD_TIMEOUT_MS = 60_000
 const DOWNLOAD_TIMEOUT_MS = 60_000
 const MAX_REDIRECTS = 3
-const AUTH_TAG_BYTES = 16
+export const AUTH_TAG_BYTES = 16
 
 export interface EncryptedBlob {
   bytes: Buffer<ArrayBuffer>
@@ -91,10 +91,13 @@ async function downloadFrom(server: string, sha256: string, maxBytes: number): P
 
 export async function readLimited(response: Response, maxBytes: number): Promise<Buffer | null> {
   if (!response.body || Number(response.headers.get('content-length')) > maxBytes) return null
+  return collectLimited(response.body, maxBytes)
+}
 
+export async function collectLimited(stream: AsyncIterable<Uint8Array>, maxBytes: number): Promise<Buffer | null> {
   const chunks: Uint8Array[] = []
   let size = 0
-  for await (const chunk of response.body) {
+  for await (const chunk of stream) {
     size += chunk.length
     if (size > maxBytes) return null
     chunks.push(chunk)

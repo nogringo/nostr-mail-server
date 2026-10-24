@@ -8,6 +8,12 @@ const RETIRED_RELAY_MS = 7 * 24 * 3600_000
 // RFC 5321 4.5.3.1.7: a server accepts messages of 64K octets at least.
 const SMALLEST_SIZE_LIMIT = 64 * 1024
 const LARGEST_SIZE_LIMIT = 1024 * 1024 * 1024
+const LARGEST_STORAGE_LIMIT = 1024 * LARGEST_SIZE_LIMIT
+
+const SIZE_SETTINGS = [
+  ['maxMessageBytes', LARGEST_SIZE_LIMIT, 'invalid_max_message_bytes'],
+  ['maxBlobStorageBytes', LARGEST_STORAGE_LIMIT, 'invalid_max_blob_storage_bytes'],
+] as const
 
 const URL_SETTINGS = [
   ['blossomServers', normalizeBlossomUrl, 'invalid_blossom_servers'],
@@ -29,7 +35,7 @@ export class SettingsStore {
   }
 
   get current(): ServerSettings {
-    const { domainRelays: _, retiredDomainRelays: __, ...settings } = this.stored
+    const { domainRelays: _, domainBlossomServer: __, retiredDomainRelays: ___, ...settings } = this.stored
     return settings
   }
 
@@ -38,11 +44,11 @@ export class SettingsStore {
     return this.current
   }
 
-  // Makes the server's relay the one the domain keys announce. Returns whether they announced others, which
-  // the outbox keeps listening to for a while.
-  async announce(relay: string, now = Date.now()): Promise<boolean> {
+  // Makes the server's relay and Blossom server the ones the domain keys announce. Returns whether they
+  // announced others: the outbox keeps listening to the relays a while.
+  async announce(relay: string, blossomServer: string, now = Date.now()): Promise<boolean> {
     const before = this.stored.domainRelays
-    if (before.length === 1 && before[0] === relay) return false
+    if (before.length === 1 && before[0] === relay && this.stored.domainBlossomServer === blossomServer) return false
 
     const retired: RetiredRelays = Object.fromEntries(
       Object.entries(this.stored.retiredDomainRelays).filter(
@@ -54,7 +60,12 @@ export class SettingsStore {
       if (announced !== relay) retired[announced] = until
     }
 
-    await this.store({ ...this.stored, domainRelays: [relay], retiredDomainRelays: retired })
+    await this.store({
+      ...this.stored,
+      domainRelays: [relay],
+      domainBlossomServer: blossomServer,
+      retiredDomainRelays: retired,
+    })
     return true
   }
 
@@ -82,17 +93,14 @@ export function parseSettingsChanges(body: unknown): { changes: SettingsChanges 
     if (typeof input.openRegistration !== 'boolean') return { error: 'invalid_open_registration' }
     changes.openRegistration = input.openRegistration
   }
-  if ('maxMessageBytes' in input) {
-    const bytes = input.maxMessageBytes
-    if (
-      typeof bytes !== 'number' ||
-      !Number.isInteger(bytes) ||
-      bytes < SMALLEST_SIZE_LIMIT ||
-      bytes > LARGEST_SIZE_LIMIT
-    ) {
-      return { error: 'invalid_max_message_bytes' }
+  for (const [name, largest, error] of SIZE_SETTINGS) {
+    if (!(name in input)) continue
+
+    const bytes = input[name]
+    if (typeof bytes !== 'number' || !Number.isInteger(bytes) || bytes < SMALLEST_SIZE_LIMIT || bytes > largest) {
+      return { error }
     }
-    changes.maxMessageBytes = bytes
+    changes[name] = bytes
   }
   for (const [name, normalize, error] of URL_SETTINGS) {
     if (!(name in input)) continue

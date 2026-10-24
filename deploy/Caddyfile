@@ -10,7 +10,7 @@
 {$SITE_HOST} {
 	encode
 
-	@api path /domains /domains/* /addresses/* /admin/* /.well-known/nostr.json /nip05/* /relay /healthz
+	@api path /domains /domains/* /addresses/* /admin/* /.well-known/nostr.json /nip05/* /healthz
 	handle @api {
 		reverse_proxy server:3000
 	}
@@ -20,6 +20,25 @@
 		root * /srv
 		try_files {path}.html {path}
 		file_server
+	}
+}
+
+# The relay and the Blossom server the domain keys announce, on a host of their
+# own so that no uploaded blob shares the origin of the site.
+nostr.{$SITE_HOST} {
+	@nostr path / /upload
+	handle @nostr {
+		reverse_proxy server:3000
+	}
+
+	# Blossom names a blob by its hash.
+	@blob path_regexp ^/[0-9a-f]{64}(\.[a-z0-9]+)?$
+	handle @blob {
+		reverse_proxy server:3000
+	}
+
+	handle {
+		respond 404
 	}
 }
 

@@ -1,4 +1,4 @@
-import { verifyEvent } from 'nostr-tools/pure'
+import { type NostrEvent, verifyEvent } from 'nostr-tools/pure'
 import { normalizeHost } from './domain.js'
 import { asNostrEvent, findTagValue } from './nostr.js'
 
@@ -48,6 +48,12 @@ export function verifyNip98(request: Nip98Request): Nip98Result {
   if (signed.pathname !== pathname(request.path)) return fail('url_mismatch')
 
   return { ok: true, pubkey: event.pubkey }
+}
+
+// The event of an `Authorization: Nostr <base64>` header, which Blossom uses too.
+export function authorizationEvent(authorization: string | undefined): NostrEvent | null {
+  const token = readToken(authorization)
+  return token ? decodeEvent(token) : null
 }
 
 function readToken(authorization: string | undefined): string | null {

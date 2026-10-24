@@ -276,7 +276,7 @@ test('a check that finds the domain verified publishes the lists of its key', as
   }
   expect(network.published[0].event.tags).toEqual([['r', apiConfig.relayUrl, 'read']])
   expect(network.published[1].event.tags).toEqual([['relay', apiConfig.relayUrl]])
-  expect(network.published[2].event.tags).toEqual([['server', 'https://blossom.example.org']])
+  expect(network.published[2].event.tags).toEqual([['server', apiConfig.blossomUrl]])
 })
 
 test('a check still succeeds when the lists cannot be published', async () => {

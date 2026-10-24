@@ -27,7 +27,7 @@ export interface DnsRecord {
 
 // A record the server itself needs, checked when the admin overview loads.
 export interface ServerRecord {
-  id: 'host' | 'ptr' | 'spf'
+  id: 'host' | 'ptr' | 'spf' | 'nostr'
   type: 'A' | 'PTR' | 'TXT'
   name: string
   value: string
@@ -161,6 +161,8 @@ export interface ServerSettings {
   // Any key connects domains, so the allowed keys do not matter.
   openRegistration: boolean
   maxMessageBytes: number
+  // Uploads to the server's Blossom server stop once its blobs reach this size together.
+  maxBlobStorageBytes: number
   // Given to new domains for their large mail.
   blossomServers: string[]
   // Where the lists of other keys are looked up.

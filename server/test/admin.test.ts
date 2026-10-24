@@ -94,6 +94,13 @@ test('GET /admin/domains checks the DNS records of the server itself', async () 
       value: 'v=spf1 ip4:192.0.2.10 -all',
       check: { status: 'missing', found: [] },
     },
+    {
+      id: 'nostr',
+      type: 'A',
+      name: 'nostr.mx.example.org',
+      value: '192.0.2.10',
+      check: { status: 'missing', found: [] },
+    },
   ])
 
   await app.close()

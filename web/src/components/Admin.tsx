@@ -122,6 +122,11 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
     }))
   }
 
+  async function checkServer() {
+    const { serverRecords } = await api.adminOverview()
+    setOverview((current) => ({ ...current, serverRecords }))
+  }
+
   async function removeKeyQuotas(pubkey: string) {
     await api.removeKeyQuotas(pubkey)
     setOverview((current) => ({
@@ -229,7 +234,7 @@ function Overview({ initial, api }: { initial: AdminOverview; api: Api }) {
         )}
       </>
     ),
-    server: <ServerDns records={serverRecords} />,
+    server: <ServerDns records={serverRecords} onCheck={checkServer} />,
     settings: <ServiceSettings settings={settings} onSave={changeSettings} />,
   }
 
@@ -273,19 +278,40 @@ function Section({
   )
 }
 
-function ServerDns({ records }: { records: ServerRecord[] }) {
-  const t = useMessages().admin
+function ServerDns({ records, onCheck }: { records: ServerRecord[]; onCheck: () => Promise<void> }) {
+  const t = useMessages()
   const problems = problemsIn(records)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function check() {
+    setBusy(true)
+    setError(null)
+    try {
+      await onCheck()
+    } catch (failure) {
+      setError(describeError(failure, t.errors))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <>
-      <p className={`text-sm ${problems ? 'text-bad' : 'text-ok'}`}>{problems ? t.toFix(problems) : t.allFound}</p>
-      <p className="mt-1 text-muted text-sm">{t.serverNote}</p>
+      <p className={`text-sm ${problems ? 'text-bad' : 'text-ok'}`}>
+        {problems ? t.admin.toFix(problems) : t.admin.allFound}
+      </p>
       <ul className="mt-3 divide-y divide-rule rounded-lg border border-rule bg-surface">
         {records.map((record) => (
-          <RecordRow key={record.id} record={record} />
+          <RecordRow key={record.id} record={record} hint={t.admin.serverHints[record.id]} />
         ))}
       </ul>
+      <div className="mt-4 flex flex-wrap items-center gap-4">
+        <Button variant={problems ? 'primary' : 'secondary'} onClick={check} disabled={busy}>
+          {busy ? t.domainPage.checking : t.domainPage.check}
+        </Button>
+        <ErrorText>{error}</ErrorText>
+      </div>
     </>
   )
 }

@@ -87,6 +87,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '019_add_address_enabled.sql',
       '020_add_quotas.sql',
       '021_add_address_keys.sql',
+      '022_add_blobs.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -350,8 +351,10 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect(defaults).toEqual({
       openRegistration: false,
       maxMessageBytes: 25 * 1024 * 1024,
+      maxBlobStorageBytes: 1024 * 1024 * 1024,
       blossomServers: ['https://blossom.nmail.li', 'https://blossom.yakihonne.com', 'https://blossom.ditto.pub'],
       domainRelays: ['wss://relay.nmail.li/', 'wss://relay.ditto.pub/', 'wss://nos.lol/', 'wss://relay.primal.net/'],
+      domainBlossomServer: null,
       indexerRelays: ['wss://purplepag.es/', 'wss://user.kindpag.es/', 'wss://indexer.coracle.social/'],
       quotas: {
         addresses: null,
@@ -366,8 +369,10 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     const changed = {
       openRegistration: true,
       maxMessageBytes: 1024 * 1024,
+      maxBlobStorageBytes: 5 * 1024 * 1024 * 1024,
       blossomServers: ['https://cdn.example.com/blossom'],
       domainRelays: ['wss://relay.example.com/'],
+      domainBlossomServer: 'https://mx.example.com',
       indexerRelays: ['wss://indexer.example.com/'],
       quotas: { addresses: 10, addressesPerHour: 5, pendingDomains: 0, recipientsPerDay: null, keysPerAddress: 3 },
       retiredDomainRelays: { 'wss://relay.nmail.li/': '2026-10-28T12:00:00.000Z' },
@@ -430,6 +435,35 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
     expect(await repo.pruneOutboundMessages(new Date(Date.now() - 60_000))).toBe(0)
     expect(await repo.pruneOutboundMessages(new Date(Date.now() + 60_000))).toBe(2)
     expect(await repo.hasOutboundMessage(waiting.id)).toBe(true)
+  })
+
+  test('keeps a blob while an email in it waits, then drops it once sent, or unclaimed after a while', async () => {
+    const bridgePubkey = (await repo.findVerifiedDomain('example.com'))?.bridgePubkey ?? ''
+    const sent = 'd'.repeat(64)
+    const unclaimed = 'e'.repeat(64)
+    await repo.addBlob(sent, Buffer.from('mail'), ALICE)
+    await repo.addBlob(sent, Buffer.from('again'), BOB)
+    await repo.addBlob(unclaimed, Buffer.from('nothing'), ALICE)
+    const wrap = outboundWrap(signer(), bridgePubkey)
+    const recipients = ['a@remote.example']
+    await repo.addOutboundMessage({ wrapId: wrap.id, bridgePubkey, wrap, recipients, blobSha256: sent })
+    const later = { status: 'pending' as const, response: 'No blob', nextAttemptAt: new Date(Date.now() + 60_000) }
+    await repo.recordOutcomes(wrap.id, new Map([['a@remote.example', later]]))
+
+    expect(await repo.findBlob(sent)).toEqual({
+      sha256: sent,
+      data: Buffer.from('mail'),
+      uploadedAt: expect.any(String),
+    })
+    expect(await repo.countBlobBytes()).toBe(11)
+    expect(await repo.wakeBlobRecipients(sent)).toBe(1)
+    expect((await repo.listDueOutboundMessages(10)).map((message) => message.wrapId)).toContain(wrap.id)
+    expect(await repo.pruneBlobs(new Date(Date.now() + 60_000))).toBe(1)
+    expect(await repo.findBlob(unclaimed)).toBeNull()
+
+    await repo.recordOutcomes(wrap.id, new Map([['a@remote.example', { status: 'delivered', response: '250 OK' }]]))
+    expect(await repo.pruneBlobs(new Date(Date.now() - 60_000))).toBe(1)
+    expect(await repo.findBlob(sent)).toBeNull()
   })
 
   test('the outbound mail of a claim goes away with it', async () => {

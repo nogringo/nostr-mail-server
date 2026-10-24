@@ -24,6 +24,7 @@ import type {
   Quotas,
   RecipientOutcome,
   RetiredRelays,
+  StoredBlob,
   StoredSettings,
   Suspension,
 } from './types.js'
@@ -96,11 +97,20 @@ interface KeyQuotasRow {
 interface SettingsRow {
   open_registration: boolean
   max_message_bytes: number
+  // A bigint, which pg returns as a string.
+  max_blob_storage_bytes: string
   blossom_servers: string[]
   domain_relays: string[]
+  domain_blossom_server: string | null
   indexer_relays: string[]
   quotas: Quotas
   retired_domain_relays: RetiredRelays
+}
+
+interface BlobRow {
+  sha256: string
+  data: Buffer
+  uploaded_at: Date
 }
 
 interface AbuseReportRow {
@@ -433,15 +443,17 @@ export class PgDomainRepository implements DomainRepository {
 
   async findSettings(): Promise<StoredSettings> {
     const result = await this.pool.query<SettingsRow>(
-      `select open_registration, max_message_bytes, blossom_servers, domain_relays, indexer_relays, quotas,
-        retired_domain_relays from server_settings`,
+      `select open_registration, max_message_bytes, max_blob_storage_bytes, blossom_servers, domain_relays,
+        domain_blossom_server, indexer_relays, quotas, retired_domain_relays from server_settings`,
     )
     const row = result.rows[0]
     return {
       openRegistration: row.open_registration,
       maxMessageBytes: row.max_message_bytes,
+      maxBlobStorageBytes: Number(row.max_blob_storage_bytes),
       blossomServers: row.blossom_servers,
       domainRelays: row.domain_relays,
+      domainBlossomServer: row.domain_blossom_server,
       indexerRelays: row.indexer_relays,
       quotas: row.quotas,
       retiredDomainRelays: row.retired_domain_relays,
@@ -451,15 +463,18 @@ export class PgDomainRepository implements DomainRepository {
   async updateSettings(settings: StoredSettings): Promise<void> {
     await this.pool.query(
       `update server_settings set open_registration = $1, max_message_bytes = $2, blossom_servers = $3,
-        domain_relays = $4, indexer_relays = $5, quotas = $6, retired_domain_relays = $7`,
+        domain_relays = $4, domain_blossom_server = $5, indexer_relays = $6, quotas = $7, retired_domain_relays = $8,
+        max_blob_storage_bytes = $9`,
       [
         settings.openRegistration,
         settings.maxMessageBytes,
         settings.blossomServers,
         settings.domainRelays,
+        settings.domainBlossomServer,
         settings.indexerRelays,
         JSON.stringify(settings.quotas),
         settings.retiredDomainRelays,
+        settings.maxBlobStorageBytes,
       ],
     )
   }
@@ -617,11 +632,17 @@ export class PgDomainRepository implements DomainRepository {
       const queued = 'wrap' in input
       const result = await client.query(
         `
-          insert into outbound_messages (wrap_id, bridge_pubkey, wrap, refusal)
-          values ($1, $2, $3, $4)
+          insert into outbound_messages (wrap_id, bridge_pubkey, wrap, refusal, blob_sha256)
+          values ($1, $2, $3, $4, $5)
           on conflict (wrap_id) do nothing
         `,
-        [input.wrapId, input.bridgePubkey, queued ? JSON.stringify(input.wrap) : null, queued ? null : input.refusal],
+        [
+          input.wrapId,
+          input.bridgePubkey,
+          queued ? JSON.stringify(input.wrap) : null,
+          queued ? null : input.refusal,
+          queued ? (input.blobSha256 ?? null) : null,
+        ],
       )
       if (!queued || result.rowCount === 0) return
 
@@ -691,6 +712,53 @@ export class PgDomainRepository implements DomainRepository {
         delete from outbound_messages m
         where m.received_at < $1
           and not exists (select 1 from outbound_recipients r where r.wrap_id = m.wrap_id and r.status = 'pending')
+      `,
+      [before],
+    )
+    return result.rowCount ?? 0
+  }
+
+  async addBlob(sha256: string, data: Buffer, uploader: string): Promise<void> {
+    await this.pool.query(
+      'insert into blobs (sha256, data, size, uploader) values ($1, $2, $3, $4) on conflict (sha256) do nothing',
+      [sha256, data, data.length, uploader],
+    )
+  }
+
+  async countBlobBytes(): Promise<number> {
+    const result = await this.pool.query<{ bytes: string }>('select coalesce(sum(size), 0) as bytes from blobs')
+    return Number(result.rows[0].bytes)
+  }
+
+  async findBlob(sha256: string): Promise<StoredBlob | null> {
+    const result = await this.pool.query<BlobRow>('select sha256, data, uploaded_at from blobs where sha256 = $1', [
+      sha256,
+    ])
+    const row = result.rows[0]
+    return row ? { sha256: row.sha256, data: row.data, uploadedAt: row.uploaded_at.toISOString() } : null
+  }
+
+  async wakeBlobRecipients(sha256: string): Promise<number> {
+    const result = await this.pool.query(
+      `
+        update outbound_recipients r set next_attempt_at = now()
+        from outbound_messages m
+        where m.wrap_id = r.wrap_id and m.blob_sha256 = $1 and r.status = 'pending'
+      `,
+      [sha256],
+    )
+    return result.rowCount ?? 0
+  }
+
+  async pruneBlobs(before: Date): Promise<number> {
+    const result = await this.pool.query(
+      `
+        delete from blobs b
+        where not exists (
+            select 1 from outbound_messages m join outbound_recipients r on r.wrap_id = m.wrap_id
+            where m.blob_sha256 = b.sha256 and r.status = 'pending'
+          )
+          and (b.uploaded_at < $1 or exists (select 1 from outbound_messages m where m.blob_sha256 = b.sha256))
       `,
       [before],
     )

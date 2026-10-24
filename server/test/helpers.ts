@@ -46,6 +46,7 @@ import type {
   Quotas,
   RecipientOutcome,
   ServerSettings,
+  StoredBlob,
   StoredSettings,
   Suspension,
   TlsFiles,
@@ -60,11 +61,18 @@ export const domainConfig: DomainConfig = {
   dkimSelector: 'nostrmail',
 }
 
-export const apiConfig: ApiConfig = { ...domainConfig, adminPubkeys: [], relayUrl: 'wss://mx.example.org/relay' }
+export const apiConfig: ApiConfig = {
+  ...domainConfig,
+  adminPubkeys: [],
+  nostrHost: 'nostr.mx.example.org',
+  relayUrl: 'wss://nostr.mx.example.org/',
+  blossomUrl: 'https://nostr.mx.example.org',
+}
 
 export const testSettings: ServerSettings = {
   openRegistration: false,
   maxMessageBytes: 1024 * 1024,
+  maxBlobStorageBytes: 16 * 1024 * 1024,
   blossomServers: ['https://blossom.example.org'],
   indexerRelays: ['wss://indexer.example.org/'],
   quotas: NO_QUOTAS,
@@ -87,6 +95,7 @@ export interface StoredOutboundMessage {
   bridgePubkey: string
   wrap: NostrEvent | null
   refusal: string | null
+  blobSha256: string | null
   receivedAt: string
   recipients: Map<string, StoredRecipient>
 }
@@ -105,11 +114,17 @@ export class MemoryDomainRepository implements DomainRepository {
   readonly addresses = new Map<string, Address>()
   readonly deletedAddresses = new Map<string, DeletedAddress & { ownerPubkey: string }>()
   readonly outbound = new Map<string, StoredOutboundMessage>()
+  readonly blobs = new Map<string, StoredBlob & { uploader: string }>()
   readonly suspensions = new Map<string, Suspension>()
   readonly allowedKeys = new Map<string, AllowedKey>()
   readonly keyQuotas = new Map<string, KeyQuotas>()
   quotaUsage: { quota: PeriodQuota; subject: string; amount: number; usedAt: Date }[] = []
-  storedSettings: StoredSettings = { ...testSettings, domainRelays: [apiConfig.relayUrl], retiredDomainRelays: {} }
+  storedSettings: StoredSettings = {
+    ...testSettings,
+    domainRelays: [apiConfig.relayUrl],
+    domainBlossomServer: apiConfig.blossomUrl,
+    retiredDomainRelays: {},
+  }
   readonly servedDomains = new Set<string>()
   serverKey: KeyPair | null = null
   readonly abuseReports: StoredAbuseReport[] = []
@@ -494,6 +509,7 @@ export class MemoryDomainRepository implements DomainRepository {
       bridgePubkey: input.bridgePubkey,
       wrap: queued ? input.wrap : null,
       refusal: queued ? null : input.refusal,
+      blobSha256: queued ? (input.blobSha256 ?? null) : null,
       receivedAt: new Date().toISOString(),
       recipients: new Map(
         (queued ? input.recipients : []).map((address) => [
@@ -549,6 +565,54 @@ export class MemoryDomainRepository implements DomainRepository {
       const pending = [...message.recipients.values()].some((recipient) => recipient.status === 'pending')
       if (Date.parse(message.receivedAt) < before.getTime() && !pending) {
         this.outbound.delete(wrapId)
+        pruned++
+      }
+    }
+    return pruned
+  }
+
+  async addBlob(sha256: string, data: Buffer, uploader: string): Promise<void> {
+    this.assertAvailable()
+    if (!this.blobs.has(sha256))
+      this.blobs.set(sha256, { sha256, data, uploader, uploadedAt: new Date().toISOString() })
+  }
+
+  async countBlobBytes(): Promise<number> {
+    this.assertAvailable()
+    return [...this.blobs.values()].reduce((total, blob) => total + blob.data.length, 0)
+  }
+
+  async findBlob(sha256: string): Promise<StoredBlob | null> {
+    this.assertAvailable()
+    const blob = this.blobs.get(sha256)
+    return blob ? { sha256: blob.sha256, data: blob.data, uploadedAt: blob.uploadedAt } : null
+  }
+
+  async wakeBlobRecipients(sha256: string): Promise<number> {
+    this.assertAvailable()
+    let woken = 0
+    for (const message of this.outbound.values()) {
+      if (message.blobSha256 !== sha256) continue
+      for (const recipient of message.recipients.values()) {
+        if (recipient.status !== 'pending') continue
+        recipient.nextAttemptAt = new Date()
+        woken++
+      }
+    }
+    return woken
+  }
+
+  async pruneBlobs(before: Date): Promise<number> {
+    this.assertAvailable()
+    const messages = [...this.outbound.values()]
+    let pruned = 0
+    for (const [sha256, blob] of this.blobs) {
+      const taking = messages.filter((message) => message.blobSha256 === sha256)
+      const pending = taking.some((message) =>
+        [...message.recipients.values()].some((recipient) => recipient.status === 'pending'),
+      )
+      if (!pending && (Date.parse(blob.uploadedAt) < before.getTime() || taking.length)) {
+        this.blobs.delete(sha256)
         pruned++
       }
     }

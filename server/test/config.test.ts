@@ -23,7 +23,9 @@ test('loadConfig applies the defaults', () => {
     dnsServers: [],
     tls: null,
     adminPubkeys: [],
-    relayUrl: 'wss://mx.example.org/relay',
+    nostrHost: 'nostr.mx.example.org',
+    relayUrl: 'wss://nostr.mx.example.org/',
+    blossomUrl: 'https://nostr.mx.example.org',
   })
 })
 

@@ -14,14 +14,25 @@ interface Props {
 // Each setting is keyed by its value, so that a save shows what the server stored.
 export default function ServiceSettings({ settings, onSave }: Props) {
   const t = useMessages().settings
-  const { maxMessageBytes, blossomServers, indexerRelays } = settings
+  const { maxMessageBytes, maxBlobStorageBytes, blossomServers, indexerRelays } = settings
 
   return (
     <div className="space-y-10">
       <SizeSetting
-        key={maxMessageBytes}
+        key={`message ${maxMessageBytes}`}
+        id="max-message"
+        texts={t.size}
+        maxMegabytes={1024}
         bytes={maxMessageBytes}
         onSave={(bytes) => onSave({ maxMessageBytes: bytes })}
+      />
+      <SizeSetting
+        key={`storage ${maxBlobStorageBytes}`}
+        id="blob-storage"
+        texts={t.blobStorage}
+        maxMegabytes={1024 * 1024}
+        bytes={maxBlobStorageBytes}
+        onSave={(bytes) => onSave({ maxBlobStorageBytes: bytes })}
       />
       <UrlsSetting
         key={`blossom ${blossomServers.join(' ')}`}
@@ -45,10 +56,21 @@ export default function ServiceSettings({ settings, onSave }: Props) {
   )
 }
 
-function SizeSetting({ bytes, onSave }: { bytes: number; onSave: (bytes: number) => Promise<void> }) {
+function SizeSetting({
+  id,
+  texts: t,
+  maxMegabytes,
+  bytes,
+  onSave,
+}: {
+  id: string
+  texts: { title: string; note: string; label: string; unit: string }
+  maxMegabytes: number
+  bytes: number
+  onSave: (bytes: number) => Promise<void>
+}) {
   const current = String(Math.round((bytes / MEGABYTE) * 100) / 100)
   const [megabytes, setMegabytes] = useState(current)
-  const t = useMessages().settings.size
 
   return (
     <SettingForm
@@ -57,15 +79,15 @@ function SizeSetting({ bytes, onSave }: { bytes: number; onSave: (bytes: number)
       changed={megabytes.trim() !== current && megabytes.trim() !== ''}
       onSave={() => onSave(Math.round(Number(megabytes) * MEGABYTE))}
     >
-      <label htmlFor="max-message" className="sr-only">
+      <label htmlFor={id} className="sr-only">
         {t.label}
       </label>
       <div className="mt-3 flex items-baseline gap-2">
         <input
-          id="max-message"
+          id={id}
           type="number"
           min={1}
-          max={1024}
+          max={maxMegabytes}
           step="any"
           value={megabytes}
           onChange={(event) => setMegabytes(event.target.value)}

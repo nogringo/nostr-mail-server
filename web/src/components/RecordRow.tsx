@@ -14,7 +14,7 @@ interface RecordLine {
   check: RecordCheck | null
 }
 
-export default function RecordRow({ record }: { record: RecordLine }) {
+export default function RecordRow({ record, hint }: { record: RecordLine; hint?: string }) {
   const t = useMessages().record
   const check = recordStatus(record, t)
   const failed = record.check && record.check.status !== 'ok' && record.check.found.length > 0
@@ -26,6 +26,7 @@ export default function RecordRow({ record }: { record: RecordLine }) {
         <Field text={record.name} label={t.name(record.type)} />
         <Field text={record.value} label={t.value(record.type)} />
         {record.priority !== undefined && <p className="font-sans text-muted">{t.priority(record.priority)}</p>}
+        {hint && <p className="font-sans text-muted">{hint}</p>}
         {failed && (
           <p className="break-all font-sans text-bad">
             {t.found} <span className="font-mono">{record.check?.found.join(', ')}</span>

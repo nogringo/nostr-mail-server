@@ -10,9 +10,15 @@ One machine runs everything with Docker Compose:
 
 The site and the API share one origin, `SITE_HOST`, because NIP-98 binds each
 request to the URL the browser signs. Caddy sends `/domains`, `/domains/*`,
-`/admin/*`, `/.well-known/nostr.json`, `/nip05/*`, `/relay` and `/healthz` to the server and keeps
-the `Host` header. The site's pages are built as `<name>.html`, so `/admin` is
-the admin page and `/admin/*` the API.
+`/admin/*`, `/.well-known/nostr.json`, `/nip05/*` and `/healthz` to the server
+and keeps the `Host` header. The site's pages are built as `<name>.html`, so
+`/admin` is the admin page and `/admin/*` the API.
+
+The relay (`wss://nostr.SITE_HOST`) and the Blossom server
+(`https://nostr.SITE_HOST`) that clients send mail through have a host name of
+their own, so that no file anyone uploads shares the origin of the site, where
+signed-in accounts keep their keys. Caddy sends that name's `/`, `/upload` and
+blob paths (`/<sha256>`) to the server, and nothing else.
 
 The connected domains point their A record at `PUBLIC_IPV4`, this machine. For
 any other host name, Caddy gets a certificate on demand once the server says
@@ -20,17 +26,17 @@ the domain is verified, serves `/.well-known/nostr.json` there and redirects
 every other path to `https://SITE_HOST/`. A domain that keeps its own website
 relays that path to `https://SITE_HOST/nip05/<domain>` instead.
 
-`SITE_HOST` is also the MX that connected domains point at, the host of the
-relay clients send mail to (`wss://SITE_HOST/relay`), and for now the SPF
-include they are given. The SMTP server offers STARTTLS with the
+`SITE_HOST` is also the MX that connected domains point at, and for now the
+SPF include they are given. The SMTP server offers STARTTLS with the
 certificate Caddy obtains for it: the server mounts Caddy's data read-only,
 both images run as uid 10001 since Caddy keeps its keys readable by their owner
 only, and Caddy uses Let's Encrypt alone so the files stay at the same path.
 
 ## Setup
 
-1. Point an A record for `SITE_HOST` at the machine, and open ports 25, 80
-   and 443. Outbound port 25 has to be open too.
+1. Point an A record for `SITE_HOST` at the machine, and `nostr.SITE_HOST` too,
+   with an A record or a CNAME to `SITE_HOST`. Open ports 25, 80 and 443.
+   Outbound port 25 has to be open too.
 2. Copy the repository to the machine, then:
 
 ```sh
@@ -61,6 +67,7 @@ no IPv6, so it goes out over IPv4. Two records make receivers trust it:
 
 The connected domains include `SITE_HOST` in their own SPF record, so this one
 has to list the machine's address. The admin page, `https://SITE_HOST/admin`,
-checks both along with the A record of `SITE_HOST`, which should have no AAAA:
-Docker hands the server the connections it gets over IPv6 from its own gateway
-address, so SPF would be checked against the wrong address.
+checks both along with the A records of `SITE_HOST`, which should have no AAAA,
+and of `nostr.SITE_HOST`. No AAAA for `SITE_HOST`, because Docker hands the
+server the connections it gets over IPv6 from its own gateway address, so SPF
+would be checked against the wrong address.

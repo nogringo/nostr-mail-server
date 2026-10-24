@@ -1,7 +1,8 @@
 import addressparser from 'nodemailer/lib/addressparser'
 import type { NostrEvent } from 'nostr-tools/pure'
 import { normalizeRecipient, ownsAddress } from './address.js'
-import { EMAIL_KIND, type EmailBody } from './inbound.js'
+import type { EncryptedBlob } from './blossom.js'
+import { EMAIL_KIND } from './inbound.js'
 import { fieldValues } from './mime.js'
 import { findTagValue } from './nostr.js'
 import { sendsMail } from './records.js'
@@ -15,11 +16,16 @@ const SHA256 = /^[0-9a-f]{64}$/
 // same wrap again gets the same answer.
 export class Refusal extends Error {}
 
+// The MIME inline, or in a blob that a public email may leave in the clear.
+export type OutboundBody =
+  | { mime: string }
+  | { blob: Pick<EncryptedBlob, 'sha256'> | Pick<EncryptedBlob, 'sha256' | 'key' | 'nonce'> }
+
 export interface OutboundEmail {
   senderPubkey: string
   mailFrom: string
   recipients: string[]
-  body: EmailBody
+  body: OutboundBody
 }
 
 // Nostr Mail core: a client sends mail for legacy recipients as a kind 1301
@@ -91,16 +97,19 @@ function recipientsOf(tags: string[][]): string[] {
 }
 
 // Nostr Mail large MIME: an empty content and tags pointing to the blob.
-function bodyOf({ content, tags }: NostrEvent): EmailBody {
+function bodyOf({ content, tags }: NostrEvent): OutboundBody {
   const sha256 = findTagValue(tags, 'x')
   if (!sha256) {
     if (!content) throw new Refusal('The email is empty')
     return { mime: content }
   }
+  if (!SHA256.test(sha256)) throw new Refusal('The email points to a blob by an invalid hash')
 
+  const algorithm = findTagValue(tags, 'encryption-algorithm')
   const key = findTagValue(tags, 'decryption-key')
   const nonce = findTagValue(tags, 'decryption-nonce')
-  if (!SHA256.test(sha256) || findTagValue(tags, 'encryption-algorithm') !== 'aes-gcm' || !key || !nonce) {
+  if (algorithm === undefined && key === undefined && nonce === undefined) return { blob: { sha256 } }
+  if (algorithm !== 'aes-gcm' || !key || !nonce) {
     throw new Refusal('The email points to a blob it gives no way to decrypt')
   }
   return { blob: { sha256, key, nonce } }

@@ -13,8 +13,10 @@ export interface AppConfig {
   tls: TlsFiles | null
   // Hex pubkeys allowed to see every domain of the server.
   adminPubkeys: string[]
-  // The server's own relay, the only one the domain keys announce.
+  // Where the server's own relay and Blossom server answer, the only ones the domain keys announce.
+  nostrHost: string
   relayUrl: string
+  blossomUrl: string
 }
 
 // PEM files of the certificate SMTP offers with STARTTLS.
@@ -25,7 +27,7 @@ export interface TlsFiles {
 
 export type DomainConfig = Pick<AppConfig, 'mxHost' | 'spfInclude' | 'publicIpv4' | 'dkimSelector'>
 
-export type ApiConfig = DomainConfig & Pick<AppConfig, 'adminPubkeys' | 'relayUrl'>
+export type ApiConfig = DomainConfig & Pick<AppConfig, 'adminPubkeys' | 'nostrHost' | 'relayUrl' | 'blossomUrl'>
 
 export type RecordId = 'ownership' | 'mx' | 'nip05' | 'spf' | 'dkim' | 'dmarc'
 
@@ -50,7 +52,7 @@ export interface DnsRecord {
 
 // What the server itself needs in DNS, and what a check of it found.
 export interface ServerRecord {
-  id: 'host' | 'ptr' | 'spf'
+  id: 'host' | 'ptr' | 'spf' | 'nostr'
   type: 'A' | 'PTR' | 'TXT'
   name: string
   value: string
@@ -107,6 +109,8 @@ export interface ServerSettings {
   openRegistration: boolean
   // Largest message received over SMTP, and largest blob read to send one.
   maxMessageBytes: number
+  // Largest size of the blobs the server holds together, past which uploads are refused.
+  maxBlobStorageBytes: number
   // Given to new claims for their large mail, and used by the server key.
   blossomServers: string[]
   // Where the lists of other keys are looked up, and those of the domain keys published.
@@ -143,8 +147,13 @@ export interface KeyQuotas {
 // Relays the domain keys no longer announce, by the date the outbox stops listening to them.
 export type RetiredRelays = Record<string, string>
 
-// The relays the domain keys announce (kinds 10002 and 10050) are the server's own: kept to see it change.
-export type StoredSettings = ServerSettings & { domainRelays: string[]; retiredDomainRelays: RetiredRelays }
+// The relay (kinds 10002 and 10050) and the Blossom server (kind 10063) the domain keys announce, the server's
+// own: kept to see them change.
+export type StoredSettings = ServerSettings & {
+  domainRelays: string[]
+  domainBlossomServer: string | null
+  retiredDomainRelays: RetiredRelays
+}
 
 // A NIP-46 remote signer that holds a domain key.
 export interface BunkerKey {
@@ -197,11 +206,18 @@ export interface DeletedAddress {
   deletedAt: string
 }
 
-// A gift wrap addressed to a domain key: queued with its recipients, or refused.
+// A gift wrap addressed to a domain key: queued with its recipients and the blob its email is in, or refused.
 export type NewOutboundMessage = { wrapId: string; bridgePubkey: string } & (
-  | { wrap: NostrEvent; recipients: string[] }
+  | { wrap: NostrEvent; recipients: string[]; blobSha256?: string }
   | { refusal: string }
 )
+
+// A blob a client uploaded to the server's Blossom endpoint.
+export interface StoredBlob {
+  sha256: string
+  data: Buffer
+  uploadedAt: string
+}
 
 export interface OutboundMessage {
   wrapId: string
@@ -322,6 +338,16 @@ export interface DomainRepository {
   recordOutcomes(wrapId: string, outcomes: Map<string, RecipientOutcome>): Promise<void>
   // Deletes the messages received before `before` that wait for nothing.
   pruneOutboundMessages(before: Date): Promise<number>
+  // Does nothing when the blob is already stored.
+  addBlob(sha256: string, data: Buffer, uploader: string): Promise<void>
+  // The size of every blob stored.
+  countBlobBytes(): Promise<number>
+  findBlob(sha256: string): Promise<StoredBlob | null>
+  // Makes the recipients of the emails in the blob due now. Returns how many.
+  wakeBlobRecipients(sha256: string): Promise<number>
+  // Deletes the blobs no email waits for: those of emails no longer pending, and those no email took that were
+  // uploaded before `before`.
+  pruneBlobs(before: Date): Promise<number>
   // Does nothing when the domain already has this message.
   addAbuseReport(input: NewAbuseReport): Promise<void>
   // Newest first, without those the reader deleted.

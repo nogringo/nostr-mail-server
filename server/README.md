@@ -79,8 +79,8 @@ keeps its claims, which a [suspension](#suspension) stops.
 Each claim gets its own token, its own 2048-bit DKIM key and its own Nostr key
 pair, served as `_smtp@<domain>` (see [NIP-05](#nip-05)), all generated when it
 is created. The DKIM private key stays on the server. It also gets the
-[Blossom servers](#settings) of the server at that time, which store its large
-mail.
+[Blossom servers](#settings) of the server at that time, which store the large
+mail it receives.
 
 ### Domain key
 
@@ -140,7 +140,7 @@ publishes, signed by that key, on the indexer relays of the
 |------|---------|
 | 10002 (NIP-65) | The [server's relay](#receiving-the-wraps), as a read relay only, since it serves nothing |
 | 10050 (NIP-17) | The server's relay, where clients send the mail the domain relays |
-| 10063 (BUD-03) | The claim's Blossom servers |
+| 10063 (BUD-03) | The server's [Blossom endpoint](#receiving-the-blobs), where clients upload the large mail the domain sends |
 
 A failed publication is logged and does not fail the check: checking again
 publishes the lists again. Every verified domain key publishes its lists again
@@ -285,7 +285,7 @@ same NIP-98 authentication. Any other key gets `403 not_admin`.
 | `DELETE` | `/admin/allowed-keys/{npub or hex}` | Take the key off the list: `204`, or `404 allowed_key_not_found` |
 | `PUT` | `/admin/key-quotas/{npub or hex}` | Body `{"quotas": {"addresses": 100}}`: give the key [quotas](#quotas) of its own, in place of those it had: `201` when it had none, `200` otherwise, `400 invalid_pubkey`, `400 invalid_quotas` |
 | `DELETE` | `/admin/key-quotas/{npub or hex}` | Give the key the quotas of the server back: `204`, or `404 key_quotas_not_found` |
-| `PATCH` | `/admin/settings` | Body with any of the [settings](#settings), the others keep their value, and so do the quotas left out of `quotas`: returns them all as `{"settings": {...}}`, or `400` with `invalid_open_registration`, `invalid_max_message_bytes`, `invalid_blossom_servers`, `invalid_indexer_relays` or `invalid_quotas` |
+| `PATCH` | `/admin/settings` | Body with any of the [settings](#settings), the others keep their value, and so do the quotas left out of `quotas`: returns them all as `{"settings": {...}}`, or `400` with `invalid_open_registration`, `invalid_max_message_bytes`, `invalid_max_blob_storage_bytes`, `invalid_blossom_servers`, `invalid_indexer_relays` or `invalid_quotas` |
 
 A claim is returned as:
 
@@ -324,7 +324,8 @@ restart:
 |---------|---------|-------------|
 | `openRegistration` | `false` | When `true`, any key [claims domains](#who-can-claim) |
 | `maxMessageBytes` | `26214400` (25 MiB) | Largest message accepted over SMTP, advertised with `SIZE` from the next connection, and largest blob read to send. Between 64 KiB and 1 GiB |
-| `blossomServers` | `https://blossom.nmail.li`, `https://blossom.yakihonne.com`, `https://blossom.ditto.pub` | `https://` Blossom servers given to new claims for their large mail, and used by the server's own key; existing claims keep theirs |
+| `maxBlobStorageBytes` | `1073741824` (1 GiB) | Largest size of the [blobs](#receiving-the-blobs) the server holds together, past which uploads are refused. Between 64 KiB and 1 TiB |
+| `blossomServers` | `https://blossom.nmail.li`, `https://blossom.yakihonne.com`, `https://blossom.ditto.pub` | `https://` Blossom servers given to new claims for the large mail they receive, and used by the server's own key; existing claims keep theirs |
 | `indexerRelays` | `wss://purplepag.es/`, `wss://user.kindpag.es/`, `wss://indexer.coracle.social/` | `wss://` relays where the lists of other pubkeys (kinds 10002, 10050 and 10063) are looked up, and where the domain keys publish their [lists](#lists-of-the-domain-key) |
 | `quotas` | every one `null` | The [quotas](#quotas) of every key |
 
@@ -358,6 +359,7 @@ call through `DNS_SERVERS`:
 | `host` | A of `MX_HOST` | Its only address is `PUBLIC_IPV4`: any other A or any AAAA is a mismatch |
 | `ptr` | PTR of `PUBLIC_IPV4` | It names `MX_HOST`, the name the server greets with when it sends |
 | `spf` | TXT of `SPF_INCLUDE` | A record with `include:<SPF_INCLUDE>` passes SPF for `PUBLIC_IPV4`, so `a`, `mx` or a wider `ip4` range count too |
+| `nostr` | A of `nostr.MX_HOST` | Its only address is `PUBLIC_IPV4`, like `host`, whether an A record or a CNAME gives it: the [relay](#receiving-the-wraps) and [Blossom server](#receiving-the-blobs) the domain keys announce answer there |
 
 Each is returned as:
 
@@ -519,9 +521,11 @@ Blossom, as Nostr Mail clients expect:
    `encryption-algorithm` (`aes-gcm`), `decryption-key` and
    `decryption-nonce` (both base64). Every recipient gets the same blob.
 
-Clients look for the blob on the servers of the most recent kind 10063 among
-the author (the domain key) and the recipient, then on their own defaults. The
-blob is on both lists, and the default [Blossom servers](#settings) are the
+Clients look for the blob on the servers of the kind 10063 of the author (the
+domain key) and of the recipient, then on their own defaults. The domain key's
+list names the server's [Blossom endpoint](#receiving-the-blobs), which only
+holds the mail the domains send, so the blob is found on the recipient's
+servers or on the claim's: the default [Blossom servers](#settings) are the
 ones Nostr Mail clients always check as a last resort.
 
 A recipient's wrap goes to its inbox relays: its DM relays (kind 10050) when it
@@ -586,7 +590,7 @@ by the domain.
 
 ### Receiving the wraps
 
-The domain keys announce one relay, the server's own: `wss://MX_HOST/relay`. It
+The domain keys announce one relay, the server's own: `wss://nostr.MX_HOST`. It
 is a NIP-01 relay that takes the gift wraps (kind 1059) tagged with a verified
 domain key, checks each one as it arrives, and answers `OK`:
 
@@ -616,11 +620,36 @@ A wrap is refused, and never sent, when:
 |-------|---------|
 | The domain's last check found SPF and DKIM | `<domain> does not send mail until its SPF and DKIM records are found` |
 | The wrap opens with the domain key, its seal is signed by the rumor's author, and the rumor is a kind 1301 | The wrap does not hold an email |
+| A blob, if the rumor points to one, is in the clear or named with `aes-gcm`, its key and its nonce | The email points to a blob it gives no way to decrypt |
 | `mail-from` is an address of the domain that delivers to the author: a declared name among whose pubkeys the author is, private or not, or the author's own `npub1...` | `<address> is not an address of the sender` |
 | 1 to 50 `rcpt-to` tags, each `local@domain` with a dot-atom local part | Not an address mail can be relayed to |
 | The domain stays within the [quota](#quotas) of its owner: its recipients over the last 24 hours, this mail's included | `<domain> sends mail to <n> recipients a day at most` |
 
 The refusal is recorded with the wrap id and logged.
+
+### Receiving the blobs
+
+Clients move the MIME of an email of 32 KB or more to a Blossom blob, uploaded
+to the servers of the domain key's kind 10063: the server's own,
+`https://nostr.MX_HOST`. It has a host name of its own, apart from the site,
+so that no blob anyone uploads shares the site's origin, and it serves every
+blob with `X-Content-Type-Options: nosniff`.
+
+| Method | Path | Action |
+|--------|------|--------|
+| `PUT` | `/upload` | BUD-02 upload, the blob as the body: `200` with its descriptor (`url`, `sha256`, `size`, `type`, `uploaded`), `401 missing_auth`, `403 invalid_auth`, `400 empty_blob`, `413 blob_too_large` above [`maxMessageBytes`](#settings) and the 16-byte tag, or `507 blob_storage_full` when the blobs held would go past [`maxBlobStorageBytes`](#settings) |
+| `GET`, `HEAD` | `/<sha256>`, an extension allowed | The blob, or `404 blob_not_found` |
+
+An upload carries `Authorization: Nostr <base64 kind 24242 event>`, signed by
+any key since clients often use a throwaway one, with a `t` tag `upload`, an
+`expiration` in the future, `x` tags that name the blob if any, and `server`
+tags that name `MX_HOST` if any. A refusal gives its reason in `X-Reason`, and
+every answer lets any origin read it.
+
+A blob is kept while an email in it waits: the outbox reads it from here, and
+an email that was waiting for it goes out as soon as it comes. It is deleted
+within the hour once its email has an outcome for every recipient, or a day
+after its upload when no email took it.
 
 ### Delivery
 
@@ -628,8 +657,12 @@ An accepted wrap is queued in Postgres, the wrap itself kept until every
 recipient has an outcome. Delivery then:
 
 1. Reads the MIME: the rumor's `content`, or for a large email the Blossom blob
-   its tags point to, looked for on the domain's servers and the server's,
-   then on the sender's kind 10063, checked against its hash and decrypted.
+   its tags point to, [uploaded to the server](#receiving-the-blobs), else
+   looked for on the domain's servers and the default ones, then on the
+   sender's kind 10063, checked against its hash. The blob is decrypted with
+   its `encryption-algorithm` (`aes-gcm`), `decryption-key` and
+   `decryption-nonce` tags, or read as it is when the rumor has none of them,
+   as a public email may leave its blob in the clear.
 2. Checks the `From` field: one address, which belongs to the sender like
    `mail-from`. DMARC aligns it with the DKIM signature, so it cannot name
    anyone else. Otherwise every recipient fails.
@@ -664,7 +697,7 @@ cp .env.example .env
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | yes | | Postgres connection string |
-| `MX_HOST` | yes | | SMTP host that connected domains point their MX at, the name the server greets with when it sends, and the host of its relay, `wss://MX_HOST/relay` |
+| `MX_HOST` | yes | | SMTP host that connected domains point their MX at, and the name the server greets with when it sends. The server's relay and Blossom server answer at `nostr.MX_HOST` |
 | `SPF_INCLUDE` | yes | | Domain whose SPF record lists the address the server sends from |
 | `PUBLIC_IPV4` | yes | | IPv4 address that connected domains point their A record at, so that their HTTPS reaches this server |
 | `ADMIN_PUBKEYS` | no | nobody | Comma-separated npubs or hex public keys allowed to call the [admin routes](#admin), which also receive [abuse reports](#abuse-reports) |

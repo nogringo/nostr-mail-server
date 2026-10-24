@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { npubEncode } from 'nostr-tools/nip19'
 import type { NostrEvent } from 'nostr-tools/pure'
 import { expect, test, vi } from 'vitest'
@@ -373,8 +374,8 @@ test('a recipient still deferred after four days fails', async () => {
   })
 })
 
-test('a large email is read from Blossom, on the domain servers or the sender ones', async () => {
-  const { network, blobs, transport, alice, domain, receive } = await setup()
+test('a large email is read on the server, or on the domain servers or the sender ones, and its blob then goes', async () => {
+  const { repo, network, blobs, transport, outbox, alice, domain, receive } = await setup()
   const mailFrom = `${npubEncode(alice.pubkey)}@example.com`
   const blobWrap = (mime: string) => {
     const blob = encryptBlob(Buffer.from(mime))
@@ -390,6 +391,11 @@ test('a large email is read from Blossom, on the domain servers or the sender on
     return { blob, wrap }
   }
 
+  const onServer = blobWrap(`From: ${mailFrom}\nSubject: Big\n\nOn the server\n`)
+  await repo.addBlob(onServer.blob.sha256, onServer.blob.bytes, alice.pubkey)
+  await receive(onServer.wrap)
+  expect(blobs.downloads).toEqual([])
+
   const onDomain = blobWrap(`From: ${mailFrom}\nSubject: Big\n\nOn the domain server\n`)
   blobs.store(DOMAIN_SERVER, onDomain.blob)
   await receive(onDomain.wrap)
@@ -400,10 +406,25 @@ test('a large email is read from Blossom, on the domain servers or the sender on
   await receive(onSender.wrap)
 
   expect(transport.sent.map(({ message }) => message.split('\r\n\r\n')[1])).toEqual([
+    'On the server\r\n',
     'On the domain server\r\n',
     'On the sender server\r\n',
   ])
   expect(blobs.downloads.at(-1)).toEqual(['https://cdn.alice.example'])
+
+  await outbox.tick()
+  expect(repo.blobs.has(onServer.blob.sha256)).toBe(false)
+})
+
+test('a public email in a blob in the clear goes out as it is', async () => {
+  const { repo, transport, alice, domain, receive } = await setup()
+  const mime = Buffer.from(`From: ${npubEncode(alice.pubkey)}@example.com\nSubject: Public\n\nFor everyone\n`)
+  const sha256 = createHash('sha256').update(mime).digest('hex')
+  await repo.addBlob(sha256, mime, alice.pubkey)
+
+  await receive(outboundWrap(alice, domain.bridgePubkey, { content: '', tags: [['x', sha256]] }))
+
+  expect(transport.sent.map(({ message }) => message.split('\r\n\r\n')[1])).toEqual(['For everyone\r\n'])
 })
 
 test('a blob found nowhere waits for a retry', async () => {

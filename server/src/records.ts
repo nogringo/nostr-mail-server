@@ -3,6 +3,7 @@ import { SMTP_LOCAL_PART } from './address.js'
 import { SPF_TIME_LIMIT_MS } from './authentication.js'
 import { normalizeHostname } from './domain.js'
 import type {
+  ApiConfig,
   DnsLookup,
   DnsRecord,
   Domain,
@@ -17,6 +18,7 @@ export const OWNERSHIP_LABEL = '_nostr-mail'
 export const OWNERSHIP_PREFIX = 'nostr-mail-verification='
 
 type RecordsConfig = Pick<DomainConfig, 'mxHost' | 'spfInclude' | 'publicIpv4'>
+type ServerRecordsConfig = RecordsConfig & Pick<ApiConfig, 'nostrHost'>
 
 // Reserved by RFC 6761, so it never names a real domain.
 const CONNECTED_DOMAIN = 'connected-domain.invalid'
@@ -101,11 +103,12 @@ export async function checkRecords(
 
 // What the server needs to receive and send for the connected domains: their MX
 // host leads here, this address leads back to the name the server greets with,
-// and the SPF record they include lets this address send.
-export async function checkServerRecords(config: RecordsConfig, dns: DnsLookup): Promise<ServerRecord[]> {
-  const { mxHost, spfInclude, publicIpv4 } = config
+// the SPF record they include lets this address send, and the host of the relay
+// and Blossom server they announce leads here too.
+export async function checkServerRecords(config: ServerRecordsConfig, dns: DnsLookup): Promise<ServerRecord[]> {
+  const { mxHost, spfInclude, publicIpv4, nostrHost } = config
 
-  const [host, ptr, spfCheck] = await Promise.all([
+  const [host, ptr, spfCheck, nostr] = await Promise.all([
     settle(() => checkPointsAt(dns, mxHost, publicIpv4)),
     settle(async () => {
       const found = (await dns.reverse(publicIpv4)).map(normalizeHostname)
@@ -119,12 +122,14 @@ export async function checkServerRecords(config: RecordsConfig, dns: DnsLookup):
       if (result === 'temperror') return { status: 'error', found }
       return verdict(found, result === 'pass')
     }),
+    settle(() => checkPointsAt(dns, nostrHost, publicIpv4)),
   ])
 
   return [
     { id: 'host', type: 'A', name: mxHost, value: publicIpv4, check: host },
     { id: 'ptr', type: 'PTR', name: publicIpv4, value: mxHost, check: ptr },
     { id: 'spf', type: 'TXT', name: spfInclude, value: `v=spf1 ip4:${publicIpv4} -all`, check: spfCheck },
+    { id: 'nostr', type: 'A', name: nostrHost, value: publicIpv4, check: nostr },
   ]
 }
 

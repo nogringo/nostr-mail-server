@@ -5,7 +5,7 @@ import { hexToBytes } from 'nostr-tools/utils'
 import { BunkerError, type DomainSigners, parseBunkerUrl } from '../bunker.js'
 import { generateDkimKeyPair } from '../dkim.js'
 import { normalizeDomain } from '../domain.js'
-import { publishDomainLists } from '../lists.js'
+import { listsTargets, publishDomainLists } from '../lists.js'
 import { generateKeyPair, parseNsec } from '../nostr.js'
 import type { QuotaKeeper } from '../quotas.js'
 import { checkRecords, expectedRecords } from '../records.js'
@@ -64,10 +64,7 @@ export function registerDomainRoutes(
   },
 ): void {
   const publishLists = (domain: Domain) =>
-    publishDomainLists(relays, signers.forDomain(domain), domain.blossomServers, {
-      relay: config.relayUrl,
-      indexerRelays: settings.current.indexerRelays,
-    })
+    publishDomainLists(relays, signers.forDomain(domain), listsTargets(config, settings.current))
   const canClaim = async (pubkey: string) =>
     config.adminPubkeys.includes(pubkey) || settings.current.openRegistration || (await repo.isAllowedKey(pubkey))
 

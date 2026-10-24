@@ -1,7 +1,6 @@
 import websocket from '@fastify/websocket'
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify'
 import { verifyEvent } from 'nostr-tools/pure'
-import { RELAY_PATH } from '../config.js'
 import { asNostrEvent, findTagValue } from '../nostr.js'
 import { GIFT_WRAP_KIND, MAX_CLOCK_SKEW_SECONDS, type Outbox } from '../outbox.js'
 import type { DomainRepository } from '../types.js'
@@ -26,7 +25,7 @@ export function registerRelayRoutes(
 ): void {
   app.register(websocket, { options: { maxPayload: MAX_MESSAGE_BYTES } })
   app.register(async (instance) => {
-    instance.get(RELAY_PATH, { websocket: true }, (socket, request) => {
+    instance.get('/', { websocket: true }, (socket, request) => {
       const relay = { repo, outbox, log: request.log }
       socket.on('message', (data) => {
         void answer(relay, String(data)).then((reply) => {

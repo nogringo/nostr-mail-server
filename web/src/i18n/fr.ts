@@ -348,8 +348,12 @@ const fr: Messages = {
       'Les e-mails envoyés à abuse@ des domaines, du plus récent au plus ancien. Leurs propriétaires les reçoivent aussi, et gardent les signalements que vous supprimez.',
     toFix: (n: number) => count(n, 'enregistrement à corriger', 'enregistrements à corriger'),
     allFound: 'Tous les enregistrements trouvés',
-    serverNote:
-      "Vérifiés au chargement de la page. Les domaines connectés pointent leur MX vers le nom de l'enregistrement A et incluent le nom de l'enregistrement SPF dans le leur. L'enregistrement PTR se règle chez l'hébergeur : les destinataires font confiance aux e-mails que ce serveur envoie quand son adresse le nomme en retour. Le serveur fonctionne en IPv4, son nom ne doit donc avoir aucun enregistrement AAAA.",
+    serverHints: {
+      host: 'Le MX des domaines connectés. Aucun AAAA.',
+      ptr: "Se règle chez l'hébergeur.",
+      spf: 'Inclus dans le SPF des domaines connectés.',
+      nostr: 'Le relais et le serveur Blossom. Un CNAME vers le site convient aussi.',
+    },
     namedAddresses: (n: number) => count(n, 'adresse nommée', 'adresses nommées'),
     openToEveryone: 'ouvert à tous',
     claimed: (when: string) => `revendiqué ${when}`,
@@ -437,9 +441,15 @@ const fr: Messages = {
       label: 'Taille maximale des messages, en Mo',
       unit: 'Mo',
     },
+    blobStorage: {
+      title: 'Stockage des blobs',
+      note: "Les dépôts sur le Blossom intégré au serveur sont refusés une fois que les blobs qu'il garde atteignent ensemble cette taille. Un blob part peu après l'envoi de son e-mail, ou un jour après son dépôt. Gardez-la bien au-dessus de la taille maximale des messages.",
+      label: 'Stockage des blobs, en Mo',
+      unit: 'Mo',
+    },
     blossom: {
       title: 'Serveurs Blossom',
-      note: 'Donnés aux nouveaux domaines pour les e-mails trop gros pour un gift wrap, et utilisés par la clé du serveur lui-même. Les domaines connectés gardent les leurs.',
+      note: 'Donnés aux nouveaux domaines pour les e-mails reçus trop gros pour un gift wrap, et utilisés par la clé du serveur lui-même. Les domaines connectés gardent les leurs. Les e-mails envoyés passent par le Blossom intégré au serveur.',
     },
     indexerRelays: {
       title: "Relais d'indexation",
@@ -482,6 +492,7 @@ const fr: Messages = {
       allowed_key_not_found: "Cette clé n'est plus autorisée. Rechargez la page.",
       abuse_report_not_found: "Ce signalement n'existe plus. Rechargez la page.",
       invalid_max_message_bytes: 'Saisissez une taille entre 1 et 1024 Mo.',
+      invalid_max_blob_storage_bytes: 'Saisissez une taille entre 1 Mo et 1 To.',
       invalid_quotas: 'Saisissez des nombres entiers, ou laissez un champ vide.',
       key_quotas_not_found: "Cette clé n'a plus ses propres quotas. Rechargez la page.",
       pending_domain_quota:

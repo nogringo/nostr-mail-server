@@ -4,8 +4,9 @@ import { DomainSigners } from './bunker.js'
 import { loadConfig } from './config.js'
 import { createSmtpTransport } from './delivery.js'
 import { createAuthResolver, createDnsLookup, createExchangerLookup } from './dns.js'
+import { registerBlossomRoutes } from './handlers/blossom.js'
 import { registerRelayRoutes } from './handlers/relay.js'
-import { publishEveryDomainLists } from './lists.js'
+import { listsTargets, publishEveryDomainLists } from './lists.js'
 import { migrate } from './migrations.js'
 import { generateKeyPair } from './nostr.js'
 import { Outbox } from './outbox.js'
@@ -59,12 +60,13 @@ const outbox = new Outbox(
   quotas,
 )
 registerRelayRoutes(app, repo, outbox)
+registerBlossomRoutes(app, repo, { config, settings, outbox })
 
 if (migrations.length) app.log.info({ migrations }, 'applied database migrations')
-if (await settings.announce(config.relayUrl)) {
-  const listsRelays = { relay: config.relayUrl, indexerRelays: settings.current.indexerRelays }
-  void publishEveryDomainLists(repo, relays, signers, listsRelays).then(
-    (failed) => app.log.info({ failed }, 'Published the lists of the domain keys with the relay of the server'),
+if (await settings.announce(config.relayUrl, config.blossomUrl)) {
+  void publishEveryDomainLists(repo, relays, signers, listsTargets(config, settings.current)).then(
+    (failed) =>
+      app.log.info({ failed }, 'Published the lists of the domain keys naming the server relay and Blossom server'),
     (error) => app.log.error({ error }, 'The lists of the domain keys could not be published'),
   )
 }

@@ -1,5 +1,5 @@
 import type { NostrEvent } from 'nostr-tools/pure'
-import { type BlobStore, decryptBlob } from './blossom.js'
+import { AUTH_TAG_BYTES, type BlobStore, decryptBlob } from './blossom.js'
 import { DomainSigners } from './bunker.js'
 import type { DeliveryResult, MailTransport } from './delivery.js'
 import { signMessage } from './dkim.js'
@@ -24,7 +24,8 @@ const RETRY_DELAYS_MINUTES = [5, 15, 30, 60, 120, 240, 480]
 const GIVE_UP_MS = 4 * 24 * 3600_000
 // Longer than the lookback, so a wrap seen again is still known.
 const KEEP_MS = 7 * 24 * 3600_000
-const AUTH_TAG_BYTES = 16
+// A client may upload a blob well before its wrap gets through, a bunker that is away for instance.
+const UNCLAIMED_BLOB_MS = 24 * 3600_000
 
 export interface OutboxLogger {
   info(details: object, message: string): void
@@ -78,6 +79,7 @@ export class Outbox {
       await this.deliverDue()
       if (Date.now() - this.prunedAt >= PRUNE_MS) {
         await this.repo.pruneOutboundMessages(new Date(Date.now() - KEEP_MS))
+        await this.repo.pruneBlobs(new Date(Date.now() - UNCLAIMED_BLOB_MS))
         this.prunedAt = Date.now()
       }
     } catch (error) {
@@ -131,6 +133,11 @@ export class Outbox {
       .finally(() => this.handling.delete(wrap.id))
     this.handling.set(wrap.id, answer)
     return answer
+  }
+
+  // An email waiting for the blob that just came goes out at once.
+  async blobUploaded(sha256: string): Promise<void> {
+    if (await this.repo.wakeBlobRecipients(sha256)) await this.deliverDue()
   }
 
   // Runs until nothing is due. A call made meanwhile runs it once more.
@@ -187,7 +194,14 @@ export class Outbox {
       return error.message
     }
 
-    await this.repo.addOutboundMessage({ wrapId: wrap.id, bridgePubkey, wrap, recipients: email.recipients })
+    const blobSha256 = 'blob' in email.body ? email.body.blob.sha256 : undefined
+    await this.repo.addOutboundMessage({
+      wrapId: wrap.id,
+      bridgePubkey,
+      wrap,
+      recipients: email.recipients,
+      blobSha256,
+    })
     await this.quotas.recordRecipients(domain, email.recipients.length)
     this.logger.info({ wrapId: wrap.id, domain: domain.domain, recipients: email.recipients.length }, 'Queued an email')
     void this.deliverDue().catch((error) => this.logger.error({ error }, 'The outbox could not deliver'))
@@ -229,25 +243,28 @@ export class Outbox {
     )
   }
 
-  // The blob is looked for on the servers the client uploads to: the domain
-  // key's, then the sender's own.
+  // The blob is on the server when the client read the domain's current lists.
+  // Otherwise it is looked for on the servers the client uploads to: those the
+  // domain key announced before, then the sender's own.
   private async loadMime(domain: Domain, email: OutboundEmail): Promise<Buffer> {
     if ('mime' in email.body) return toCrlf(Buffer.from(email.body.mime))
 
-    const { sha256, key, nonce } = email.body.blob
+    const { blob } = email.body
+    const { sha256 } = blob
     const settings = this.settings.current
     const maxBytes = settings.maxMessageBytes + AUTH_TAG_BYTES
     const servers = [...new Set([...domain.blossomServers, ...settings.blossomServers])]
-    let bytes = await this.blobs.download(servers, sha256, maxBytes)
+    let bytes = (await this.repo.findBlob(sha256))?.data ?? (await this.blobs.download(servers, sha256, maxBytes))
     if (!bytes) {
       const { blossomServers } = await this.relays.findInbox(email.senderPubkey)
       const others = blossomServers.filter((server) => !servers.includes(server))
       bytes = await this.blobs.download(others, sha256, maxBytes)
     }
     if (!bytes) throw new Error('The email blob is on no Blossom server')
+    if (!('key' in blob)) return toCrlf(bytes)
 
     try {
-      return toCrlf(decryptBlob(bytes, key, nonce))
+      return toCrlf(decryptBlob(bytes, blob.key, blob.nonce))
     } catch {
       throw new Refusal('The email blob cannot be decrypted')
     }

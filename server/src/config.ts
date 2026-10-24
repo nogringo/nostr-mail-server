@@ -6,8 +6,6 @@ import type { AppConfig, TlsFiles } from './types.js'
 const DNS_NAME = /^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/
 const SELECTOR = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
 
-export const RELAY_PATH = '/relay'
-
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const databaseUrl = env.DATABASE_URL?.trim()
   if (!databaseUrl) {
@@ -26,8 +24,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     dnsServers: parseDnsServers(env.DNS_SERVERS),
     tls: parseTlsFiles(env.TLS_CERT_FILE, env.TLS_KEY_FILE),
     adminPubkeys: parseAdminPubkeys(env.ADMIN_PUBKEYS),
-    // The site, the API and the MX share one host name.
-    relayUrl: `wss://${mxHost}${RELAY_PATH}`,
+    // Their own host, so that no uploaded blob shares the origin of the site.
+    nostrHost: `nostr.${mxHost}`,
+    relayUrl: `wss://nostr.${mxHost}/`,
+    blossomUrl: `https://nostr.${mxHost}`,
   }
 }
 

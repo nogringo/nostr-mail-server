@@ -36,7 +36,7 @@ async function setup(outbox?: Pick<Outbox, 'receive'>) {
   )
   await app.ready()
   const domain = await sendingDomain(repo, 'example.com', signer().pubkey)
-  const socket = await app.injectWS('/relay')
+  const socket = await app.injectWS('/')
   return { repo, app, domain, socket }
 }
 

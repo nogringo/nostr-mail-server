@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { DomainSigners } from '../bunker.js'
 import { normalizeDomain } from '../domain.js'
-import { publishEveryDomainLists } from '../lists.js'
+import { listsTargets, publishEveryDomainLists } from '../lists.js'
 import { parsePubkey } from '../nostr.js'
 import { parseQuotas } from '../quotas.js'
 import { checkServerRecords } from '../records.js'
@@ -68,10 +68,7 @@ export function registerAdminRoutes(
     request.log.info({ changes: parsed.changes, admin }, 'Changed the settings of the server')
 
     if (!sameUrls(before.indexerRelays, after.indexerRelays)) {
-      void publishEveryDomainLists(repo, relays, signers, {
-        relay: config.relayUrl,
-        indexerRelays: after.indexerRelays,
-      }).then(
+      void publishEveryDomainLists(repo, relays, signers, listsTargets(config, after)).then(
         (failed) => request.log.info({ failed }, 'Published the lists of the domain keys on the new indexers'),
         (error) => request.log.error({ error }, 'The lists of the domain keys could not be published'),
       )
