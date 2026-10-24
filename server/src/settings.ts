@@ -11,7 +11,6 @@ const LARGEST_SIZE_LIMIT = 1024 * 1024 * 1024
 
 const URL_SETTINGS = [
   ['blossomServers', normalizeBlossomUrl, 'invalid_blossom_servers'],
-  ['domainRelays', normalizeRelayUrl, 'invalid_domain_relays'],
   ['indexerRelays', normalizeRelayUrl, 'invalid_indexer_relays'],
 ] as const
 
@@ -30,34 +29,46 @@ export class SettingsStore {
   }
 
   get current(): ServerSettings {
-    const { retiredDomainRelays: _, ...settings } = this.stored
+    const { domainRelays: _, retiredDomainRelays: __, ...settings } = this.stored
     return settings
   }
 
-  async update(changes: SettingsChanges, now = Date.now()): Promise<ServerSettings> {
-    const next = { ...this.stored, ...changes, quotas: { ...this.stored.quotas, ...changes.quotas } }
-    const retired: RetiredRelays = Object.fromEntries(
-      Object.entries(this.stored.retiredDomainRelays).filter(
-        ([relay, until]) => Date.parse(until) > now && !next.domainRelays.includes(relay),
-      ),
-    )
-    const until = new Date(now + RETIRED_RELAY_MS).toISOString()
-    for (const relay of this.stored.domainRelays) {
-      if (!next.domainRelays.includes(relay)) retired[relay] = until
-    }
-
-    const stored = { ...next, retiredDomainRelays: retired }
-    await this.repo.updateSettings(stored)
-    this.stored = stored
+  async update(changes: SettingsChanges): Promise<ServerSettings> {
+    await this.store({ ...this.stored, ...changes, quotas: { ...this.stored.quotas, ...changes.quotas } })
     return this.current
   }
 
-  // Where the outbox listens: the domain relays, and those taken off them lately.
+  // Makes the server's relay the one the domain keys announce. Returns whether they announced others, which
+  // the outbox keeps listening to for a while.
+  async announce(relay: string, now = Date.now()): Promise<boolean> {
+    const before = this.stored.domainRelays
+    if (before.length === 1 && before[0] === relay) return false
+
+    const retired: RetiredRelays = Object.fromEntries(
+      Object.entries(this.stored.retiredDomainRelays).filter(
+        ([retiredRelay, until]) => Date.parse(until) > now && retiredRelay !== relay,
+      ),
+    )
+    const until = new Date(now + RETIRED_RELAY_MS).toISOString()
+    for (const announced of before) {
+      if (announced !== relay) retired[announced] = until
+    }
+
+    await this.store({ ...this.stored, domainRelays: [relay], retiredDomainRelays: retired })
+    return true
+  }
+
+  // Where the outbox listens: the relays the domain keys announced lately. Their mail now reaches the
+  // server's relay directly.
   outboxRelays(now = Date.now()): string[] {
-    const retired = Object.entries(this.stored.retiredDomainRelays)
+    return Object.entries(this.stored.retiredDomainRelays)
       .filter(([, until]) => Date.parse(until) > now)
       .map(([relay]) => relay)
-    return [...new Set([...this.stored.domainRelays, ...retired])]
+  }
+
+  private async store(stored: StoredSettings): Promise<void> {
+    await this.repo.updateSettings(stored)
+    this.stored = stored
   }
 }
 

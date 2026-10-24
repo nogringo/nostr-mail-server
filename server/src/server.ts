@@ -4,6 +4,8 @@ import { DomainSigners } from './bunker.js'
 import { loadConfig } from './config.js'
 import { createSmtpTransport } from './delivery.js'
 import { createAuthResolver, createDnsLookup, createExchangerLookup } from './dns.js'
+import { registerRelayRoutes } from './handlers/relay.js'
+import { publishEveryDomainLists } from './lists.js'
 import { migrate } from './migrations.js'
 import { generateKeyPair } from './nostr.js'
 import { Outbox } from './outbox.js'
@@ -56,8 +58,16 @@ const outbox = new Outbox(
   signers,
   quotas,
 )
+registerRelayRoutes(app, repo, outbox)
 
 if (migrations.length) app.log.info({ migrations }, 'applied database migrations')
+if (await settings.announce(config.relayUrl)) {
+  const listsRelays = { relay: config.relayUrl, indexerRelays: settings.current.indexerRelays }
+  void publishEveryDomainLists(repo, relays, signers, listsRelays).then(
+    (failed) => app.log.info({ failed }, 'Published the lists of the domain keys with the relay of the server'),
+    (error) => app.log.error({ error }, 'The lists of the domain keys could not be published'),
+  )
+}
 
 const shutdown = async () => {
   tlsReload?.stop()

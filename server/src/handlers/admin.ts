@@ -67,9 +67,12 @@ export function registerAdminRoutes(
     const after = await settings.update(parsed.changes)
     request.log.info({ changes: parsed.changes, admin }, 'Changed the settings of the server')
 
-    if (!sameUrls(before.domainRelays, after.domainRelays) || !sameUrls(before.indexerRelays, after.indexerRelays)) {
-      void publishEveryDomainLists(repo, relays, signers, after).then(
-        (failed) => request.log.info({ failed }, 'Published the lists of the domain keys on the new relays'),
+    if (!sameUrls(before.indexerRelays, after.indexerRelays)) {
+      void publishEveryDomainLists(repo, relays, signers, {
+        relay: config.relayUrl,
+        indexerRelays: after.indexerRelays,
+      }).then(
+        (failed) => request.log.info({ failed }, 'Published the lists of the domain keys on the new indexers'),
         (error) => request.log.error({ error }, 'The lists of the domain keys could not be published'),
       )
     }

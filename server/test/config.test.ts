@@ -23,6 +23,7 @@ test('loadConfig applies the defaults', () => {
     dnsServers: [],
     tls: null,
     adminPubkeys: [],
+    relayUrl: 'wss://mx.example.org/relay',
   })
 })
 

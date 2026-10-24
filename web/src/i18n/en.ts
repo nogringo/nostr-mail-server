@@ -426,13 +426,9 @@ const en = {
       title: 'Blossom servers',
       note: "Given to new domains for the mail too large for a gift wrap, and used by the server's own key. Connected domains keep theirs.",
     },
-    domainRelays: {
-      title: 'Domain relays',
-      note: 'Every domain key announces them, and the mail to send reaches the server there. Saving publishes the lists of every domain key again. The server keeps listening to a removed relay for seven days, for the clients that have not seen the change.',
-    },
     indexerRelays: {
       title: 'Indexer relays',
-      note: 'Where the server looks up the relays and Blossom servers of other keys. Domain keys publish their lists there too.',
+      note: 'Where the server looks up the relays and Blossom servers of other keys, and where domain keys publish their lists. Saving publishes the lists of every domain key again.',
     },
     onePerLine: (title: string) => `${title}, one per line`,
   },
@@ -471,7 +467,6 @@ const en = {
       abuse_report_not_found: 'This report no longer exists. Reload the page.',
       invalid_max_message_bytes: 'Enter a size between 1 and 1024 MB.',
       invalid_blossom_servers: 'Enter at least one https:// URL of a public server, one per line.',
-      invalid_domain_relays: 'Enter at least one wss:// URL of a public relay, one per line.',
       invalid_indexer_relays: 'Enter at least one wss:// URL of a public relay, one per line.',
       invalid_quotas: 'Enter whole numbers, or leave a field empty.',
       key_quotas_not_found: 'This key no longer has quotas of its own. Reload the page.',

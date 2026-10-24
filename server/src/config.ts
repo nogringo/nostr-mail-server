@@ -6,23 +6,28 @@ import type { AppConfig, TlsFiles } from './types.js'
 const DNS_NAME = /^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/
 const SELECTOR = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/
 
+export const RELAY_PATH = '/relay'
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const databaseUrl = env.DATABASE_URL?.trim()
   if (!databaseUrl) {
     throw new Error('DATABASE_URL is required')
   }
+  const mxHost = parseDnsName(env.MX_HOST, 'MX_HOST')
 
   return {
     port: parsePort(env.PORT, 'PORT', 3000),
     smtpPort: parsePort(env.SMTP_PORT, 'SMTP_PORT', 2525),
     databaseUrl,
-    mxHost: parseDnsName(env.MX_HOST, 'MX_HOST'),
+    mxHost,
     spfInclude: parseDnsName(env.SPF_INCLUDE, 'SPF_INCLUDE'),
     publicIpv4: parsePublicIpv4(env.PUBLIC_IPV4),
     dkimSelector: parseSelector(env.DKIM_SELECTOR),
     dnsServers: parseDnsServers(env.DNS_SERVERS),
     tls: parseTlsFiles(env.TLS_CERT_FILE, env.TLS_KEY_FILE),
     adminPubkeys: parseAdminPubkeys(env.ADMIN_PUBKEYS),
+    // The site, the API and the MX share one host name.
+    relayUrl: `wss://${mxHost}${RELAY_PATH}`,
   }
 }
 

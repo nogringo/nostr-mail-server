@@ -13,6 +13,8 @@ export interface AppConfig {
   tls: TlsFiles | null
   // Hex pubkeys allowed to see every domain of the server.
   adminPubkeys: string[]
+  // The server's own relay, the only one the domain keys announce.
+  relayUrl: string
 }
 
 // PEM files of the certificate SMTP offers with STARTTLS.
@@ -23,7 +25,7 @@ export interface TlsFiles {
 
 export type DomainConfig = Pick<AppConfig, 'mxHost' | 'spfInclude' | 'publicIpv4' | 'dkimSelector'>
 
-export type ApiConfig = DomainConfig & Pick<AppConfig, 'adminPubkeys'>
+export type ApiConfig = DomainConfig & Pick<AppConfig, 'adminPubkeys' | 'relayUrl'>
 
 export type RecordId = 'ownership' | 'mx' | 'nip05' | 'spf' | 'dkim' | 'dmarc'
 
@@ -107,9 +109,7 @@ export interface ServerSettings {
   maxMessageBytes: number
   // Given to new claims for their large mail, and used by the server key.
   blossomServers: string[]
-  // Announced by every domain key (kinds 10002 and 10050): its lists are published there, and its mail to send read.
-  domainRelays: string[]
-  // Where the lists of other keys are looked up.
+  // Where the lists of other keys are looked up, and those of the domain keys published.
   indexerRelays: string[]
   quotas: Quotas
 }
@@ -140,10 +140,11 @@ export interface KeyQuotas {
   updatedAt: string
 }
 
-// Domain relays taken off the settings, by the date the outbox stops listening to them.
+// Relays the domain keys no longer announce, by the date the outbox stops listening to them.
 export type RetiredRelays = Record<string, string>
 
-export type StoredSettings = ServerSettings & { retiredDomainRelays: RetiredRelays }
+// The relays the domain keys announce (kinds 10002 and 10050) are the server's own: kept to see it change.
+export type StoredSettings = ServerSettings & { domainRelays: string[]; retiredDomainRelays: RetiredRelays }
 
 // A NIP-46 remote signer that holds a domain key.
 export interface BunkerKey {

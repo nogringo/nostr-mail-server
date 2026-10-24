@@ -25,6 +25,7 @@
     "typecheck": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
+    "@fastify/websocket": "^11.3.4",
     "fastify": "^5.12.7",
     "libmime": "5.5.2",
     "mailauth": "8.0.1",
@@ -39,6 +40,7 @@
     "@types/nodemailer": "8.0.2",
     "@types/pg": "^8.23.1",
     "@types/smtp-server": "3.5.13",
+    "@types/ws": "^8.18.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"

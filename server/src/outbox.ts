@@ -10,14 +10,14 @@ import type { SettingsStore } from './settings.js'
 import type { KeySigner } from './signer.js'
 import type { Domain, DomainRepository, OutboundMessage, RecipientOutcome } from './types.js'
 
-const GIFT_WRAP_KIND = 1059
+export const GIFT_WRAP_KIND = 1059
+export const MAX_CLOCK_SKEW_SECONDS = 3600
 const TICK_MS = 30_000
 // Connections drop silently now and then: every subscription is renewed.
 const RENEW_SUBSCRIPTIONS_MS = 10 * 60_000
 const PRUNE_MS = 60 * 60_000
 // NIP-59 dates a wrap up to two days back, so every subscription reaches that far.
 const LOOKBACK_SECONDS = 2 * 24 * 3600 + 3600
-const MAX_CLOCK_SKEW_SECONDS = 3600
 const BATCH_SIZE = 20
 const RETRY_DELAYS_MINUTES = [5, 15, 30, 60, 120, 240, 480]
 // RFC 5321 4.5.4.1: a sender gives up after four or five days.
@@ -39,6 +39,8 @@ export class Outbox {
   private readonly subscriptions = new Map<string, { subscription: Subscription; signer: KeySigner }>()
   // Wraps handled by this process, with their date, to skip them when relays send them again.
   private readonly seen = new Map<string, number>()
+  // Wraps being checked, with their answer.
+  private readonly handling = new Map<string, Promise<string | null>>()
   private timer: NodeJS.Timeout | undefined
   private renewedAt = 0
   // The relays the subscriptions listen on.
@@ -104,7 +106,7 @@ export class Outbox {
       }
     }
     for (const [pubkey, signer] of signers) {
-      if (!this.subscriptions.has(pubkey))
+      if (relays.length && !this.subscriptions.has(pubkey))
         this.subscriptions.set(pubkey, { subscription: this.subscribe(signer, relays), signer })
     }
 
@@ -114,17 +116,21 @@ export class Outbox {
     }
   }
 
-  async receive(wrap: NostrEvent, bridgePubkey: string): Promise<void> {
-    if (this.seen.has(wrap.id) || wrap.created_at > now() + MAX_CLOCK_SKEW_SECONDS) return
-    this.seen.set(wrap.id, wrap.created_at)
+  // Returns why the wrap is refused, or null once it is queued or was handled before. A wrap that fails to
+  // be checked is not seen: the relays send it again with the next subscription.
+  receive(wrap: NostrEvent, bridgePubkey: string): Promise<string | null> {
+    const handling = this.handling.get(wrap.id)
+    if (handling) return handling
+    if (this.seen.has(wrap.id) || wrap.created_at > now() + MAX_CLOCK_SKEW_SECONDS) return Promise.resolve(null)
 
-    try {
-      await this.queue(wrap, bridgePubkey)
-    } catch (error) {
-      // The relays send it again with the next subscription.
-      this.seen.delete(wrap.id)
-      throw error
-    }
+    const answer = this.queue(wrap, bridgePubkey)
+      .then((refusal) => {
+        this.seen.set(wrap.id, wrap.created_at)
+        return refusal
+      })
+      .finally(() => this.handling.delete(wrap.id))
+    this.handling.set(wrap.id, answer)
+    return answer
   }
 
   // Runs until nothing is due. A call made meanwhile runs it once more.
@@ -162,10 +168,10 @@ export class Outbox {
     )
   }
 
-  private async queue(wrap: NostrEvent, bridgePubkey: string): Promise<void> {
-    if (await this.repo.hasOutboundMessage(wrap.id)) return
+  private async queue(wrap: NostrEvent, bridgePubkey: string): Promise<string | null> {
+    if (await this.repo.hasOutboundMessage(wrap.id)) return null
     const domain = await this.repo.findVerifiedDomainByBridgePubkey(bridgePubkey)
-    if (!domain) return
+    if (!domain) return null
 
     let email: OutboundEmail
     try {
@@ -178,13 +184,14 @@ export class Outbox {
 
       await this.repo.addOutboundMessage({ wrapId: wrap.id, bridgePubkey, refusal: error.message })
       this.logger.info({ wrapId: wrap.id, domain: domain.domain, reason: error.message }, 'Refused an email')
-      return
+      return error.message
     }
 
     await this.repo.addOutboundMessage({ wrapId: wrap.id, bridgePubkey, wrap, recipients: email.recipients })
     await this.quotas.recordRecipients(domain, email.recipients.length)
     this.logger.info({ wrapId: wrap.id, domain: domain.domain, recipients: email.recipients.length }, 'Queued an email')
     void this.deliverDue().catch((error) => this.logger.error({ error }, 'The outbox could not deliver'))
+    return null
   }
 
   private async attempt(message: OutboundMessage): Promise<void> {

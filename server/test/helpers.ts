@@ -60,19 +60,18 @@ export const domainConfig: DomainConfig = {
   dkimSelector: 'nostrmail',
 }
 
-export const apiConfig: ApiConfig = { ...domainConfig, adminPubkeys: [] }
+export const apiConfig: ApiConfig = { ...domainConfig, adminPubkeys: [], relayUrl: 'wss://mx.example.org/relay' }
 
 export const testSettings: ServerSettings = {
   openRegistration: false,
   maxMessageBytes: 1024 * 1024,
   blossomServers: ['https://blossom.example.org'],
-  domainRelays: ['wss://relay.example.org/'],
   indexerRelays: ['wss://indexer.example.org/'],
   quotas: NO_QUOTAS,
 }
 
 // The settings of the repository, with these changes stored first.
-export function settingsStore(repo: MemoryDomainRepository, changes: Partial<ServerSettings> = {}): SettingsStore {
+export function settingsStore(repo: MemoryDomainRepository, changes: Partial<StoredSettings> = {}): SettingsStore {
   repo.storedSettings = { ...repo.storedSettings, ...changes }
   return new SettingsStore(repo, repo.storedSettings)
 }
@@ -110,7 +109,7 @@ export class MemoryDomainRepository implements DomainRepository {
   readonly allowedKeys = new Map<string, AllowedKey>()
   readonly keyQuotas = new Map<string, KeyQuotas>()
   quotaUsage: { quota: PeriodQuota; subject: string; amount: number; usedAt: Date }[] = []
-  storedSettings: StoredSettings = { ...testSettings, retiredDomainRelays: {} }
+  storedSettings: StoredSettings = { ...testSettings, domainRelays: [apiConfig.relayUrl], retiredDomainRelays: {} }
   readonly servedDomains = new Set<string>()
   serverKey: KeyPair | null = null
   readonly abuseReports: StoredAbuseReport[] = []

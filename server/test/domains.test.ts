@@ -269,13 +269,13 @@ test('a check that finds the domain verified publishes the lists of its key', as
   const claim = await repo.findDomain('example.com', alice.pubkey)
   expect(network.published.map(({ event }) => event.kind)).toEqual([10002, 10050, 10063])
   for (const { relays, event, auth } of network.published) {
-    expect(relays).toEqual(['wss://relay.example.org/', 'wss://indexer.example.org/'])
+    expect(relays).toEqual(['wss://indexer.example.org/'])
     expect(event.pubkey).toBe(claim?.bridgePubkey)
     expect(verifyEvent(event)).toBe(true)
     expect(auth.pubkey).toBe(claim?.bridgePubkey)
   }
-  expect(network.published[0].event.tags).toEqual([['r', 'wss://relay.example.org/']])
-  expect(network.published[1].event.tags).toEqual([['relay', 'wss://relay.example.org/']])
+  expect(network.published[0].event.tags).toEqual([['r', apiConfig.relayUrl, 'read']])
+  expect(network.published[1].event.tags).toEqual([['relay', apiConfig.relayUrl]])
   expect(network.published[2].event.tags).toEqual([['server', 'https://blossom.example.org']])
 })
 
@@ -283,7 +283,7 @@ test('a check still succeeds when the lists cannot be published', async () => {
   const { dns, network, app } = setup()
   const alice = signer()
   const created = await request(app, alice, 'PUT', '/domains/example.com')
-  network.down.add('wss://relay.example.org/').add('wss://indexer.example.org/')
+  network.down.add('wss://indexer.example.org/')
 
   publishOwnership(dns, 'example.com', ownershipValue(created.json()))
   const response = await request(app, alice, 'POST', '/domains/example.com/check')

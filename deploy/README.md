@@ -10,7 +10,7 @@ One machine runs everything with Docker Compose:
 
 The site and the API share one origin, `SITE_HOST`, because NIP-98 binds each
 request to the URL the browser signs. Caddy sends `/domains`, `/domains/*`,
-`/admin/*`, `/.well-known/nostr.json`, `/nip05/*` and `/healthz` to the server and keeps
+`/admin/*`, `/.well-known/nostr.json`, `/nip05/*`, `/relay` and `/healthz` to the server and keeps
 the `Host` header. The site's pages are built as `<name>.html`, so `/admin` is
 the admin page and `/admin/*` the API.
 
@@ -20,8 +20,9 @@ the domain is verified, serves `/.well-known/nostr.json` there and redirects
 every other path to `https://SITE_HOST/`. A domain that keeps its own website
 relays that path to `https://SITE_HOST/nip05/<domain>` instead.
 
-`SITE_HOST` is also the MX that connected domains point at, and for now the
-SPF include they are given. The SMTP server offers STARTTLS with the
+`SITE_HOST` is also the MX that connected domains point at, the host of the
+relay clients send mail to (`wss://SITE_HOST/relay`), and for now the SPF
+include they are given. The SMTP server offers STARTTLS with the
 certificate Caddy obtains for it: the server mounts Caddy's data read-only,
 both images run as uid 10001 since Caddy keeps its keys readable by their owner
 only, and Caddy uses Let's Encrypt alone so the files stay at the same path.

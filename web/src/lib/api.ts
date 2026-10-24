@@ -163,8 +163,6 @@ export interface ServerSettings {
   maxMessageBytes: number
   // Given to new domains for their large mail.
   blossomServers: string[]
-  // Announced by every domain key.
-  domainRelays: string[]
   // Where the lists of other keys are looked up.
   indexerRelays: string[]
   quotas: Quotas

@@ -441,13 +441,9 @@ const fr: Messages = {
       title: 'Serveurs Blossom',
       note: 'Donnés aux nouveaux domaines pour les e-mails trop gros pour un gift wrap, et utilisés par la clé du serveur lui-même. Les domaines connectés gardent les leurs.',
     },
-    domainRelays: {
-      title: 'Relais des domaines',
-      note: "Chaque clé de domaine les annonce, et les e-mails à envoyer y parviennent au serveur. Enregistrer republie les listes de chaque clé de domaine. Le serveur continue d'écouter un relais retiré pendant sept jours, pour les clients qui n'ont pas vu le changement.",
-    },
     indexerRelays: {
       title: "Relais d'indexation",
-      note: 'Là où le serveur cherche les relais et les serveurs Blossom des autres clés. Les clés de domaine y publient aussi leurs listes.',
+      note: 'Là où le serveur cherche les relais et les serveurs Blossom des autres clés, et où les clés de domaine publient leurs listes. Enregistrer republie les listes de chaque clé de domaine.',
     },
     onePerLine: (title: string) => `${title}, un par ligne`,
   },
@@ -497,7 +493,6 @@ const fr: Messages = {
       keys_per_address_quota:
         "Cette adresse a autant de clés que ce serveur le permet. Retirez-en une d'abord, ou demandez-en plus à son admin.",
       invalid_blossom_servers: "Saisissez au moins une URL https:// d'un serveur public, une par ligne.",
-      invalid_domain_relays: "Saisissez au moins une URL wss:// d'un relais public, une par ligne.",
       invalid_indexer_relays: "Saisissez au moins une URL wss:// d'un relais public, une par ligne.",
       no_extension: 'Aucune extension Nostr trouvée dans ce navigateur.',
       invalid_bunker: 'Saisissez un lien bunker://, le nom@domaine de votre bunker, un nsec ou un ncryptsec.',

@@ -14,7 +14,7 @@ interface Props {
 // Each setting is keyed by its value, so that a save shows what the server stored.
 export default function ServiceSettings({ settings, onSave }: Props) {
   const t = useMessages().settings
-  const { maxMessageBytes, blossomServers, domainRelays, indexerRelays } = settings
+  const { maxMessageBytes, blossomServers, indexerRelays } = settings
 
   return (
     <div className="space-y-10">
@@ -31,15 +31,6 @@ export default function ServiceSettings({ settings, onSave }: Props) {
         placeholder="https://"
         urls={blossomServers}
         onSave={(urls) => onSave({ blossomServers: urls })}
-      />
-      <UrlsSetting
-        key={`domain ${domainRelays.join(' ')}`}
-        id="domain-relays"
-        title={t.domainRelays.title}
-        note={t.domainRelays.note}
-        placeholder="wss://"
-        urls={domainRelays}
-        onSave={(urls) => onSave({ domainRelays: urls })}
       />
       <UrlsSetting
         key={`indexer ${indexerRelays.join(' ')}`}

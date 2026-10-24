@@ -1,46 +1,59 @@
 import { expect, test } from 'vitest'
 import { parseSettingsChanges } from '../src/settings.js'
-import { MemoryDomainRepository, settingsStore } from './helpers.js'
+import { apiConfig, MemoryDomainRepository, settingsStore } from './helpers.js'
 
 const DAY_MS = 24 * 3600_000
+const RELAY = apiConfig.relayUrl
 
-test('a removed domain relay is still listened to for seven days', async () => {
+test('announcing the server relay retires the relays announced before for seven days', async () => {
   const repo = new MemoryDomainRepository()
-  const settings = settingsStore(repo, { domainRelays: ['wss://old.example.org/', 'wss://kept.example.org/'] })
+  const settings = settingsStore(repo, { domainRelays: ['wss://old.example.org/', 'wss://other.example.org/'] })
   const now = Date.parse('2026-10-21T12:00:00Z')
 
-  await settings.update({ domainRelays: ['wss://kept.example.org/', 'wss://new.example.org/'] }, now)
+  expect(await settings.announce(RELAY, now)).toBe(true)
 
-  expect(settings.current.domainRelays).toEqual(['wss://kept.example.org/', 'wss://new.example.org/'])
-  expect(settings.outboxRelays(now + 6 * DAY_MS)).toEqual([
-    'wss://kept.example.org/',
-    'wss://new.example.org/',
-    'wss://old.example.org/',
-  ])
-  expect(settings.outboxRelays(now + 8 * DAY_MS)).toEqual(['wss://kept.example.org/', 'wss://new.example.org/'])
-  expect(repo.storedSettings.retiredDomainRelays).toEqual({ 'wss://old.example.org/': '2026-10-28T12:00:00.000Z' })
+  expect(repo.storedSettings.domainRelays).toEqual([RELAY])
+  expect(settings.outboxRelays(now + 6 * DAY_MS)).toEqual(['wss://old.example.org/', 'wss://other.example.org/'])
+  expect(settings.outboxRelays(now + 8 * DAY_MS)).toEqual([])
+  expect(repo.storedSettings.retiredDomainRelays).toEqual({
+    'wss://old.example.org/': '2026-10-28T12:00:00.000Z',
+    'wss://other.example.org/': '2026-10-28T12:00:00.000Z',
+  })
 })
 
-test('a relay put back is no longer retired, and expired ones are dropped', async () => {
+test('announcing the relay already announced changes nothing', async () => {
   const repo = new MemoryDomainRepository()
-  const settings = settingsStore(repo, { domainRelays: ['wss://a.example.org/', 'wss://b.example.org/'] })
-  const now = Date.parse('2026-10-21T12:00:00Z')
-  await settings.update({ domainRelays: ['wss://c.example.org/'] }, now)
+  const settings = settingsStore(repo, { domainRelays: [RELAY] })
 
-  await settings.update({ domainRelays: ['wss://a.example.org/'] }, now + 8 * DAY_MS)
+  expect(await settings.announce(RELAY)).toBe(false)
+  expect(settings.outboxRelays()).toEqual([])
+})
+
+test('a relay announced again is no longer retired, and expired ones are dropped', async () => {
+  const repo = new MemoryDomainRepository()
+  const settings = settingsStore(repo, { domainRelays: ['wss://a.example.org/'] })
+  const now = Date.parse('2026-10-21T12:00:00Z')
+  await settings.announce('wss://b.example.org/', now)
+  await settings.announce('wss://c.example.org/', now + 8 * DAY_MS)
+
+  await settings.announce('wss://b.example.org/', now + 8 * DAY_MS)
 
   expect(repo.storedSettings.retiredDomainRelays).toEqual({ 'wss://c.example.org/': '2026-11-05T12:00:00.000Z' })
 })
 
-test('changing another setting keeps the relays and returns the settings without the retired ones', async () => {
+test('changing a setting keeps the relays and returns the settings without them', async () => {
   const repo = new MemoryDomainRepository()
-  const settings = settingsStore(repo)
+  const settings = settingsStore(repo, {
+    retiredDomainRelays: { 'wss://old.example.org/': '2026-10-28T12:00:00.000Z' },
+  })
 
   const updated = await settings.update({ openRegistration: true })
 
   expect(updated).toEqual({ ...settings.current, openRegistration: true })
+  expect(updated).not.toHaveProperty('domainRelays')
   expect(updated).not.toHaveProperty('retiredDomainRelays')
-  expect(repo.storedSettings.retiredDomainRelays).toEqual({})
+  expect(repo.storedSettings.domainRelays).toEqual([RELAY])
+  expect(repo.storedSettings.retiredDomainRelays).toEqual({ 'wss://old.example.org/': '2026-10-28T12:00:00.000Z' })
 })
 
 test('parses the settings an admin changes, URLs normalized and once each', () => {
@@ -49,7 +62,6 @@ test('parses the settings an admin changes, URLs normalized and once each', () =
       openRegistration: true,
       maxMessageBytes: 10 * 1024 * 1024,
       blossomServers: ['https://Blossom.Example.com/', 'https://blossom.example.com'],
-      domainRelays: ['wss://Relay.Example.com'],
       indexerRelays: [' wss://indexer.example.com/ '],
       quotas: { addresses: 0, recipientsPerDay: null },
     }),
@@ -58,12 +70,12 @@ test('parses the settings an admin changes, URLs normalized and once each', () =
       openRegistration: true,
       maxMessageBytes: 10 * 1024 * 1024,
       blossomServers: ['https://blossom.example.com'],
-      domainRelays: ['wss://relay.example.com/'],
       indexerRelays: ['wss://indexer.example.com/'],
       quotas: { addresses: 0, recipientsPerDay: null },
     },
   })
   expect(parseSettingsChanges({})).toEqual({ changes: {} })
+  expect(parseSettingsChanges({ domainRelays: ['wss://relay.example.com/'] })).toEqual({ changes: {} })
 })
 
 test.each([
@@ -74,8 +86,6 @@ test.each([
   [{ maxMessageBytes: 1.5 * 1024 * 1024 + 0.5 }, 'invalid_max_message_bytes'],
   [{ maxMessageBytes: 2 * 1024 * 1024 * 1024 }, 'invalid_max_message_bytes'],
   [{ blossomServers: ['http://blossom.example.com'] }, 'invalid_blossom_servers'],
-  [{ domainRelays: [] }, 'invalid_domain_relays'],
-  [{ domainRelays: 'wss://relay.example.com' }, 'invalid_domain_relays'],
   [{ indexerRelays: ['wss://localhost'] }, 'invalid_indexer_relays'],
   [{ quotas: null }, 'invalid_quotas'],
   [{ quotas: { addresses: -1 } }, 'invalid_quotas'],

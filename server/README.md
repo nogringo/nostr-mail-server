@@ -94,7 +94,7 @@ for good, and so is the mail clients wrapped to it that waits to be sent, since
 only that key opens it. The same key moved between the server and a bunker
 keeps that mail. When the claim is verified, the
 [lists](#lists-of-the-domain-key) of the new key are published at once, and the
-outbox listens to it within 30 seconds. Giving the nsec the server already
+[server's relay](#receiving-the-wraps) takes the mail wrapped to it right away. Giving the nsec the server already
 holds changes nothing. It answers `400 invalid_nsec`, `400 owner_key` for the
 key that owns the claim (the server opens every gift wrap sent to the domain
 key and replaces its lists), `409 key_in_use` for the key of another claim,
@@ -118,8 +118,8 @@ Every use of the key then goes through the bunker, each request given 30
 seconds. A bunker that does not answer delays the mail rather than loses it:
 
 - Incoming mail is answered `451`, and the sender tries again.
-- A wrap to the domain key is read again with the next subscription, and a
-  queued email waits for its next attempt.
+- A wrap to the domain key is answered `rate-limited`, which Nostr Mail clients
+  send again later, and a queued email waits for its next attempt.
 
 What the bunker refuses is final: the wrap is refused. NIP-46 encrypts each
 request once more and relays commonly cap events at 64 KiB, so a request stays
@@ -133,18 +133,19 @@ can hit: a relay made for bunkers suits it better.
 
 The domain key writes the mail the domain receives, so clients read its lists
 to find what it refers to. Every check that finds the domain verified
-publishes, signed by that key, on the domain relays and the indexer relays of
-the [settings](#settings):
+publishes, signed by that key, on the indexer relays of the
+[settings](#settings):
 
 | Kind | Content |
 |------|---------|
-| 10002 (NIP-65) | The domain relays, where its lists are found |
-| 10050 (NIP-17) | The domain relays, where clients send the mail the domain relays |
+| 10002 (NIP-65) | The [server's relay](#receiving-the-wraps), as a read relay only, since it serves nothing |
+| 10050 (NIP-17) | The server's relay, where clients send the mail the domain relays |
 | 10063 (BUD-03) | The claim's Blossom servers |
 
 A failed publication is logged and does not fail the check: checking again
-publishes the lists again. When an admin changes the domain relays or the
-indexer relays, every verified domain key publishes its lists again.
+publishes the lists again. Every verified domain key publishes its lists again
+when an admin changes the indexer relays, and when the server starts with a
+relay its lists do not name yet (a new `MX_HOST`).
 
 ### Ownership
 
@@ -284,7 +285,7 @@ same NIP-98 authentication. Any other key gets `403 not_admin`.
 | `DELETE` | `/admin/allowed-keys/{npub or hex}` | Take the key off the list: `204`, or `404 allowed_key_not_found` |
 | `PUT` | `/admin/key-quotas/{npub or hex}` | Body `{"quotas": {"addresses": 100}}`: give the key [quotas](#quotas) of its own, in place of those it had: `201` when it had none, `200` otherwise, `400 invalid_pubkey`, `400 invalid_quotas` |
 | `DELETE` | `/admin/key-quotas/{npub or hex}` | Give the key the quotas of the server back: `204`, or `404 key_quotas_not_found` |
-| `PATCH` | `/admin/settings` | Body with any of the [settings](#settings), the others keep their value, and so do the quotas left out of `quotas`: returns them all as `{"settings": {...}}`, or `400` with `invalid_open_registration`, `invalid_max_message_bytes`, `invalid_blossom_servers`, `invalid_domain_relays`, `invalid_indexer_relays` or `invalid_quotas` |
+| `PATCH` | `/admin/settings` | Body with any of the [settings](#settings), the others keep their value, and so do the quotas left out of `quotas`: returns them all as `{"settings": {...}}`, or `400` with `invalid_open_registration`, `invalid_max_message_bytes`, `invalid_blossom_servers`, `invalid_indexer_relays` or `invalid_quotas` |
 
 A claim is returned as:
 
@@ -324,8 +325,7 @@ restart:
 | `openRegistration` | `false` | When `true`, any key [claims domains](#who-can-claim) |
 | `maxMessageBytes` | `26214400` (25 MiB) | Largest message accepted over SMTP, advertised with `SIZE` from the next connection, and largest blob read to send. Between 64 KiB and 1 GiB |
 | `blossomServers` | `https://blossom.nmail.li`, `https://blossom.yakihonne.com`, `https://blossom.ditto.pub` | `https://` Blossom servers given to new claims for their large mail, and used by the server's own key; existing claims keep theirs |
-| `domainRelays` | `wss://relay.nmail.li/`, `wss://relay.ditto.pub/`, `wss://nos.lol/`, `wss://relay.primal.net/` | `wss://` relays the domain keys announce (kinds 10002 and 10050), publish their [lists](#lists-of-the-domain-key) on, and [receive the mail to send](#receiving-the-wraps) on |
-| `indexerRelays` | `wss://purplepag.es/`, `wss://user.kindpag.es/`, `wss://indexer.coracle.social/` | `wss://` relays where the lists of other pubkeys (kinds 10002, 10050 and 10063) are looked up, and where the domain keys publish their lists too |
+| `indexerRelays` | `wss://purplepag.es/`, `wss://user.kindpag.es/`, `wss://indexer.coracle.social/` | `wss://` relays where the lists of other pubkeys (kinds 10002, 10050 and 10063) are looked up, and where the domain keys publish their [lists](#lists-of-the-domain-key) |
 | `quotas` | every one `null` | The [quotas](#quotas) of every key |
 
 URLs must point at public hosts, and each list needs one at least.
@@ -586,15 +586,29 @@ by the domain.
 
 ### Receiving the wraps
 
-Each verified domain key has its own subscription to kind 1059 events tagged
-with it on the [domain relays](#settings), the relays of its kind 10050. A relay
-taken off the domain relays is still listened to for seven days, for the
-clients that have not read the new kind 10050. Each one opens its own
-connections and answers NIP-42 AUTH with its key, since a DM relay may serve the
-gift wraps of only one authenticated key per connection. NIP-59 dates a wrap up
-to two days back, so a subscription reaches two days back too, and every
-subscription is renewed every 10 minutes to recover from dropped connections.
-A wrap seen again is recognized by its id and handled once.
+The domain keys announce one relay, the server's own: `wss://MX_HOST/relay`. It
+is a NIP-01 relay that takes the gift wraps (kind 1059) tagged with a verified
+domain key, checks each one as it arrives, and answers `OK`:
+
+| Answer | When |
+|--------|------|
+| `true` | The email is queued, or the wrap was taken before |
+| `false`, `blocked: <refusal>` | The wrap is refused, for one of the reasons below |
+| `false`, `rate-limited: ...` | The wrap cannot be checked now, a bunker that does not answer for instance: Nostr Mail clients send it again later |
+| `false`, `blocked: ...` or `invalid: ...` | Another kind, a wrap tagged with no domain key of the server, a bad id or signature, or a date in the future |
+
+It serves nothing: a `REQ` is answered `CLOSED`. A wrap that comes again while
+it is checked gets the same answer.
+
+The relays the domain keys announced before are still listened to for seven
+days, for the clients that have not read the new kind 10050. There, each
+verified domain key has its own subscription to the kind 1059 events tagged
+with it, on its own connections, answering NIP-42 AUTH with its key since a DM
+relay may serve the gift wraps of only one authenticated key per connection.
+NIP-59 dates a wrap up to two days back, so a subscription reaches two days
+back too, and every subscription is renewed every 10 minutes to recover from
+dropped connections. A wrap seen again is recognized by its id and handled
+once.
 
 A wrap is refused, and never sent, when:
 
@@ -650,7 +664,7 @@ cp .env.example .env
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | yes | | Postgres connection string |
-| `MX_HOST` | yes | | SMTP host that connected domains point their MX at, and the name the server greets with when it sends |
+| `MX_HOST` | yes | | SMTP host that connected domains point their MX at, the name the server greets with when it sends, and the host of its relay, `wss://MX_HOST/relay` |
 | `SPF_INCLUDE` | yes | | Domain whose SPF record lists the address the server sends from |
 | `PUBLIC_IPV4` | yes | | IPv4 address that connected domains point their A record at, so that their HTTPS reaches this server |
 | `ADMIN_PUBKEYS` | no | nobody | Comma-separated npubs or hex public keys allowed to call the [admin routes](#admin), which also receive [abuse reports](#abuse-reports) |

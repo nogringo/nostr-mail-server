@@ -294,7 +294,7 @@ test('an admin changes some settings, the others keep their value', async () => 
   await app.close()
 })
 
-test('new relays make every verified domain key publish its lists on them', async () => {
+test('new indexers make every verified domain key publish its lists on them', async () => {
   const { repo, app, admin, network } = setup()
   const verified = await verifyDomain(repo, 'example.com', signer().pubkey)
   await repo.createDomain(claim('pending.example', signer().pubkey))
@@ -302,12 +302,12 @@ test('new relays make every verified domain key publish its lists on them', asyn
   await request(app, admin, 'PATCH', '/admin/settings', { maxMessageBytes: 2 * 1024 * 1024 })
   expect(network.published).toEqual([])
 
-  await request(app, admin, 'PATCH', '/admin/settings', { domainRelays: ['wss://new.example.org'] })
+  await request(app, admin, 'PATCH', '/admin/settings', { indexerRelays: ['wss://new.example.org'] })
   await vi.waitFor(() => expect(network.published).toHaveLength(3))
 
   expect(network.published.map(({ event }) => event.pubkey)).toEqual(Array(3).fill(verified.bridgePubkey))
-  expect(network.published[0].relays).toEqual(['wss://new.example.org/', ...testSettings.indexerRelays])
-  expect(network.published[1].event.tags).toEqual([['relay', 'wss://new.example.org/']])
+  expect(network.published[0].relays).toEqual(['wss://new.example.org/'])
+  expect(network.published[1].event.tags).toEqual([['relay', apiConfig.relayUrl]])
 
   await app.close()
 })
@@ -317,11 +317,11 @@ test('an invalid setting answers 400 and changes nothing', async () => {
 
   const response = await request(app, admin, 'PATCH', '/admin/settings', {
     openRegistration: true,
-    domainRelays: ['https://relay.example.com'],
+    indexerRelays: ['https://relay.example.com'],
   })
 
   expect(response.statusCode).toBe(400)
-  expect(response.json()).toEqual({ error: 'invalid_domain_relays' })
+  expect(response.json()).toEqual({ error: 'invalid_indexer_relays' })
   expect(repo.storedSettings.openRegistration).toBe(false)
 
   await app.close()

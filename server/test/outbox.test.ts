@@ -1,6 +1,6 @@
 import { npubEncode } from 'nostr-tools/nip19'
 import type { NostrEvent } from 'nostr-tools/pure'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { encryptBlob } from '../src/blossom.js'
 import { DomainSigners } from '../src/bunker.js'
 import type { DeliveryResult, MailTransport } from '../src/delivery.js'
@@ -20,8 +20,10 @@ import {
   verifyDomain,
 } from './helpers.js'
 
+// A relay the domain keys announced before the server's own.
 const DOMAIN_RELAY = 'wss://relay.example.org/'
 const DOMAIN_SERVER = 'https://blossom.example.org'
+const DAY_MS = 24 * 3600_000
 
 interface Sent {
   domain: string
@@ -52,7 +54,10 @@ async function setup(bunker = new FakeBunker()) {
   const transport = new FakeTransport()
   const logs: string[] = []
   const logger = { info: (_: object, message: string) => logs.push(message), error: () => {} }
-  const settings = settingsStore(repo, { domainRelays: [DOMAIN_RELAY], blossomServers: [DOMAIN_SERVER] })
+  const settings = settingsStore(repo, {
+    blossomServers: [DOMAIN_SERVER],
+    retiredDomainRelays: { [DOMAIN_RELAY]: new Date(Date.now() + 7 * DAY_MS).toISOString() },
+  })
   const outbox = new Outbox(
     repo,
     network,
@@ -97,17 +102,35 @@ test('each verified domain key gets its own subscription, closed once the domain
   expect(network.open()).toEqual([])
 })
 
-test('new domain relays are listened to at once, and the removed ones for a while', async () => {
-  const { network, outbox, domain, settings } = await setup()
+test('the relays announced before the server relay are listened to for a week, then none', async () => {
+  const { network, outbox } = await setup()
   await outbox.syncSubscriptions()
+  expect(network.open().map((subscription) => subscription.relays)).toEqual([[DOMAIN_RELAY]])
 
-  await settings.update({ domainRelays: ['wss://new.example.org/'] })
-  await outbox.syncSubscriptions()
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(Date.now() + 8 * DAY_MS)
+  try {
+    await outbox.syncSubscriptions()
+  } finally {
+    vi.useRealTimers()
+  }
 
-  const open = network.open()
-  expect(open.map((subscription) => subscription.relays)).toEqual([['wss://new.example.org/', DOMAIN_RELAY]])
-  expect(open[0].filter['#p']).toEqual([domain.bridgePubkey])
+  expect(network.open()).toEqual([])
   await outbox.stop()
+})
+
+test('receive answers why a wrap is refused, the same to a copy that comes meanwhile, and nothing after', async () => {
+  const { outbox, domain, alice } = await setup()
+  const wrap = outboundWrap(alice, domain.bridgePubkey, { mailFrom: 'bob@example.com' })
+
+  const answers = await Promise.all([
+    outbox.receive(wrap, domain.bridgePubkey),
+    outbox.receive(wrap, domain.bridgePubkey),
+  ])
+
+  expect(answers).toEqual(Array(2).fill('bob@example.com is not an address of the sender'))
+  expect(await outbox.receive(wrap, domain.bridgePubkey)).toBeNull()
+  expect(await outbox.receive(outboundWrap(alice, domain.bridgePubkey), domain.bridgePubkey)).toBeNull()
 })
 
 test('a replaced domain key is listened to instead of the old one', async () => {

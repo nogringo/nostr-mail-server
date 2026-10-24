@@ -64,7 +64,10 @@ export function registerDomainRoutes(
   },
 ): void {
   const publishLists = (domain: Domain) =>
-    publishDomainLists(relays, signers.forDomain(domain), domain.blossomServers, settings.current)
+    publishDomainLists(relays, signers.forDomain(domain), domain.blossomServers, {
+      relay: config.relayUrl,
+      indexerRelays: settings.current.indexerRelays,
+    })
   const canClaim = async (pubkey: string) =>
     config.adminPubkeys.includes(pubkey) || settings.current.openRegistration || (await repo.isAllowedKey(pubkey))
 
