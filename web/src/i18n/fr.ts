@@ -144,6 +144,8 @@ const fr: Messages = {
       recipientsPerDay: (limit: number) =>
         `${count(limit, 'destinataire', 'destinataires')} par jour pour chacun de vos domaines`,
       keysPerAddress: (limit: number) => `${count(Math.max(limit, 1), 'clé', 'clés')} par adresse`,
+      addressesPerIpPerHour: (limit: number) =>
+        `${count(limit, 'nouvelle adresse', 'nouvelles adresses')} par heure depuis une même adresse IP, toutes clés confondues`,
       more: "Demandez à l'admin de ce serveur si vous avez besoin de plus.",
     },
   },
@@ -405,6 +407,7 @@ const fr: Messages = {
       pendingDomains: 'Domaines en attente de vérification',
       recipientsPerDay: 'Destinataires par domaine et par jour',
       keysPerAddress: 'Clés par adresse',
+      addressesPerIpPerHour: 'Adresses créées par heure depuis une même adresse IP',
     },
     notes: {
       addresses:
@@ -416,6 +419,8 @@ const fr: Messages = {
         "Sur les dernières 24 heures, quel que soit l'expéditeur sur le domaine. Un e-mail qui dépasserait la limite n'est pas envoyé.",
       keysPerAddress:
         'Les clés auxquelles une adresse est distribuée. Une clé est toujours permise, et une adresse garde ses clés quand le quota baisse.',
+      addressesPerIpPerHour:
+        "Sur la dernière heure, toutes clés confondues, adresses supprimées comprises. Les adresses IPv6 comptent par /64. Le compte reste en mémoire : aucune adresse IP n'est enregistrée, et un redémarrage le remet à zéro.",
     },
     serverTitle: 'Quotas du serveur',
     serverNote: "Chaque clé y est soumise, sauf les admins, qui n'en ont aucun. Un champ vide signifie sans limite.",
@@ -501,6 +506,8 @@ const fr: Messages = {
         "Vous avez autant d'adresses que ce serveur le permet. Supprimez-en une d'abord, ou demandez-en plus à son admin.",
       address_rate_quota:
         "Vous avez créé autant d'adresses en une heure que ce serveur le permet. Réessayez plus tard.",
+      address_ip_quota:
+        "Autant d'adresses ont été créées depuis votre adresse IP en une heure que ce serveur le permet. Réessayez plus tard.",
       keys_per_address_quota:
         "Cette adresse a autant de clés que ce serveur le permet. Retirez-en une d'abord, ou demandez-en plus à son admin.",
       invalid_blossom_servers: "Saisissez au moins une URL https:// d'un serveur public, une par ligne.",

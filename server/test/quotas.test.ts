@@ -1,11 +1,13 @@
 import { npubEncode } from 'nostr-tools/nip19'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { buildApp } from '../src/app.js'
-import { NO_QUOTAS } from '../src/quotas.js'
+import { ipSubject, NO_QUOTAS } from '../src/quotas.js'
 import type { Quotas } from '../src/types.js'
 import {
+  API_HOST,
   type App,
   apiConfig,
+  authorization,
   FakeDns,
   FakeRelayNetwork,
   MemoryDomainRepository,
@@ -86,6 +88,73 @@ test('a key creates so many addresses an hour, deleted ones included', async () 
   expect(over.statusCode).toBe(429)
   expect(over.json()).toEqual({ error: 'address_rate_quota' })
   expect(later.statusCode).toBe(201)
+})
+
+// Caddy, on the Docker network, names the client.
+function putFrom(app: App, user: Signer, path: string, client: string, payload?: object, peer = '172.18.0.2') {
+  return app.inject({
+    method: 'PUT',
+    url: path,
+    remoteAddress: peer,
+    headers: {
+      host: API_HOST,
+      authorization: authorization(user.sk, { method: 'PUT', path }),
+      'x-forwarded-for': client,
+    },
+    payload,
+  })
+}
+
+test('every key creates so many addresses an hour from one IP address, unless it has no such limit', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  try {
+    const { repo, app, owner } = await setup({ addressesPerIpPerHour: 2 })
+    await repo.setShared('example.com', owner.pubkey, true)
+    const [alice, bob, trusted] = [signer(), signer(), signer()]
+    await repo.putKeyQuotas(trusted.pubkey, { addressesPerIpPerHour: null })
+
+    await putFrom(app, alice, '/addresses/example.com/alice', '203.0.113.7')
+    await putFrom(app, owner, '/domains/example.com/addresses/support', '203.0.113.7', { pubkeys: [owner.pubkey] })
+    const over = await putFrom(app, bob, '/addresses/example.com/bob', '203.0.113.7')
+    const ownerOver = await putFrom(app, owner, '/domains/example.com/addresses/sales', '203.0.113.7', {
+      pubkeys: [owner.pubkey],
+    })
+    const elsewhere = await putFrom(app, bob, '/addresses/example.com/bob', '198.51.100.4')
+    const unlimited = await putFrom(app, trusted, '/addresses/example.com/trusted', '203.0.113.7')
+    vi.setSystemTime(Date.now() + 3601_000)
+    const later = await putFrom(app, bob, '/addresses/example.com/bob2', '203.0.113.7')
+
+    expect(over.statusCode).toBe(429)
+    expect(over.json()).toEqual({ error: 'address_ip_quota' })
+    expect(ownerOver.json()).toEqual({ error: 'address_ip_quota' })
+    expect([elsewhere.statusCode, unlimited.statusCode, later.statusCode]).toEqual([201, 201, 201])
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('a client reaching the server directly cannot name another IP address', async () => {
+  const { repo, app, owner } = await setup({ addressesPerIpPerHour: 1 })
+  await repo.setShared('example.com', owner.pubkey, true)
+  const alice = signer()
+
+  await putFrom(app, alice, '/addresses/example.com/alice', '198.51.100.1', undefined, '203.0.113.9')
+  const spoofed = await putFrom(app, alice, '/addresses/example.com/alice2', '198.51.100.2', undefined, '203.0.113.9')
+
+  expect(spoofed.json()).toEqual({ error: 'address_ip_quota' })
+})
+
+test.each([
+  ['203.0.113.7', '203.0.113.7'],
+  ['::ffff:203.0.113.7', '203.0.113.7'],
+  ['2001:db8:a:b:1:2:3:4', '2001:db8:a:b::/64'],
+  ['2001:0DB8:000a:b::99', '2001:db8:a:b::/64'],
+  ['2001:db8::1', '2001:db8:0:0::/64'],
+  ['::1', '0:0:0:0::/64'],
+  ['64:ff9b::203.0.113.7', '64:ff9b:0:0::/64'],
+  ['1::2:3:4:5:203.0.113.7', '1:0:2:3::/64'],
+])('%s counts as %s', (ip, subject) => {
+  expect(ipSubject(ip)).toBe(subject)
 })
 
 test('an address gets keys up to the quota, and keeps those it had past a quota lowered since', async () => {

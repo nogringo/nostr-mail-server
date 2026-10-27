@@ -166,7 +166,7 @@ part at one pubkey or more. Same NIP-98 authentication as the domain routes.
 | Method | Path | Action |
 |--------|------|--------|
 | `GET` | `/domains/{domain}/addresses` | `{"addresses": [...], "deletedAddresses": [...]}`: the addresses of the domain and the [deleted](#deleted-addresses) ones |
-| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkeys": ["<hex or npub>"], "private": false, "enabled": true}`: `201` when created, `200` when an existing address now points at these pubkeys with this privacy and state, `409 address_deleted` for a deleted one, `403 address_quota` or `429 address_rate_quota` for a new one past the caller's [quotas](#quotas), `403 keys_per_address_quota` for more pubkeys than they allow |
+| `PUT` | `/domains/{domain}/addresses/{localPart}` | Body `{"pubkeys": ["<hex or npub>"], "private": false, "enabled": true}`: `201` when created, `200` when an existing address now points at these pubkeys with this privacy and state, `409 address_deleted` for a deleted one, `403 address_quota`, `429 address_rate_quota` or `429 address_ip_quota` for a new one past the caller's [quotas](#quotas), `403 keys_per_address_quota` for more pubkeys than they allow |
 | `DELETE` | `/domains/{domain}/addresses/{localPart}` | `204`, or `404 address_not_found`. The address joins the deleted ones |
 | `DELETE` | `/domains/{domain}/deleted-addresses/{localPart}` | Let a deleted address be created again: `204`, or `404 deleted_address_not_found` |
 | `DELETE` | `/domains/{domain}/deleted-addresses` | Let every deleted address be created again: `204` |
@@ -234,7 +234,7 @@ still remove them.
 
 | Method | Path | Action |
 |--------|------|--------|
-| `PUT` | `/addresses/{domain}/{localPart}` | Body `{"private": false, "enabled": true}`: `201` when created, `200` when the caller changed one it created, `403 domain_not_shared`, `409 address_taken` when another key has it, `409 address_deleted`, `400 reserved_local_part` for `_smtp`, `npub1...` and the names only the owner gives (`abuse`, `postmaster`, `support`, `admin`, `noreply` and the like), `403 address_quota` or `429 address_rate_quota` for a new one past the caller's [quotas](#quotas) |
+| `PUT` | `/addresses/{domain}/{localPart}` | Body `{"private": false, "enabled": true}`: `201` when created, `200` when the caller changed one it created, `403 domain_not_shared`, `409 address_taken` when another key has it, `409 address_deleted`, `400 reserved_local_part` for `_smtp`, `npub1...` and the names only the owner gives (`abuse`, `postmaster`, `support`, `admin`, `noreply` and the like), `403 address_quota`, `429 address_rate_quota` or `429 address_ip_quota` for a new one past the caller's [quotas](#quotas) |
 | `DELETE` | `/addresses/{domain}/{localPart}` | Delete an address the caller created: `204`, or `404 address_not_found`. It joins the [deleted](#deleted-addresses) ones |
 
 ### Deleted addresses
@@ -344,6 +344,7 @@ admins have none.
 | `pendingDomains` | The key's claims whose ownership record is not found yet | A new claim answers `403 pending_domain_quota` |
 | `recipientsPerDay` | The recipients each domain of the key sent to over the last 24 hours, whoever sent from it | A mail that would go over is [refused](#receiving-the-wraps) |
 | `keysPerAddress` | The pubkeys one address the key declares delivers to. One is always allowed, and an address keeps the pubkeys it has when the quota goes down | Giving an address more answers `403 keys_per_address_quota` |
+| `addressesPerIpPerHour` | The addresses every key created over the last hour from the [client](#client-address) of this request, deleted since or not. IPv6 addresses count by /64. The count stays in memory: no IP address is stored, and a restart starts it over | A new address answers `429 address_ip_quota`. The catch-all has no client and counts nothing |
 
 A key with quotas of its own is returned as
 `{"pubkey": "<hex>", "quotas": {"addresses": 100, "recipientsPerDay": null}, "updatedAt": "<date>"}`:
@@ -709,6 +710,18 @@ cp .env.example .env
 | `TLS_KEY_FILE` | no | | PEM private key of that certificate |
 
 The pending files of `migrations/` are applied at startup.
+
+### Client address
+
+The client of a request is the address a reverse proxy on the same host or on
+a private network names last in `X-Forwarded-For`, such as Caddy in `deploy/`,
+which replaces the value the client sent. A client reaching the server
+directly is never trusted with that header. The logs leave the client address
+out.
+
+Docker's IPv6 port publishing hides the client behind the gateway, as for
+[SMTP](#spf-dkim-and-dmarc): with an AAAA record on `MX_HOST`, every IPv6
+client would count as one.
 
 ## Development
 

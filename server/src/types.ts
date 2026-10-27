@@ -130,6 +130,8 @@ export interface Quotas {
   recipientsPerDay: number | null
   // Keys one of its addresses delivers to.
   keysPerAddress: number | null
+  // Addresses created in an hour from one IP address, by every key together, deleted since or not.
+  addressesPerIpPerHour: number | null
 }
 
 export type QuotaName = keyof Quotas

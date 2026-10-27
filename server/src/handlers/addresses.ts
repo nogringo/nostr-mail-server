@@ -19,7 +19,7 @@ type AddressRequest = FastifyRequest<{
 // Only the owner gives an address more than one, up to its quota.
 // A disabled address takes its mail and drops it.
 // A deleted address is kept aside, and nothing creates it again until the owner allows it.
-// A new address counts in the quotas of the key that creates it.
+// A new address counts in the quotas of the key that creates it, and of the IP address it comes from.
 export function registerAddressRoutes(app: FastifyInstance, repo: DomainRepository, quotas: QuotaKeeper): void {
   app.get('/domains/:domain/addresses', async (request: DomainRequest, reply) => {
     const pubkey = authenticate(request, reply)
@@ -63,7 +63,7 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
     if (!existing && (await repo.isDeletedAddress(domain.domain, localPart))) {
       return reply.code(409).send({ error: 'address_deleted' })
     }
-    const refusal = existing ? null : await quotas.refuseAddress(pubkey)
+    const refusal = existing ? null : await quotas.refuseAddress(pubkey, request.ip)
     if (refusal) return reply.code(refusalStatus(refusal)).send({ error: refusal })
     // An address past a quota lowered since keeps its keys, and can lose some.
     if (targets.length > (existing?.pubkeys.length ?? 1) && (await quotas.refusesKeys(pubkey, targets.length))) {
@@ -78,7 +78,7 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
       private: isPrivate,
       enabled,
     })
-    if (!existing) await quotas.recordAddress(pubkey)
+    if (!existing) await quotas.recordAddress(pubkey, request.ip)
     return reply.code(existing ? 200 : 201).send({ address: presentAddress(address) })
   })
 
@@ -148,7 +148,7 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
     if (!existing && (await repo.isDeletedAddress(domain.domain, localPart))) {
       return reply.code(409).send({ error: 'address_deleted' })
     }
-    const refusal = existing ? null : await quotas.refuseAddress(pubkey)
+    const refusal = existing ? null : await quotas.refuseAddress(pubkey, request.ip)
     if (refusal) return reply.code(refusalStatus(refusal)).send({ error: refusal })
 
     const address = await repo.putCreatedAddress({
@@ -162,7 +162,7 @@ export function registerAddressRoutes(app: FastifyInstance, repo: DomainReposito
     })
     if (!address) return reply.code(409).send({ error: 'address_taken' })
 
-    if (!existing) await quotas.recordAddress(pubkey)
+    if (!existing) await quotas.recordAddress(pubkey, request.ip)
     return reply.code(existing ? 200 : 201).send({ address: presentAddress(address) })
   })
 
@@ -187,9 +187,9 @@ function parsePubkeys(value: unknown): string[] | null {
   return [...new Set(pubkeys as string[])]
 }
 
-// The hourly quota frees up on its own.
+// The hourly quotas free up on their own.
 function refusalStatus(refusal: AddressRefusal): number {
-  return refusal === 'address_rate_quota' ? 429 : 403
+  return refusal === 'address_quota' ? 403 : 429
 }
 
 // Returns the caller's verified domain, or null after sending why it cannot be managed.

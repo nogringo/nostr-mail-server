@@ -78,7 +78,13 @@ export interface DomainList {
   usage: QuotaUsage
 }
 
-export type QuotaName = 'addresses' | 'addressesPerHour' | 'pendingDomains' | 'recipientsPerDay' | 'keysPerAddress'
+export type QuotaName =
+  | 'addresses'
+  | 'addressesPerHour'
+  | 'pendingDomains'
+  | 'recipientsPerDay'
+  | 'keysPerAddress'
+  | 'addressesPerIpPerHour'
 
 export const QUOTA_NAMES: QuotaName[] = [
   'addresses',
@@ -86,6 +92,7 @@ export const QUOTA_NAMES: QuotaName[] = [
   'pendingDomains',
   'recipientsPerDay',
   'keysPerAddress',
+  'addressesPerIpPerHour',
 ]
 
 // What a key may do, null for no limit. The admins have none.

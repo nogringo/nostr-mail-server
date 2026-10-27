@@ -88,6 +88,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       '020_add_quotas.sql',
       '021_add_address_keys.sql',
       '022_add_blobs.sql',
+      '023_add_ip_quota.sql',
     ])
     expect(await migrate(url)).toEqual([])
   })
@@ -362,6 +363,7 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
         pendingDomains: null,
         recipientsPerDay: null,
         keysPerAddress: null,
+        addressesPerIpPerHour: null,
       },
       retiredDomainRelays: {},
     })
@@ -374,7 +376,14 @@ describe.skipIf(!databaseUrl)('PgDomainRepository', () => {
       domainRelays: ['wss://relay.example.com/'],
       domainBlossomServer: 'https://mx.example.com',
       indexerRelays: ['wss://indexer.example.com/'],
-      quotas: { addresses: 10, addressesPerHour: 5, pendingDomains: 0, recipientsPerDay: null, keysPerAddress: 3 },
+      quotas: {
+        addresses: 10,
+        addressesPerHour: 5,
+        pendingDomains: 0,
+        recipientsPerDay: null,
+        keysPerAddress: 3,
+        addressesPerIpPerHour: 20,
+      },
       retiredDomainRelays: { 'wss://relay.nmail.li/': '2026-10-28T12:00:00.000Z' },
     }
     await repo.updateSettings(changed)

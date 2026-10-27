@@ -1,4 +1,4 @@
-import Fastify, { type FastifyError } from 'fastify'
+import Fastify, { type FastifyError, type FastifyRequest } from 'fastify'
 import { DomainSigners } from './bunker.js'
 import { registerAbuseRoutes } from './handlers/abuse.js'
 import { registerAddressRoutes } from './handlers/addresses.js'
@@ -11,6 +11,10 @@ import { QuotaKeeper } from './quotas.js'
 import type { RelayNetwork } from './relays.js'
 import type { SettingsStore } from './settings.js'
 import type { ApiConfig, DnsLookup, DomainRepository, Nip05Lookup } from './types.js'
+
+// A reverse proxy on the same host or a private network, such as Caddy in deploy/, names the client in
+// X-Forwarded-For. A client reaching the server directly is never trusted with it.
+const TRUSTED_PROXIES = 'loopback, linklocal, uniquelocal'
 
 export function buildApp(
   repo: DomainRepository,
@@ -25,7 +29,11 @@ export function buildApp(
     quotas = new QuotaKeeper(repo, settings, config.adminPubkeys),
   }: { logger?: boolean; signers?: DomainSigners; nip05Lookup?: Nip05Lookup; quotas?: QuotaKeeper } = {},
 ) {
-  const app = Fastify({ logger })
+  const app = Fastify({
+    // No client IP address in the logs, which would keep a history of who used the server.
+    logger: logger && { serializers: { req: ({ method, url, host }: FastifyRequest) => ({ method, url, host }) } },
+    trustProxy: TRUSTED_PROXIES,
+  })
 
   app.setErrorHandler<FastifyError>((error, request, reply) => {
     if (error.statusCode && error.statusCode < 500) return reply.send(error)

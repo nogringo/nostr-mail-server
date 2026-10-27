@@ -132,6 +132,8 @@ const en = {
       pendingDomains: (limit: number) => `${count(limit, 'domain')} waiting for verification at a time`,
       recipientsPerDay: (limit: number) => `${count(limit, 'recipient')} a day for each of your domains`,
       keysPerAddress: (limit: number) => `${count(Math.max(limit, 1), 'key')} per address`,
+      addressesPerIpPerHour: (limit: number) =>
+        `${count(limit, 'new address', 'new addresses')} an hour from one IP address, all keys together`,
       more: 'Ask the admin of this server if you need more.',
     },
   },
@@ -391,6 +393,7 @@ const en = {
       pendingDomains: 'Domains waiting for verification',
       recipientsPerDay: 'Recipients per domain per day',
       keysPerAddress: 'Keys per address',
+      addressesPerIpPerHour: 'Addresses created per hour from one IP address',
     },
     notes: {
       addresses:
@@ -401,6 +404,8 @@ const en = {
       recipientsPerDay: 'Over the last 24 hours, whoever sends from the domain. A mail that would go over is not sent.',
       keysPerAddress:
         'The keys one address delivers to. One is always allowed, and an address keeps its keys when the quota goes down.',
+      addressesPerIpPerHour:
+        'Over the last hour, by every key together, deleted addresses included. IPv6 addresses count by /64. The count stays in memory: no IP address is stored, and a restart resets it.',
     },
     serverTitle: 'Quotas of the server',
     serverNote: 'Every key gets them, except the admins, who have none. An empty field is no limit.',
@@ -485,6 +490,8 @@ const en = {
         'You have as many domains waiting for verification as this server allows. Verify or remove one first.',
       address_quota: 'You have as many addresses as this server allows. Remove one first, or ask its admin for more.',
       address_rate_quota: 'You created as many addresses as this server allows in an hour. Try again later.',
+      address_ip_quota:
+        'As many addresses were created from your IP address in the last hour as this server allows. Try again later.',
       keys_per_address_quota:
         'This address has as many keys as this server allows. Remove one first, or ask its admin for more.',
       no_extension: 'No Nostr extension found in this browser.',
